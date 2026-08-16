@@ -10,6 +10,7 @@ decision_refs:
   - ADR-0007
   - ADR-0008
   - ADR-0010
+  - ADR-0011
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -80,6 +81,9 @@ Include ZIP slip, tar traversal, symlink/hardlink escape, decompression bomb, hu
 
 - Rust SDK and CLI create equivalent plans.
 - Provider subprocess capability negotiation, timeout, crash, oversized/malformed response, cancellation, and transcript replay.
+- Public SDK projection/live recording/offline replay parity, exact four-record
+  transcripts, remote policy plus per-call consent, cooperative cancellation,
+  and byte-identical SDK/CLI canonical recordings.
 - Compile interruption never publishes partial output.
 - Independent verifier catches each intentionally corrupted artifact class.
 - Future MCP and Obsidian adapters pass contract and permission tests without bypassing framework invariants.
@@ -95,6 +99,12 @@ records, graph schema changes, and cursor replay across subject/artifact.
 
 ### Required regressions not yet implemented
 
+- `augmentation_request_builder_is_deterministic_and_snapshot_bound`;
+- `approval_rejects_nonempty_validations_without_transcript`;
+- `offline_replay_is_provider_free_and_byte_identical`;
+- `remote_provider_requires_policy_and_runtime_consent`;
+- `recorded_augmentation_rejects_noncanonical_jsonl`;
+- `cli_replay_matches_sdk_and_never_invokes_a_provider`;
 - `cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path`;
 - `archive_declared_member_count_and_compressed_bytes_are_bounded`;
 - `sdk_pack_failure_does_not_leave_partial_destination`;

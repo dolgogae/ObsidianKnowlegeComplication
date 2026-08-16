@@ -3,12 +3,13 @@ title: Public SDK and CLI Contract
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-08-17
 decision_refs:
   - ADR-0001
   - ADR-0004
   - ADR-0009
   - ADR-0010
+  - ADR-0011
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -50,15 +51,13 @@ fn compile_vaults() -> vaultc::Result<()> {
 ```
 
 For augmentation, a Rust application implements `KnowledgeAugmentor::propose`
-or constructs `vaultc-protocol` messages, then calls
-`VaultCompiler::validate_proposals`. It passes the returned
-`ValidatedProposals`, an `ApprovalLog`, and, when needed, a
-`ConflictDecisionLog` to `approve` or `approve_with_conflicts`.
-
-The current `0.1.0` SDK does not expose `VaultCompiler::augment` or a public
-plan-to-`AugmentationRequest` projection builder. That is an explicit
-REQ-SDK-001 gap, not permission for applications to bypass validation. The CLI
-contains the reference projection builder and supervised subprocess adapter.
+or constructs `vaultc-protocol` messages. `build_augmentation_request` creates
+the exact sealed projection; `augment` records an in-process provider;
+`record_augmentation_exchange` gives transports the same recording boundary;
+and `replay_augmentation` performs provider-free offline revalidation. The
+result converts to `ValidatedProposals` for `approve` or
+`approve_with_conflicts`. No path permits a provider to mutate or approve the
+plan.
 
 ## Public operations
 
@@ -66,7 +65,8 @@ contains the reference projection builder and supervised subprocess adapter.
 |---|---|---|---|---|
 | inspect | `VaultCompiler::inspect` | `SourceSpec` values + policy | sealed `Inspection` | no; optional SQLite workspace is updated transactionally |
 | plan | `VaultCompiler::plan` | `&Inspection` | immutable `DraftPlan` | no |
-| augment | `KnowledgeAugmentor::propose`; CLI `augment` | selected plan projection + capabilities | untrusted proposals + transcript | no |
+| augment | `VaultCompiler::{build_augmentation_request,augment,record_augmentation_exchange}`; CLI `augment` | sealed plan + explicit selection + provider capabilities | canonical `RecordedAugmentation` | no |
+| replay | `VaultCompiler::replay_augmentation`; CLI `replay` | sealed plan + canonical recording | provider-free revalidated recording | no |
 | validate | `VaultCompiler::validate_proposals` | `&DraftPlan` + proposals | deterministic `ValidatedProposals` | no |
 | approve | `approve`, `approve_with_conflicts`, `approve_without_augmentation` | owned `DraftPlan` + validation/decision logs | `ApprovedPlan` | no |
 | compile | `VaultCompiler::compile` | `&ApprovedPlan` + absent destination | `CompiledArtifact` | yes; sibling-stages then renames a new directory; portable race-free no-clobber remains open |
@@ -109,6 +109,7 @@ vaultc augment PLAN --provider-cmd PROGRAM [--provider-arg ARG]...
     [--provider-max-line-bytes BYTES]
     [--provider-max-messages COUNT]
     [--allow-remote-provider]
+vaultc replay PLAN --augmentation FILE --out FILE
 vaultc approve PLAN --decisions FILE [--proposals FILE] --out FILE
 vaultc [--policy FILE] compile APPROVED_PLAN --output PATH
     [--pack FILE] [--format human|json]
@@ -132,6 +133,13 @@ not implemented. Each projection includes the sealed owning snapshot ID plus
 document/block IDs and hashes so a stateless provider can return valid evidence.
 Remote capability declarations require both a policy that allows remote
 providers and the per-command `--allow-remote-provider` consent.
+
+`replay` accepts only canonical schema-1 augmentation JSONL and never invokes a
+provider, process, network, MCP server, or output compiler. It rehydrates the
+redacted projection from the sealed plan, rebuilds the public request, checks
+the exact four-record transcript, and reruns proposal validation. There is no
+remote-consent flag because replay discloses no source text. A valid replay is
+byte-identical to its input and is published atomically without overwrite.
 
 The provider program is launched directly, never through a shell. Standard
 output is NDJSON protocol-only. The CLI applies line/message/total-output and
@@ -222,6 +230,10 @@ working-tree plans without it fail closed rather than receiving a default.
 The same pre-release schema-completion rule applies to the required approved
 proposal materialization field; earlier working-tree approval files without it
 fail closed.
+AI-bearing development approvals with non-empty validations and an empty
+transcript now also fail closed. Canonical schema-1 CLI recordings retain their
+wire shape; non-canonical JSONL that earlier CLI readers tolerated has no
+compatibility alias.
 Deprecations require one minor-version migration window before `1.0` where
 practical and two after `1.0`.
 

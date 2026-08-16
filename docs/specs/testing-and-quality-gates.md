@@ -4,11 +4,12 @@ status: normative-v1
 owners:
   - qa-security-engineer
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-08-17
 decision_refs:
   - ADR-0004
   - ADR-0007
   - ADR-0008
+  - ADR-0010
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -28,7 +29,7 @@ source_refs:
 
 ## Current `0.1.0` evidence
 
-Local macOS arm64 execution with Rust 1.97.1 has 75 passing tests plus passing
+Local macOS arm64 execution with Rust 1.97.1 has 87 passing tests plus passing
 doctest harnesses, warning-free workspace Clippy, and a clean rustfmt check.
 This evidence does not make the full release gates green:
 
@@ -36,7 +37,7 @@ This evidence does not make the full release gates green:
 |---|---|
 | QG-001 | partial: current functions pass locally; the complete Markdown/Canvas corpora and supported-platform matrix remain |
 | QG-002 | partial: same-host and cross-absolute-source-root byte equality pass; cross-platform/toolchain comparison remains |
-| QG-003 | partial: implemented content records have strict closure; full ALG-PRV-001 typed graph, administrative files, record/edge IDs, and attribution remain |
+| QG-003 | implemented and locally verified: typed stored graph, virtual audit envelope, RecordIds, attribution retention, bounded explanation, and semantic reseal cases pass; supported-platform evidence remains |
 | QG-004 | partial: targeted hostile-input suite passes; fuzz/property campaigns and remaining platform/adversarial classes remain |
 | QG-005 | not passed: exact-version rejection exists, but migrations and a compatibility matrix do not |
 | QG-006 | not run at the 100,000-note/20 GB reference workload |
@@ -58,6 +59,8 @@ The authoritative live status and exact limitations are in
 - exact and near-duplicate golden vectors;
 - path/case/title/frontmatter conflict resolution;
 - checksums, provenance records, approval invalidation, and pack archive headers.
+- literal typed provenance RecordId vectors, strict record ordering, allowed
+  edge matrix/cardinality, attribution states, and cursor bindings.
 
 ### Property and fuzz tests
 
@@ -80,6 +83,15 @@ Include ZIP slip, tar traversal, symlink/hardlink escape, decompression bomb, hu
 - Compile interruption never publishes partial output.
 - Independent verifier catches each intentionally corrupted artifact class.
 - Future MCP and Obsidian adapters pass contract and permission tests without bypassing framework invariants.
+
+Typed provenance acceptance MUST cover Copy, Markdown/Canvas rewrite, exact
+note/asset deduplication, generated evidence and approval, Markdown/Canvas
+waivers, the four stored audit paths, the three virtual audit-envelope paths,
+directory/pack inner parity, and an explicit virtual package subject. Fully
+resealed attacks include missing/extra/duplicate producer edges, dangling or
+wrong-kind endpoints, cycles, unrelated valid source substitution, ordered
+evidence changes, attribution removal, stale decisions/approvals, legacy flat
+records, graph schema changes, and cursor replay across subject/artifact.
 
 ### Required regressions not yet implemented
 

@@ -4,12 +4,13 @@ status: normative-v1
 owners:
   - core-rust-engineer
   - release-maintainer
-last_updated: 2026-08-16
+last_updated: 2026-08-17
 decision_refs:
   - ADR-0003
   - ADR-0004
   - ADR-0006
   - ADR-0009
+  - ADR-0010
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -84,12 +85,20 @@ belongs to the future distribution profile.
 
 The manifest includes format/schema/compiler versions, artifact ID, ordered source snapshot IDs, plan ID, configuration hash, approved proposal hashes, output file inventory, media types, sizes, hashes, license/attribution summaries, creation policy, and optional signature metadata. Wall-clock creation time is informational and excluded from reproducibility identity.
 
-The `0.1.0` manifest currently contains `schema_version`, `compiler_version`,
+The `0.1.0` manifest contains `schema_version`, `compiler_version`,
 `artifact_id`, `plan_id`, `policy_hash`, `projection_hash`, ordered source
-snapshot IDs, approved proposal hashes, and
+snapshot IDs, approved proposal hashes, required
+`provenance_schema_version`, required `provenance_graph_hash`, and
 `files[{path, byte_len, sha256}]`. Its inventory excludes `manifest.json` and
-`checksums.txt`; it does not yet carry media types, license/attribution,
-creation/distribution policy, or signature metadata.
+`checksums.txt` and includes the stored provenance ledger. It does not yet
+carry media types, license summaries, creation/distribution policy, or
+signature metadata.
+
+ADR-0010 freezes the non-circular inventory layers. The stored provenance
+graph covers content plus plan/conflict/diagnostic/transcript audit outputs.
+Provenance, manifest, and checksums themselves have virtual audit-envelope
+records synthesized from their final bytes and exact inventories; those
+records MUST NOT be serialized back into the provenance file.
 
 ## Checksums
 
@@ -130,11 +139,18 @@ that part of the V1 format contract remains unimplemented.
 The current format is unsigned. Signatures will be detached or embedded only
 after a future versioned signing profile defines keys, algorithms, identity,
 revocation, and reproducible coverage. Until then, verification establishes
-internal checksum, sealed-audit, approval, and implemented provenance-linkage
-consistency, not publisher authenticity or full independent reconstruction of
-every output operation. Once that profile exists, signature verification MUST
+internal checksum, sealed-audit, approval, provenance-graph, and independently
+reconstructed output consistency, not publisher authenticity. Once that
+profile exists, signature verification MUST
 occur before installation, and signatures will not replace content-hash
 verification, permission display, license review, or provenance inspection.
+
+Verification of a `.vaultpack` requires both a valid inner Compiled Vault and
+byte equality with a package recreated by the exact declared deterministic
+tar/zstd writer profile. Equivalent extracted members encoded with different
+compression parameters or archive headers are not canonical VaultPacks and
+are rejected. Only a canonical outer archive may receive the virtual
+`vaultc-tar-zstd-deterministic-v1` package provenance profile.
 
 ## Verification
 
@@ -157,5 +173,9 @@ links. Generated notes are reconstructed byte-for-byte from the approved
 proposal and its required materialization commitment, including canonical body
 and output hashes, destination, operation ID, and ordered EvidenceId values.
 V1 rejects arbitrary evidence spans and accepts only file/body evidence or
-exact block evidence. The verifier does not yet validate license/attribution,
-emit the full typed provenance graph, or verify publisher authenticity.
+exact block evidence. It independently reconstructs the complete typed stored
+graph, validates RecordIds, edge/cardinality/acyclic/reachability invariants,
+retains declared frontmatter author/license values, synthesizes the
+non-circular audit envelope from final bytes, and enforces bounded explanation
+pages and cursors. It does not infer license compatibility or verify publisher
+authenticity.

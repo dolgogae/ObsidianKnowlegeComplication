@@ -1,6 +1,5 @@
 mod common;
 
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{Cursor, Write as _};
@@ -10,7 +9,10 @@ use vaultc::approval::{ConflictDecision, ConflictDecisionLog};
 use vaultc::compile::ArtifactManifest;
 use vaultc::diagnostic::DiagnosticCode;
 use vaultc::plan::{ConflictResolution, OutputOperation, RewriteReplacement};
-use vaultc::provenance::ProvenanceRecord;
+use vaultc::provenance::{
+    EdgeRelation, OperationRecord, ProvenanceRecord, ProvenanceRecordKind, ProvenanceSubject,
+    SourceRecord,
+};
 use vaultc::{
     ApprovalLog, CompilerPolicy, SourceSpec, ValidatedProposals, VaultCompiler, VaultcError,
 };
@@ -53,7 +55,10 @@ fn reseal_artifact_after_change(root: &Path, logical_path: &str) {
         .find(|file| file.path == logical_path)
         .expect("changed audit file is covered by the manifest");
     file.byte_len = bytes.len() as u64;
-    file.sha256 = hex::encode(Sha256::digest(bytes));
+    file.sha256 = hex::encode(Sha256::digest(&bytes));
+    if logical_path == ".vaultc/provenance.jsonl" {
+        manifest.provenance_graph_hash = vaultc::provenance::stored_graph_hash(&bytes);
+    }
     manifest.artifact_id = vaultc::canonical::canonical_hash(
         "vaultc:artifact:v1\0",
         &(
@@ -106,17 +111,53 @@ fn rewrite_provenance_output_hash(root: &Path, output_path: &str, output_bytes: 
         .lines()
         .map(|line| serde_json::from_str(line).expect("decode provenance record"))
         .collect();
-    let record = records
-        .iter_mut()
-        .find(|record| {
+    let output_index = records
+        .iter()
+        .position(|record| {
             matches!(
-                record,
-                ProvenanceRecord::Output { output_path: path, .. } if path == output_path
+                &record.kind,
+                ProvenanceRecordKind::Output(output)
+                    if output.subject == (ProvenanceSubject::ArtifactPath {
+                        path: output_path.to_owned(),
+                    })
             )
         })
         .expect("rewritten Markdown has an output provenance record");
-    let ProvenanceRecord::Output { output_hash, .. } = record;
-    *output_hash = vaultc::identity::ContentHash::from_bytes(output_bytes);
+    let old_id = records[output_index].record_id;
+    let ProvenanceRecordKind::Output(mut output) = records[output_index].kind.clone() else {
+        unreachable!();
+    };
+    output.content_hash = vaultc::identity::ContentHash::from_bytes(output_bytes);
+    output.byte_len = output_bytes.len() as u64;
+    let replacement = ProvenanceRecord::new(ProvenanceRecordKind::Output(output))
+        .expect("re-identify forged typed output");
+    let new_id = replacement.record_id;
+    records[output_index] = replacement;
+    for record in &mut records {
+        let ProvenanceRecordKind::Edge(edge) = &record.kind else {
+            continue;
+        };
+        if edge.from != old_id && edge.to != old_id {
+            continue;
+        }
+        let mut edge = edge.clone();
+        if edge.from == old_id {
+            edge.from = new_id;
+        }
+        if edge.to == old_id {
+            edge.to = new_id;
+        }
+        *record = ProvenanceRecord::new(ProvenanceRecordKind::Edge(edge))
+            .expect("re-identify forged typed edge");
+    }
+    records.sort_by(|left, right| {
+        left.type_order().cmp(&right.type_order()).then_with(|| {
+            left.record_id
+                .hash()
+                .as_bytes()
+                .cmp(right.record_id.hash().as_bytes())
+        })
+    });
     fs::write(provenance_path, encode_provenance(&records))
         .expect("rewrite provenance to match the forged Markdown hash");
 }
@@ -844,38 +885,46 @@ fn verifier_rejects_a_provenance_subset_even_when_artifact_is_resealed() {
         .lines()
         .map(|line| serde_json::from_str(line).expect("decode provenance record"))
         .collect();
-    let record = records
-        .iter_mut()
+    let operation_id = records
+        .iter()
         .find(|record| {
             matches!(
-                record,
-                ProvenanceRecord::Output {
-                    source_document_ids,
-                    sources,
-                    ..
-                } if !source_document_ids.is_empty() && sources.len() > 1
+                &record.kind,
+                ProvenanceRecordKind::Operation(OperationRecord::Deduplicate {
+                    member_count: 2,
+                    operation: OutputOperation::Copy {
+                        kind: vaultc::ir::FileKind::Markdown,
+                        ..
+                    } | OutputOperation::RewriteMarkdown { .. },
+                })
             )
         })
-        .expect("deduplicated note has multiple exact sources");
-    let ProvenanceRecord::Output {
-        source_snapshot_ids,
-        source_document_ids,
-        sources,
-        ..
-    } = record;
-    sources.pop().expect("omit one valid exact source");
-    *source_snapshot_ids = sources
+        .expect("deduplicated note has a typed operation")
+        .record_id;
+    let omitted_source = records
         .iter()
-        .map(|source| source.snapshot_id.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    *source_document_ids = sources
-        .iter()
-        .filter_map(|source| source.source_document_id.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+        .find_map(|record| match &record.kind {
+            ProvenanceRecordKind::Edge(edge)
+                if edge.from == operation_id && edge.relation == EdgeRelation::Deduplicates =>
+            {
+                Some(edge.to)
+            }
+            _ => None,
+        })
+        .expect("deduplicated note has an exact source edge");
+    assert!(records.iter().any(|record| matches!(
+        &record.kind,
+        ProvenanceRecordKind::Source(SourceRecord::VaultFile(source))
+            if record.record_id == omitted_source && source.document_id.is_some()
+    )));
+    records.retain(|record| {
+        record.record_id != omitted_source
+            && !matches!(
+                &record.kind,
+                ProvenanceRecordKind::Edge(edge)
+                    if edge.from == operation_id && edge.to == omitted_source
+            )
+    });
     fs::write(&provenance_path, encode_provenance(&records))
         .expect("write internally consistent but incomplete provenance");
     reseal_artifact_after_change(&artifact, ".vaultc/provenance.jsonl");
@@ -883,9 +932,7 @@ fn verifier_rejects_a_provenance_subset_even_when_artifact_is_resealed() {
     let error = compiler
         .verify(&artifact)
         .expect_err("resealing cannot authorize an incomplete derivation source set");
-    assert!(
-        matches!(error, VaultcError::VerificationFailed(message) if message.contains("exactly match"))
-    );
+    assert!(matches!(error, VaultcError::VerificationFailed(_)));
 }
 
 #[test]

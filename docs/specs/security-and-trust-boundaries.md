@@ -3,12 +3,13 @@ title: Security and Trust Boundaries
 status: normative-v1
 owners:
   - qa-security-engineer
-last_updated: 2026-08-16
+last_updated: 2026-08-17
 decision_refs:
   - ADR-0003
   - ADR-0004
   - ADR-0006
   - ADR-0009
+  - ADR-0010
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-ONPREM-STACK
@@ -73,7 +74,10 @@ Verification failures are fail-closed. Logs identify diagnostic codes and conten
 The implemented scanner rejects/excludes unsafe logical paths, symlinks,
 special files, named secret files, executable extensions, duplicate archive
 members, per-file/total/count limits, and source ZIP expansion-ratio breaches.
-It rechecks source type, size, and content hash before use. The CLI bounds
+VaultPack extraction rejects non-regular outer files and members, bounds the
+outer compressed size, prechecks declared expansion, and rechecks streamed
+expanded bytes against the ratio and aggregate limits before publication. It
+rechecks source type, size, and content hash before use. The CLI bounds
 control files and provider I/O and validates serialized plans/approvals before
 publication. Canvas parsing rejects duplicate JSON object keys, duplicate node
 IDs, malformed known node fields, and references that would escape the
@@ -86,6 +90,11 @@ commitment for their exact body/output bytes, destination, operation ID, and
 EvidenceId list. The verifier reconstructs the complete note and requires
 exact agreement among the approval, frontmatter, provenance ledger, and
 checksummed output even when surrounding artifact metadata is resealed.
+The typed provenance decoder rejects unknown/duplicate/non-canonical fields,
+invalid identities, graph closure violations, oversized records or ledgers,
+and semantic graph substitutions even when all surrounding unsigned envelope
+hashes are recomputed. Explanation pages bind their subject and cursor and
+enforce their byte limit over the complete serialized response.
 
 This is not yet the full release threat model:
 
@@ -94,8 +103,6 @@ This is not yet the full release threat model:
 - source archive compressed-byte size and total visited-member count, including
   excluded and non-file entries, are not separately bounded; nested archives
   are opaque assets, so extraction nesting depth is zero rather than recursive;
-- VaultPack extraction enforces regular files and per-file/count/total expanded
-  size, but not a compressed-to-expanded ratio for the outer zstd stream;
 - a no-clobber destination check followed by a directory rename is not proven
   race-free on every supported platform;
 - the public SDK pack writer writes directly to its destination; only the CLI
@@ -108,6 +115,7 @@ These limitations MUST remain visible in release status until their controls
 and platform tests exist. They do not authorize weakening any mandatory
 control above.
 
-The current manifest and provenance schemas also lack author/license
-attribution, media types, creation metadata, and signature status. No
+The provenance graph retains recognized author/license declarations from
+Markdown frontmatter without inferring their meaning. The manifest still lacks
+license summaries, media types, creation metadata, and signature status. No
 installation permission/license/signature display surface exists in `0.1.0`.

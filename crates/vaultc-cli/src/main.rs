@@ -152,8 +152,26 @@ enum CommandKind {
     Explain {
         #[arg(value_name = "PATH_OR_PACK")]
         artifact: PathBuf,
-        #[arg(value_name = "OUTPUT_PATH")]
-        output_path: String,
+        #[arg(
+            value_name = "OUTPUT_PATH",
+            required_unless_present = "package",
+            conflicts_with = "package"
+        )]
+        output_path: Option<String>,
+        /// Explain the virtual package record instead of an inner artifact path.
+        #[arg(long, conflicts_with = "output_path")]
+        package: bool,
+        /// Maximum records returned in this page.
+        #[arg(
+            long,
+            value_name = "COUNT",
+            default_value_t = 256,
+            value_parser = clap::value_parser!(u16).range(1..=4096)
+        )]
+        limit: u16,
+        /// Opaque cursor returned by the preceding provenance page.
+        #[arg(long, value_name = "CURSOR")]
+        cursor: Option<String>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
@@ -360,8 +378,18 @@ fn run(cli: Cli) -> CliResult<()> {
         CommandKind::Explain {
             artifact,
             output_path,
+            package,
+            limit,
+            cursor,
             format,
-        } => explain_command(&artifact, &output_path, format),
+        } => explain_command(
+            &artifact,
+            output_path.as_deref(),
+            package,
+            usize::from(limit),
+            cursor.as_deref(),
+            format,
+        ),
     }
 }
 
@@ -376,12 +404,36 @@ fn verify_command(artifact: &Path, format: OutputFormat) -> CliResult<()> {
     print_verification(&report, format)
 }
 
-fn explain_command(artifact: &Path, output_path: &str, format: OutputFormat) -> CliResult<()> {
+fn explain_command(
+    artifact: &Path,
+    output_path: Option<&str>,
+    package: bool,
+    limit: usize,
+    cursor: Option<&str>,
+    format: OutputFormat,
+) -> CliResult<()> {
     let compiler = build_compiler(CompilerPolicy::default(), None, EXIT_VERIFY)?;
-    let explanation = compiler
-        .explain_provenance(artifact, output_path)
+    let mut query = if package {
+        vaultc::provenance::ProvenanceQuery::package()
+    } else {
+        let output_path = output_path.ok_or_else(|| {
+            CliFailure::new(
+                EXIT_USAGE,
+                "explain requires OUTPUT_PATH or the mutually exclusive --package flag",
+            )
+        })?;
+        vaultc::provenance::ProvenanceQuery::artifact_path(output_path.to_owned())
+    };
+    query = query
+        .with_limit(limit)
+        .map_err(|error| CliFailure::from_vaultc(EXIT_USAGE, error))?;
+    if let Some(cursor) = cursor {
+        query = query.with_cursor(cursor.to_owned());
+    }
+    let page = compiler
+        .explain_provenance_page(artifact, &query)
         .map_err(|error| CliFailure::from_vaultc(EXIT_VERIFY, error))?;
-    print_provenance(&explanation, format)
+    print_provenance(&page, format)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1581,35 +1633,34 @@ fn print_verification(report: &vaultc::VerificationReport, format: OutputFormat)
 }
 
 fn print_provenance(
-    explanation: &vaultc::provenance::ProvenanceExplanation,
+    page: &vaultc::provenance::ProvenancePage,
     format: OutputFormat,
 ) -> CliResult<()> {
     match format {
-        OutputFormat::Json => print_json(explanation),
+        OutputFormat::Json => print_json(page),
         OutputFormat::Human => {
-            println!("output: {}", explanation.output_path);
-            for record in &explanation.records {
-                match record {
-                    vaultc::provenance::ProvenanceRecord::Output {
-                        output_hash,
-                        operation_id,
-                        source_snapshot_ids,
-                        source_document_ids,
-                        proposal_id,
-                        evidence,
-                        ..
-                    } => {
-                        println!("hash: {output_hash}");
-                        println!("operation: {operation_id}");
-                        println!("source snapshots: {}", source_snapshot_ids.join(", "));
-                        println!("source documents: {}", source_document_ids.join(", "));
-                        if let Some(proposal_id) = proposal_id {
-                            println!("proposal: {proposal_id}");
-                        }
-                        println!("evidence references: {}", evidence.len());
-                    }
+            println!("schema version: {}", page.schema_version);
+            println!("graph: {}", page.graph_hash);
+            match &page.subject {
+                vaultc::provenance::ProvenanceSubject::ArtifactPath { path } => {
+                    println!("output: {path}");
+                }
+                vaultc::provenance::ProvenanceSubject::Package => {
+                    println!("subject: package");
                 }
             }
+            println!("records: {}", page.records.len());
+            for (index, record) in page.records.iter().enumerate() {
+                let record = serde_json::to_string(record)
+                    .map_err(|error| CliFailure::from_error(EXIT_INTERNAL, error))?;
+                let number = index + 1;
+                println!("record {number}: {record}");
+            }
+            println!("complete: {}", page.complete);
+            println!(
+                "next cursor: {}",
+                page.next_cursor.as_deref().unwrap_or("none")
+            );
             Ok(())
         }
     }
@@ -1690,6 +1741,62 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert!(read_jsonl::<serde_json::Value>(path, 64, 1, 2, EXIT_PROVIDER).is_err());
         assert!(read_jsonl::<serde_json::Value>(path, 64, 8, 1, EXIT_PROVIDER).is_err());
+    }
+
+    #[test]
+    fn explain_arguments_require_one_subject_and_a_bounded_limit() {
+        let cli = Cli::try_parse_from([
+            "vaultc",
+            "explain",
+            "artifact.vaultpack",
+            "--package",
+            "--limit",
+            "4096",
+        ])
+        .expect("valid package explanation arguments");
+        match cli.command {
+            CommandKind::Explain {
+                output_path,
+                package,
+                limit,
+                ..
+            } => {
+                assert!(output_path.is_none());
+                assert!(package);
+                assert_eq!(limit, 4096);
+            }
+            _ => panic!("expected explain command"),
+        }
+
+        for arguments in [
+            vec!["vaultc", "explain", "artifact"],
+            vec![
+                "vaultc",
+                "explain",
+                "artifact",
+                "knowledge/Index.md",
+                "--package",
+            ],
+            vec![
+                "vaultc",
+                "explain",
+                "artifact",
+                "knowledge/Index.md",
+                "--limit",
+                "0",
+            ],
+            vec![
+                "vaultc",
+                "explain",
+                "artifact",
+                "knowledge/Index.md",
+                "--limit",
+                "4097",
+            ],
+        ] {
+            let error = Cli::try_parse_from(arguments).expect_err("invalid explain arguments");
+            assert_eq!(error.exit_code(), i32::from(EXIT_USAGE));
+        }
     }
 
     #[test]

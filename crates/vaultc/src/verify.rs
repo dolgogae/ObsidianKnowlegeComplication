@@ -33,6 +33,7 @@ pub fn verify_artifact(path: &Path) -> Result<VerificationReport> {
             let temporary = tempfile::tempdir().map_err(|error| VaultcError::io(path, error))?;
             crate::pack::extract_pack_safely(path, temporary.path())?;
             let mut report = verify_directory(temporary.path())?;
+            crate::pack::verify_canonical_pack(path, temporary.path())?;
             report.artifact_path = path.to_path_buf();
             Ok(report)
         }
@@ -67,6 +68,12 @@ pub(crate) fn verify_directory(root: &Path) -> Result<VerificationReport> {
         return Err(VaultcError::VerificationFailed(format!(
             "unsupported manifest schema {}",
             manifest.schema_version
+        )));
+    }
+    if manifest.provenance_schema_version != crate::provenance::PROVENANCE_SCHEMA_VERSION {
+        return Err(VaultcError::VerificationFailed(format!(
+            "unsupported provenance schema {}",
+            manifest.provenance_schema_version
         )));
     }
     if manifest.compiler_version != env!("CARGO_PKG_VERSION") {
@@ -113,6 +120,7 @@ pub(crate) fn verify_directory(root: &Path) -> Result<VerificationReport> {
         ));
     }
     let mut actual_paths = BTreeSet::new();
+    let mut checked_provenance = None;
     for (logical, hash) in &expected {
         let file = root.join(logical);
         let metadata =
@@ -122,12 +130,24 @@ pub(crate) fn verify_directory(root: &Path) -> Result<VerificationReport> {
                 "artifact member `{logical}` is not a regular file"
             )));
         }
+        if logical == ".vaultc/provenance.jsonl"
+            && usize::try_from(metadata.len())
+                .map_or(true, |length| length > crate::provenance::MAX_LEDGER_BYTES)
+        {
+            return Err(VaultcError::ResourceLimit(format!(
+                "stored provenance graph exceeds {} bytes",
+                crate::provenance::MAX_LEDGER_BYTES
+            )));
+        }
         let bytes = fs::read(&file).map_err(|error| VaultcError::io(&file, error))?;
         let actual = crate::compile::raw_sha256_hex(&bytes);
         if &actual != hash {
             return Err(VaultcError::VerificationFailed(format!(
                 "checksum mismatch for `{logical}`"
             )));
+        }
+        if logical == ".vaultc/provenance.jsonl" {
+            checked_provenance = Some(bytes);
         }
         actual_paths.insert(logical.clone());
     }
@@ -213,68 +233,44 @@ pub(crate) fn verify_directory(root: &Path) -> Result<VerificationReport> {
     validate_audit_files(root, &approved)?;
 
     let provenance_path = root.join(".vaultc/provenance.jsonl");
-    let provenance = fs::read_to_string(&provenance_path)
-        .map_err(|error| VaultcError::io(&provenance_path, error))?;
-    let output_files: BTreeMap<_, _> = manifest
+    let provenance = checked_provenance.ok_or_else(|| {
+        VaultcError::VerificationFailed("stored provenance graph was not checksummed".into())
+    })?;
+    if crate::provenance::stored_graph_hash(&provenance) != manifest.provenance_graph_hash {
+        return Err(VaultcError::VerificationFailed(
+            "stored provenance graph hash does not match the manifest".into(),
+        ));
+    }
+    let actual_provenance = crate::provenance::decode_jsonl(&provenance, &provenance_path)?;
+    crate::provenance::validate_stored_graph(&actual_provenance)?;
+    let graph_files = manifest
         .files
         .iter()
-        .filter(|file| !file.path.starts_with(".vaultc/"))
-        .map(|file| (file.path.as_str(), file))
-        .collect();
-    let mut provenance_outputs = BTreeSet::new();
-    let mut actual_provenance = Vec::new();
-    for (line_number, line) in provenance
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .enumerate()
-    {
-        let record: crate::provenance::ProvenanceRecord =
-            serde_json::from_str(line).map_err(|error| {
-                VaultcError::VerificationFailed(format!(
-                    "malformed provenance line {}: {error}",
-                    line_number + 1
-                ))
-            })?;
-        validate_provenance_record(root, &approved, &output_files, &record)?;
-        let crate::provenance::ProvenanceRecord::Output { output_path, .. } = &record;
-        if !provenance_outputs.insert(output_path.clone()) {
-            return Err(VaultcError::VerificationFailed(format!(
-                "duplicate provenance record for `{output_path}`"
-            )));
-        }
-        actual_provenance.push(record);
-    }
-    for file in &manifest.files {
-        if !file.path.starts_with(".vaultc/") && !provenance_outputs.contains(&file.path) {
-            return Err(VaultcError::VerificationFailed(format!(
-                "provenance missing for `{}`",
-                file.path
-            )));
-        }
-    }
-    let output_hashes = manifest
-        .files
-        .iter()
-        .filter(|file| !file.path.starts_with(".vaultc/"))
+        .filter(|file| file.path != ".vaultc/provenance.jsonl")
         .map(|file| {
             let path = root.join(&file.path);
             let bytes = fs::read(&path).map_err(|error| VaultcError::io(&path, error))?;
-            Ok((file.path.clone(), ContentHash::from_bytes(&bytes)))
+            Ok(crate::provenance::GraphFile {
+                path: file.path.clone(),
+                byte_len: file.byte_len,
+                content_hash: ContentHash::from_bytes(&bytes),
+            })
         })
         .collect::<Result<Vec<_>>>()?;
-    let expected_provenance = crate::provenance::records_for_output(&approved, &output_hashes)
+    let expected_provenance = crate::provenance::build_stored_records(&approved, &graph_files)
         .map_err(|error| {
             VaultcError::VerificationFailed(format!(
                 "sealed provenance reconstruction failed: {error}"
             ))
         })?;
     if actual_provenance != expected_provenance
-        || provenance.as_bytes() != crate::provenance::encode_jsonl(&expected_provenance)?
+        || provenance != crate::provenance::encode_jsonl(&expected_provenance)?
     {
         return Err(VaultcError::VerificationFailed(
             "provenance records do not exactly match the sealed derivation graph".into(),
         ));
     }
+    crate::provenance::validate_audit_envelope(root, &manifest, &actual_provenance)?;
     Ok(VerificationReport {
         artifact_path: root.to_path_buf(),
         valid: true,
@@ -787,190 +783,6 @@ fn validate_artifact_tree(root: &Path) -> Result<()> {
         if file_type.is_symlink() || !(file_type.is_file() || file_type.is_dir()) {
             return Err(VaultcError::VerificationFailed(format!(
                 "artifact entry `{logical}` is not a regular file or directory"
-            )));
-        }
-    }
-    Ok(())
-}
-
-// Keep all closure checks for a record together so new provenance fields cannot
-// accidentally be accepted without linkage validation.
-#[allow(clippy::too_many_lines)]
-fn validate_provenance_record(
-    root: &Path,
-    approved: &crate::approval::ApprovedPlan,
-    output_files: &BTreeMap<&str, &crate::compile::ManifestFile>,
-    record: &crate::provenance::ProvenanceRecord,
-) -> Result<()> {
-    let crate::provenance::ProvenanceRecord::Output {
-        output_path,
-        output_hash,
-        operation_id,
-        source_snapshot_ids,
-        source_document_ids,
-        sources,
-        proposal_id,
-        evidence,
-        evidence_ids,
-    } = record;
-    let file = output_files.get(output_path.as_str()).ok_or_else(|| {
-        VaultcError::VerificationFailed(format!(
-            "provenance references unknown output `{output_path}`"
-        ))
-    })?;
-    let output_bytes = fs::read(root.join(output_path))
-        .map_err(|error| VaultcError::io(root.join(output_path), error))?;
-    if output_bytes.len() as u64 != file.byte_len
-        || *output_hash != ContentHash::from_bytes(&output_bytes)
-        || sources.is_empty()
-    {
-        return Err(VaultcError::VerificationFailed(format!(
-            "provenance hash or source closure is invalid for `{output_path}`"
-        )));
-    }
-    let mut derived_snapshots: Vec<_> = sources
-        .iter()
-        .map(|source| source.snapshot_id.clone())
-        .collect();
-    derived_snapshots.sort();
-    derived_snapshots.dedup();
-    let mut derived_documents: Vec<_> = sources
-        .iter()
-        .filter_map(|source| source.source_document_id.clone())
-        .collect();
-    derived_documents.sort();
-    derived_documents.dedup();
-    if &derived_snapshots != source_snapshot_ids || &derived_documents != source_document_ids {
-        return Err(VaultcError::VerificationFailed(format!(
-            "provenance summary is not closed for `{output_path}`"
-        )));
-    }
-    for source in sources {
-        let snapshot = approved
-            .plan
-            .snapshots
-            .iter()
-            .find(|snapshot| snapshot.snapshot_id.to_string() == source.snapshot_id)
-            .ok_or_else(|| {
-                VaultcError::VerificationFailed(format!(
-                    "provenance for `{output_path}` references an unknown snapshot"
-                ))
-            })?;
-        let source_file = snapshot
-            .files
-            .iter()
-            .find(|file| file.file_id.to_string() == source.source_file_id)
-            .ok_or_else(|| {
-                VaultcError::VerificationFailed(format!(
-                    "provenance for `{output_path}` references an unknown source file"
-                ))
-            })?;
-        if source.source_id != source_file.source_id.to_string()
-            || source.source_path != source_file.logical_path
-            || source.source_content_hash != source_file.content_hash
-        {
-            return Err(VaultcError::VerificationFailed(format!(
-                "provenance source identity is stale for `{output_path}`"
-            )));
-        }
-        if let Some(document_id) = &source.source_document_id {
-            let document = approved
-                .plan
-                .workspace
-                .documents
-                .values()
-                .find(|document| document.document_id.to_string() == *document_id)
-                .ok_or_else(|| {
-                    VaultcError::VerificationFailed(format!(
-                        "provenance for `{output_path}` references an unknown document"
-                    ))
-                })?;
-            if document.source_file.file_id != source_file.file_id {
-                return Err(VaultcError::VerificationFailed(format!(
-                    "provenance document/file linkage is invalid for `{output_path}`"
-                )));
-            }
-        }
-        match (source.byte_start, source.byte_end) {
-            (Some(start), Some(end)) if start <= end && end <= source_file.byte_len => {}
-            (None, None) => {}
-            _ => {
-                return Err(VaultcError::VerificationFailed(format!(
-                    "provenance span is invalid for `{output_path}`"
-                )));
-            }
-        }
-    }
-    if let Some(proposal_id) = proposal_id {
-        let proposal = approved
-            .approved_proposals
-            .iter()
-            .find(|proposal| proposal.proposal.proposal_id == *proposal_id)
-            .ok_or_else(|| {
-                VaultcError::VerificationFailed(format!(
-                    "provenance for `{output_path}` references an unapproved proposal"
-                ))
-            })?;
-        let crate::approval::ProposalMaterialization::GeneratedNote {
-            destination,
-            expected_output_hash,
-            evidence_ids: sealed_evidence_ids,
-            operation_id: sealed_operation_id,
-            ..
-        } = &proposal.materialization
-        else {
-            return Err(VaultcError::VerificationFailed(format!(
-                "provenance for `{output_path}` references a non-materializing proposal"
-            )));
-        };
-        if proposal.proposal.evidence.is_empty()
-            || proposal.proposal.evidence != *evidence
-            || sealed_evidence_ids != evidence_ids
-            || destination != output_path
-            || expected_output_hash != output_hash
-            || sealed_operation_id.to_string() != *operation_id
-            || sources.len() != evidence.len()
-        {
-            return Err(VaultcError::VerificationFailed(format!(
-                "generated provenance linkage is invalid for `{output_path}`"
-            )));
-        }
-        for ((source, evidence), evidence_id) in sources.iter().zip(evidence).zip(evidence_ids) {
-            let derived_evidence_id = crate::identity::EvidenceId::from_evidence(evidence)
-                .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
-            let evidence_hash = ContentHash::parse_hex(&evidence.content_hash)
-                .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
-            if derived_evidence_id != *evidence_id
-                || source.snapshot_id != evidence.snapshot_id
-                || source.source_document_id.as_deref() != Some(evidence.document_id.as_str())
-                || source.evidence_content_hash != Some(evidence_hash)
-                || source.byte_start != evidence.byte_start
-                || source.byte_end != evidence.byte_end
-            {
-                return Err(VaultcError::VerificationFailed(format!(
-                    "generated evidence/source identity is invalid for `{output_path}`"
-                )));
-            }
-        }
-    } else {
-        if !evidence.is_empty() || !evidence_ids.is_empty() {
-            return Err(VaultcError::VerificationFailed(format!(
-                "non-generated output `{output_path}` contains proposal evidence"
-            )));
-        }
-        let operation = approved
-            .plan
-            .operations
-            .iter()
-            .find(|operation| operation.destination() == output_path)
-            .ok_or_else(|| {
-                VaultcError::VerificationFailed(format!(
-                    "provenance for `{output_path}` has no sealed operation"
-                ))
-            })?;
-        if operation.operation_id().to_string() != *operation_id {
-            return Err(VaultcError::VerificationFailed(format!(
-                "provenance operation ID is stale for `{output_path}`"
             )));
         }
     }

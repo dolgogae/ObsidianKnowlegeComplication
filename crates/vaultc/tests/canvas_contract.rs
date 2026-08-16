@@ -503,6 +503,7 @@ fn ambiguous_canvas_reference_requires_waiver_and_preserves_raw_path() {
                 assert_eq!(raw_path, "Topic.md");
                 node_id.as_str()
             }
+            Some(subject) => panic!("unexpected non-Canvas conflict subject: {subject:?}"),
             None => panic!("Canvas ambiguity must carry a typed subject"),
         })
         .collect();

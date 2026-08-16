@@ -162,3 +162,31 @@ Append-only. Normative details live in specifications and accepted ADRs.
   vectors and attacks that reseal body, frontmatter source IDs, provenance,
   manifest, checksums, and artifact identity. The local suite increased from 71
   to 75 tests and remains warning-free and formatted.
+
+## 2026-08-17 — Typed provenance graph and audit envelope
+
+- Accepted ADR-0010 and replaced the unpublished flat provenance projection
+  with versioned, content-addressed Source, Operation, Decision, Proposal,
+  Approval, Output, and Edge records. Record IDs, strict record ordering,
+  relation/cardinality rules, reachability, and acyclicity are deterministic
+  and fail closed.
+- Split provenance into a stored graph for content and pre-envelope audit files
+  plus deterministic virtual records for provenance, manifest, checksums, and
+  an explicitly queried canonical VaultPack. This removes self-hash cycles
+  without silently excluding administrative outputs from explanation.
+- Retained recognized Markdown frontmatter author/license declarations as
+  original canonical typed values with declared, not-declared, opaque, and
+  not-applicable states. The compiler does not infer SPDX meaning or legal
+  compatibility.
+- Added bounded, cursor-bound provenance pages and directory/VaultPack parity.
+  Unknown JSON enum fields, duplicate or non-canonical records, legacy flat
+  ledgers, cross-subject cursors, and fully resealed semantic graph changes now
+  fail closed.
+- Required canonical outer VaultPack bytes before naming the deterministic
+  profile. Alternate compression/header encodings and sealed-level mismatch are
+  rejected; extraction now bounds outer size and declared/streamed expansion
+  ratio and copies members through a fixed-size buffer.
+- Added nine typed-provenance integration tests, two additional VaultPack
+  contract tests, and CLI pagination/package coverage. The macOS arm64 local
+  suite increased from 75 to 87 tests and passes workspace tests, all-target
+  warning-free Clippy, rustfmt, and diff checks.

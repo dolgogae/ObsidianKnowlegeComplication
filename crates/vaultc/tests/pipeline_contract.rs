@@ -6,7 +6,7 @@ use std::io::Write as _;
 
 use vaultc::diagnostic::DiagnosticCode;
 use vaultc::plan::{ConflictKind, OutputOperation};
-use vaultc::provenance::ProvenanceRecord;
+use vaultc::provenance::{ProvenanceRecordKind, SourceRecord};
 use vaultc::{SourceSpec, VaultcError};
 
 #[test]
@@ -166,22 +166,52 @@ fn exact_duplicates_and_attachments_unify_with_complete_provenance() {
     let note_explanation = compiler
         .explain_provenance(&output, &note_output)
         .expect("explain deduplicated note");
-    let ProvenanceRecord::Output {
-        source_snapshot_ids,
-        source_document_ids,
-        ..
-    } = &note_explanation.records[0];
-    assert_eq!(source_snapshot_ids.len(), 2);
-    assert_eq!(source_document_ids.len(), 2);
+    let note_sources: Vec<_> = note_explanation
+        .records
+        .iter()
+        .filter_map(|record| match &record.kind {
+            ProvenanceRecordKind::Source(SourceRecord::VaultFile(source)) => Some(source),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(note_sources.len(), 2);
+    assert_eq!(
+        note_sources
+            .iter()
+            .map(|source| source.snapshot_id)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        2
+    );
+    assert_eq!(
+        note_sources
+            .iter()
+            .filter_map(|source| source.document_id)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        2
+    );
 
     let asset_explanation = compiler
         .explain_provenance(&output, &asset_output)
         .expect("explain deduplicated attachment");
-    let ProvenanceRecord::Output {
-        source_snapshot_ids,
-        ..
-    } = &asset_explanation.records[0];
-    assert_eq!(source_snapshot_ids.len(), 2);
+    let asset_sources: Vec<_> = asset_explanation
+        .records
+        .iter()
+        .filter_map(|record| match &record.kind {
+            ProvenanceRecordKind::Source(SourceRecord::VaultFile(source)) => Some(source),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asset_sources.len(), 2);
+    assert_eq!(
+        asset_sources
+            .iter()
+            .map(|source| source.snapshot_id)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        2
+    );
 }
 
 #[test]

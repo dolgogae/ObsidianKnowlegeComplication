@@ -1,6 +1,7 @@
 mod common;
 
 use vaultc::identity::ContentHash;
+use vaultc::provenance::ProvenanceRecordKind;
 use vaultc::{ApprovalDecision, ApprovalLog, DraftPlan, VaultcError};
 use vaultc_protocol::{
     EvidenceRefWire, KnowledgeProposal, PROPOSAL_SCHEMA_VERSION, ProposalKind, ProviderIdentity,
@@ -242,12 +243,17 @@ fn valid_proposal_requires_explicit_matching_approval() {
     let explanation = compiler
         .explain_provenance(&with_approval, generated_path)
         .expect("explain generated note");
-    let encoded = serde_json::to_value(explanation).expect("encode explanation");
-    assert_eq!(encoded["records"][0]["proposal_id"], "proposal-fixture-1");
-    assert_eq!(
-        encoded["records"][0]["evidence"].as_array().map(Vec::len),
-        Some(1)
-    );
+    let proposals: Vec<_> = explanation
+        .records
+        .iter()
+        .filter_map(|record| match &record.kind {
+            ProvenanceRecordKind::Proposal(proposal) => Some(proposal),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(proposals[0].proposal_id, "proposal-fixture-1");
+    assert_eq!(proposals[0].evidence_ids.len(), 1);
 }
 
 #[test]

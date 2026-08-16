@@ -10,7 +10,8 @@ use crate::dedup::{DedupReport, ExactDuplicateGroup, NearDuplicateCandidate};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceSpan};
 use crate::error::{Result, VaultcError};
 use crate::identity::{
-    AssetId, BaseArtifactId, CanvasId, ContentHash, DocumentId, OperationId, PlanId, SnapshotId,
+    AssetId, BaseArtifactId, CanvasId, ContentHash, DocumentId, LinkId, OperationId, PlanId,
+    SnapshotId,
 };
 use crate::ir::{
     CanonicalWorkspace, CanvasReferenceResolution, CanvasReferenceTarget, Document, FileKind,
@@ -168,6 +169,7 @@ impl DraftPlan {
             }
             previous_conflict_id = Some(&conflict.conflict_id);
         }
+        validate_markdown_conflict_coverage(&self.workspace, &self.exact_groups, &self.conflicts)?;
         validate_canvas_conflict_coverage(&self.workspace, &self.conflicts)?;
 
         let expected_plan_id = calculate_plan_id(
@@ -210,7 +212,7 @@ pub struct CanvasReferenceRewrite {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OutputOperation {
     Copy {
         operation_id: OperationId,
@@ -300,8 +302,13 @@ pub struct Conflict {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ConflictSubject {
+    MarkdownLink {
+        document_id: DocumentId,
+        link_id: LinkId,
+        raw_target: String,
+    },
     CanvasReference {
         canvas_id: CanvasId,
         node_id: String,
@@ -323,15 +330,27 @@ impl Conflict {
                 self.conflict_id
             )));
         }
-        if let Some(ConflictSubject::CanvasReference {
-            node_id, raw_path, ..
-        }) = &self.subject
-            && (node_id.is_empty() || node_id.contains('\0') || raw_path.contains('\0'))
-        {
-            return Err(VaultcError::PlanStale(format!(
-                "conflict `{}` has an invalid Canvas reference subject",
-                self.conflict_id
-            )));
+        if let Some(subject) = &self.subject {
+            match subject {
+                ConflictSubject::MarkdownLink { raw_target, .. } => {
+                    if raw_target.contains('\0') {
+                        return Err(VaultcError::PlanStale(format!(
+                            "conflict `{}` has an invalid Markdown link subject",
+                            self.conflict_id
+                        )));
+                    }
+                }
+                ConflictSubject::CanvasReference {
+                    node_id, raw_path, ..
+                } => {
+                    if node_id.is_empty() || node_id.contains('\0') || raw_path.contains('\0') {
+                        return Err(VaultcError::PlanStale(format!(
+                            "conflict `{}` has an invalid Canvas reference subject",
+                            self.conflict_id
+                        )));
+                    }
+                }
+            }
         }
         let expected = calculate_conflict_content_hash(
             self.kind,
@@ -923,6 +942,107 @@ fn validate_canvas_conflict_coverage(
     if actual != expected {
         return Err(VaultcError::PlanStale(
             "Canvas ambiguity conflicts do not cover the canonical workspace".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_markdown_conflict_coverage(
+    workspace: &CanonicalWorkspace,
+    exact_groups: &[ExactDuplicateGroup],
+    conflicts: &[Conflict],
+) -> Result<()> {
+    let mut representatives: BTreeMap<_, _> = workspace
+        .documents
+        .keys()
+        .copied()
+        .map(|document_id| (document_id, document_id))
+        .collect();
+    for group in exact_groups {
+        for member in &group.members {
+            representatives.insert(*member, group.canonical);
+        }
+    }
+
+    let mut expected = BTreeSet::new();
+    for document in workspace.documents.values() {
+        for link in &document.links {
+            let LinkResolution::Ambiguous { candidates } = &link.resolution else {
+                continue;
+            };
+            let mut documents = vec![representatives[&document.document_id]];
+            documents.extend(candidates.iter().copied());
+            documents.sort();
+            documents.dedup();
+            expected.insert((
+                document.document_id,
+                link.link_id,
+                link.raw_target.clone(),
+                candidates.clone(),
+                documents,
+            ));
+        }
+    }
+
+    let mut actual = BTreeSet::new();
+    for conflict in conflicts {
+        let Some(ConflictSubject::MarkdownLink {
+            document_id,
+            link_id,
+            raw_target,
+        }) = &conflict.subject
+        else {
+            continue;
+        };
+        let document = workspace.documents.get(document_id).ok_or_else(|| {
+            VaultcError::PlanStale(format!(
+                "conflict `{}` references an unknown Markdown document",
+                conflict.conflict_id
+            ))
+        })?;
+        let link = document
+            .links
+            .iter()
+            .find(|link| link.link_id == *link_id && link.raw_target == *raw_target)
+            .ok_or_else(|| {
+                VaultcError::PlanStale(format!(
+                    "conflict `{}` references an unknown Markdown link",
+                    conflict.conflict_id
+                ))
+            })?;
+        let LinkResolution::Ambiguous { candidates } = &link.resolution else {
+            return Err(VaultcError::PlanStale(format!(
+                "conflict `{}` subject is not an ambiguous Markdown link",
+                conflict.conflict_id
+            )));
+        };
+        let mut documents = vec![representatives[document_id]];
+        documents.extend(candidates.iter().copied());
+        documents.sort();
+        documents.dedup();
+        if conflict.kind != ConflictKind::LinkAmbiguity
+            || !conflict.required
+            || conflict.resolution != ConflictResolution::Unresolved
+            || conflict.documents != documents
+            || conflict.message != markdown_ambiguity_message(raw_target)
+            || conflict.score.is_some()
+            || !actual.insert((
+                *document_id,
+                *link_id,
+                raw_target.clone(),
+                candidates.clone(),
+                documents,
+            ))
+        {
+            return Err(VaultcError::PlanStale(format!(
+                "conflict `{}` is not the canonical Markdown ambiguity record",
+                conflict.conflict_id
+            )));
+        }
+    }
+    if actual != expected {
+        return Err(VaultcError::PlanStale(
+            "Markdown ambiguity conflicts do not cover the canonical workspace".into(),
         ));
     }
     Ok(())
@@ -1833,11 +1953,16 @@ fn resolve_links(
                 conflict_documents.extend(candidates);
                 conflict_documents.sort();
                 conflict_documents.dedup();
-                conflicts.push(conflict(
+                conflicts.push(conflict_with_subject(
                     ConflictKind::LinkAmbiguity,
                     true,
+                    Some(ConflictSubject::MarkdownLink {
+                        document_id: document.document_id,
+                        link_id: link.link_id,
+                        raw_target: link.raw_target.clone(),
+                    }),
                     conflict_documents,
-                    format!("link `{}` resolves to multiple documents", link.raw_target),
+                    markdown_ambiguity_message(&link.raw_target),
                     None,
                     ConflictResolution::Unresolved,
                 )?);
@@ -2069,6 +2194,10 @@ fn canvas_reference_target_label(target: &CanvasReferenceTarget) -> String {
         CanvasReferenceTarget::Canvas(id) => id.to_string(),
         CanvasReferenceTarget::Base(id) => id.to_string(),
     }
+}
+
+fn markdown_ambiguity_message(raw_target: &str) -> String {
+    format!("link `{raw_target}` resolves to multiple documents")
 }
 
 fn canvas_ambiguity_message(

@@ -188,6 +188,7 @@ pub(crate) fn verify_directory(root: &Path) -> Result<VerificationReport> {
     validate_operation_output_hashes(root, &approved, &actual_paths)?;
     validate_markdown_outputs(root, &approved)?;
     validate_canvas_outputs(root, &approved, &actual_paths)?;
+    validate_generated_outputs(root, &approved, &actual_paths)?;
     let snapshot_ids: Vec<_> = approved
         .plan
         .snapshots
@@ -261,7 +262,12 @@ pub(crate) fn verify_directory(root: &Path) -> Result<VerificationReport> {
             Ok((file.path.clone(), ContentHash::from_bytes(&bytes)))
         })
         .collect::<Result<Vec<_>>>()?;
-    let expected_provenance = crate::provenance::records_for_output(&approved, &output_hashes);
+    let expected_provenance = crate::provenance::records_for_output(&approved, &output_hashes)
+        .map_err(|error| {
+            VaultcError::VerificationFailed(format!(
+                "sealed provenance reconstruction failed: {error}"
+            ))
+        })?;
     if actual_provenance != expected_provenance
         || provenance.as_bytes() != crate::provenance::encode_jsonl(&expected_provenance)?
     {
@@ -353,6 +359,78 @@ fn validate_operation_output_hashes(
             return Err(VaultcError::VerificationFailed(format!(
                 "output hash does not match the sealed operation for `{destination}`"
             )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_generated_outputs(
+    root: &Path,
+    approved: &crate::approval::ApprovedPlan,
+    artifact_paths: &BTreeSet<String>,
+) -> Result<()> {
+    for proposal in &approved.approved_proposals {
+        let rebuilt = crate::approval::proposal_materialization(
+            &approved.plan,
+            &proposal.proposal,
+            proposal.content_hash,
+        )
+        .map_err(|error| {
+            VaultcError::VerificationFailed(format!(
+                "generated proposal materialization cannot be reconstructed: {error}"
+            ))
+        })?;
+        if rebuilt != proposal.materialization {
+            return Err(VaultcError::VerificationFailed(format!(
+                "generated proposal `{}` materialization is stale",
+                proposal.proposal.proposal_id
+            )));
+        }
+        match (&proposal.proposal.kind, &proposal.materialization) {
+            (
+                vaultc_protocol::ProposalKind::CreateGeneratedNote { markdown_body, .. },
+                crate::approval::ProposalMaterialization::GeneratedNote {
+                    destination,
+                    body_hash,
+                    expected_output_hash,
+                    evidence_ids,
+                    ..
+                },
+            ) => {
+                if !artifact_paths.contains(destination) {
+                    return Err(VaultcError::VerificationFailed(format!(
+                        "generated output `{destination}` is missing from the checksummed artifact"
+                    )));
+                }
+                let rendered = crate::generated::render_generated_note(
+                    &proposal.proposal.proposal_id,
+                    markdown_body,
+                    evidence_ids,
+                )
+                .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
+                let output_path = root.join(destination);
+                let actual =
+                    fs::read(&output_path).map_err(|error| VaultcError::io(&output_path, error))?;
+                if rendered.body_hash != *body_hash
+                    || rendered.expected_output_hash != *expected_output_hash
+                    || actual != rendered.bytes
+                    || ContentHash::from_bytes(&actual) != *expected_output_hash
+                {
+                    return Err(VaultcError::VerificationFailed(format!(
+                        "generated output `{destination}` does not match its sealed materialization"
+                    )));
+                }
+            }
+            (
+                vaultc_protocol::ProposalKind::ExplainConflict { .. },
+                crate::approval::ProposalMaterialization::NonMaterializing,
+            ) => {}
+            _ => {
+                return Err(VaultcError::VerificationFailed(format!(
+                    "proposal `{}` kind does not match its materialization",
+                    proposal.proposal.proposal_id
+                )));
+            }
         }
     }
     Ok(())
@@ -733,6 +811,7 @@ fn validate_provenance_record(
         sources,
         proposal_id,
         evidence,
+        evidence_ids,
     } = record;
     let file = output_files.get(output_path.as_str()).ok_or_else(|| {
         VaultcError::VerificationFailed(format!(
@@ -832,19 +911,49 @@ fn validate_provenance_record(
                     "provenance for `{output_path}` references an unapproved proposal"
                 ))
             })?;
+        let crate::approval::ProposalMaterialization::GeneratedNote {
+            destination,
+            expected_output_hash,
+            evidence_ids: sealed_evidence_ids,
+            operation_id: sealed_operation_id,
+            ..
+        } = &proposal.materialization
+        else {
+            return Err(VaultcError::VerificationFailed(format!(
+                "provenance for `{output_path}` references a non-materializing proposal"
+            )));
+        };
         if proposal.proposal.evidence.is_empty()
             || proposal.proposal.evidence != *evidence
-            || crate::provenance::generated_output_path(&proposal.proposal).as_deref()
-                != Some(output_path)
-            || crate::provenance::generated_operation_id(proposal_id).to_string() != *operation_id
+            || sealed_evidence_ids != evidence_ids
+            || destination != output_path
+            || expected_output_hash != output_hash
+            || sealed_operation_id.to_string() != *operation_id
+            || sources.len() != evidence.len()
         {
             return Err(VaultcError::VerificationFailed(format!(
                 "generated provenance linkage is invalid for `{output_path}`"
             )));
         }
-        validate_generated_frontmatter(root, output_path, proposal_id, evidence.len())?;
+        for ((source, evidence), evidence_id) in sources.iter().zip(evidence).zip(evidence_ids) {
+            let derived_evidence_id = crate::identity::EvidenceId::from_evidence(evidence)
+                .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
+            let evidence_hash = ContentHash::parse_hex(&evidence.content_hash)
+                .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
+            if derived_evidence_id != *evidence_id
+                || source.snapshot_id != evidence.snapshot_id
+                || source.source_document_id.as_deref() != Some(evidence.document_id.as_str())
+                || source.evidence_content_hash != Some(evidence_hash)
+                || source.byte_start != evidence.byte_start
+                || source.byte_end != evidence.byte_end
+            {
+                return Err(VaultcError::VerificationFailed(format!(
+                    "generated evidence/source identity is invalid for `{output_path}`"
+                )));
+            }
+        }
     } else {
-        if !evidence.is_empty() {
+        if !evidence.is_empty() || !evidence_ids.is_empty() {
             return Err(VaultcError::VerificationFailed(format!(
                 "non-generated output `{output_path}` contains proposal evidence"
             )));
@@ -864,56 +973,6 @@ fn validate_provenance_record(
                 "provenance operation ID is stale for `{output_path}`"
             )));
         }
-    }
-    Ok(())
-}
-
-fn validate_generated_frontmatter(
-    root: &Path,
-    output_path: &str,
-    proposal_id: &str,
-    evidence_count: usize,
-) -> Result<()> {
-    let text = fs::read_to_string(root.join(output_path)).map_err(|error| {
-        VaultcError::VerificationFailed(format!(
-            "generated note `{output_path}` is not readable UTF-8: {error}"
-        ))
-    })?;
-    let Some(rest) = text.strip_prefix("---\n") else {
-        return Err(VaultcError::VerificationFailed(format!(
-            "generated note `{output_path}` lacks canonical frontmatter"
-        )));
-    };
-    let Some((yaml, _)) = rest.split_once("\n---\n") else {
-        return Err(VaultcError::VerificationFailed(format!(
-            "generated note `{output_path}` has unterminated frontmatter"
-        )));
-    };
-    let value: serde_json::Value = serde_json::to_value(
-        serde_yaml_ng::from_str::<serde_yaml_ng::Value>(yaml).map_err(|error| {
-            VaultcError::VerificationFailed(format!(
-                "generated note `{output_path}` frontmatter is malformed: {error}"
-            ))
-        })?,
-    )
-    .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
-    if value
-        .get("vaultc_generated")
-        .and_then(serde_json::Value::as_bool)
-        != Some(true)
-        || value
-            .get("vaultc_proposal_id")
-            .and_then(serde_json::Value::as_str)
-            != Some(proposal_id)
-        || value
-            .get("vaultc_sources")
-            .and_then(serde_json::Value::as_array)
-            .map(Vec::len)
-            != Some(evidence_count)
-    {
-        return Err(VaultcError::VerificationFailed(format!(
-            "generated note `{output_path}` frontmatter is not bound to its proposal"
-        )));
     }
     Ok(())
 }

@@ -269,19 +269,59 @@ fn compile_into(
     }
 
     for proposal in &approved.approved_proposals {
-        if let ProposalKind::CreateGeneratedNote { markdown_body, .. } = &proposal.proposal.kind {
-            let destination = crate::provenance::generated_output_path(&proposal.proposal)
-                .ok_or_else(|| {
-                    VaultcError::Internal("generated proposal lost output path".into())
-                })?;
-            validate_output_logical_path(&destination, policy)?;
-            if !written.insert(destination.clone()) {
-                return Err(VaultcError::ProposalInvalid(format!(
-                    "generated output collision at `{destination}`"
+        match (&proposal.proposal.kind, &proposal.materialization) {
+            (
+                ProposalKind::CreateGeneratedNote { markdown_body, .. },
+                crate::approval::ProposalMaterialization::GeneratedNote {
+                    destination,
+                    body_hash,
+                    expected_output_hash,
+                    evidence_ids,
+                    ..
+                },
+            ) => {
+                let rebuilt = crate::approval::proposal_materialization(
+                    &approved.plan,
+                    &proposal.proposal,
+                    proposal.content_hash,
+                )?;
+                if rebuilt != proposal.materialization {
+                    return Err(VaultcError::ApprovalStale(format!(
+                        "generated proposal `{}` materialization is stale",
+                        proposal.proposal.proposal_id
+                    )));
+                }
+                validate_output_logical_path(destination, policy)?;
+                if !written.insert(destination.clone()) {
+                    return Err(VaultcError::ProposalInvalid(format!(
+                        "generated output collision at `{destination}`"
+                    )));
+                }
+                let note = crate::generated::render_generated_note(
+                    &proposal.proposal.proposal_id,
+                    markdown_body,
+                    evidence_ids,
+                )?;
+                if note.body_hash != *body_hash
+                    || note.expected_output_hash != *expected_output_hash
+                {
+                    return Err(VaultcError::ApprovalStale(format!(
+                        "generated proposal `{}` output commitment is stale",
+                        proposal.proposal.proposal_id
+                    )));
+                }
+                write_new_file(root, destination, &note.bytes)?;
+            }
+            (
+                ProposalKind::ExplainConflict { .. },
+                crate::approval::ProposalMaterialization::NonMaterializing,
+            ) => {}
+            _ => {
+                return Err(VaultcError::ApprovalStale(format!(
+                    "proposal `{}` kind does not match its materialization",
+                    proposal.proposal.proposal_id
                 )));
             }
-            let note = render_generated_note(proposal, markdown_body)?;
-            write_new_file(root, &destination, note.as_bytes())?;
         }
     }
 
@@ -329,7 +369,7 @@ fn compile_into(
             ))
         })
         .collect::<Result<_>>()?;
-    let provenance = crate::provenance::records_for_output(approved, &output_hashes);
+    let provenance = crate::provenance::records_for_output(approved, &output_hashes)?;
     write_new_file(
         root,
         ".vaultc/provenance.jsonl",
@@ -462,32 +502,6 @@ fn apply_replacements(
         VaultcError::Internal(format!("rewritten Markdown is not UTF-8: {error}"))
     })?;
     Ok(bytes)
-}
-
-fn render_generated_note(
-    proposal: &crate::approval::ApprovedProposal,
-    body: &str,
-) -> Result<String> {
-    if proposal.proposal.evidence.is_empty() {
-        return Err(VaultcError::ProposalInvalid(format!(
-            "generated proposal `{}` has no evidence",
-            proposal.proposal.proposal_id
-        )));
-    }
-    let sources = proposal
-        .proposal
-        .evidence
-        .iter()
-        .map(|evidence| {
-            serde_json::to_string(&evidence.document_id).map(|quoted| format!("  - {quoted}"))
-        })
-        .collect::<std::result::Result<Vec<_>, _>>()?
-        .join("\n");
-    let proposal_id = serde_json::to_string(&proposal.proposal.proposal_id)?;
-    Ok(format!(
-        "---\nvaultc_generated: true\nvaultc_pack_id: null\nvaultc_proposal_id: {proposal_id}\nvaultc_sources:\n{sources}\n---\n\n{}\n",
-        body.trim_end()
-    ))
 }
 
 fn mark_incomplete(staging: &Path, error: &VaultcError) {

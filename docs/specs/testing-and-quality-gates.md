@@ -28,7 +28,7 @@ source_refs:
 
 ## Current `0.1.0` evidence
 
-Local macOS arm64 execution with Rust 1.97.1 has 71 passing tests plus passing
+Local macOS arm64 execution with Rust 1.97.1 has 75 passing tests plus passing
 doctest harnesses, warning-free workspace Clippy, and a clean rustfmt check.
 This evidence does not make the full release gates green:
 
@@ -83,7 +83,6 @@ Include ZIP slip, tar traversal, symlink/hardlink escape, decompression bomb, hu
 
 ### Required regressions not yet implemented
 
-- `verifier_rejects_resealed_generated_body_or_source_ids`;
 - `cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path`;
 - `archive_declared_member_count_and_compressed_bytes_are_bounded`;
 - `sdk_pack_failure_does_not_leave_partial_destination`;

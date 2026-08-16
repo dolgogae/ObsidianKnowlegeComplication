@@ -44,10 +44,9 @@ implementation gaps are also summarized in
 - Define the non-circular provenance boundary for self-referential
   `manifest.json`, `provenance.jsonl`, and `checksums.txt` administrative files,
   including which plan/config/toolchain record produces each one.
-- Complete sealed output reconstruction for generated frontmatter/body/source
-  IDs, and decide which trust anchor authenticates a wholly resealed but
-  internally consistent unsigned artifact. Source-derived Copy, Markdown, and
-  Canvas outputs already carry and verify sealed commitments.
+- Decide which trust anchor authenticates a wholly resealed but internally
+  consistent unsigned artifact. Source-derived Copy, Markdown, Canvas, and
+  approved generated-note outputs now carry and verify sealed commitments.
 - Close filesystem race hardening: descriptor-relative/no-follow source opens
   and a portable atomic no-clobber directory publication primitive.
 - Complete archive accounting for compressed bytes, excluded/duplicate member
@@ -157,6 +156,13 @@ change.
   field is absent, so SDK/CLI decoding fails closed. CLI planning classifies
   input/policy/decision/invariant failures as `3`/`2`/`4`/`70`, and `approve`
   classifies a malformed old plan as decision exit `4`.
+- EvidenceId uses fixed-width raw snapshot/document/content hashes plus an
+  explicit file, block-without-span, or block-with-exact-span mode byte; exact
+  spans use unsigned 64-bit big-endian offsets. Generated-note approvals carry
+  a required tagged materialization with destination, canonical body/output
+  hashes, proposal-order EvidenceId values, and operation ID. Compile and
+  verify reconstruct the exact note; older development approvals without this
+  field fail closed.
 - The current `.vaultpack` is deterministic but unsigned. The lower-precedence
   project-context phrase that called it signed conflicted with the output
   specification; it was corrected in favor of the normative future signing

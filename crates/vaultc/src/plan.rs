@@ -2929,7 +2929,7 @@ fn allocation_tuple(document: &Document) -> (String, String, SnapshotId, Documen
     )
 }
 
-fn portable_key(path: &str) -> String {
+pub(crate) fn portable_key(path: &str) -> String {
     path.to_lowercase().nfc().collect()
 }
 

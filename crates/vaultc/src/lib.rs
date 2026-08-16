@@ -7,6 +7,7 @@ pub mod config;
 pub mod dedup;
 pub mod diagnostic;
 pub mod error;
+mod generated;
 pub mod identity;
 pub mod ir;
 pub mod pack;
@@ -21,6 +22,7 @@ pub mod workspace;
 
 pub use approval::{
     ApprovalDecision, ApprovalLog, ApprovedPlan, ConflictDecision, ConflictDecisionLog,
+    ProposalMaterialization,
 };
 pub use compile::{CompileOptions, CompiledArtifact};
 pub use config::{CompilerPolicy, SafetyLimits};

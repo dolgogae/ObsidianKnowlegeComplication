@@ -46,8 +46,10 @@ data.
 AI is not required. The implemented augmentation types are
 `create_generated_note` and `explain_conflict`. Proposals are bound to a sealed
 plan/projection/evidence set, validated as untrusted data, and materialized only
-after an explicit content-hash-bound approval. Conflict decisions are immutable
-approval overlays. V1 permits only `waived_by_policy`; it does not mislabel an
+after an explicit content-hash-bound approval. Generated-note approvals also
+seal their destination, canonical body/output hashes, ordered EvidenceId list,
+and operation ID. Conflict decisions are immutable approval overlays. V1
+permits only `waived_by_policy`; it does not mislabel an
 ambiguous link as user-resolved without a typed target/rewrite action.
 
 ## Verification evidence
@@ -56,14 +58,14 @@ All commands below passed on macOS arm64 with Rust 1.97.1:
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 71 tests and all doctests passed |
+| `cargo test --workspace --all-features --no-fail-fast` | 75 tests and all doctests passed |
 | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
 
-The 71 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 3
-pack integration tests, 8 pipeline tests, 5 provider/approval tests, 18
-security tests, 9 CLI unit tests, 6 CLI integration tests, and 2 protocol
-tests. They cover, among other cases:
+The 75 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 4
+generated-provenance tests, 3 pack integration tests, 8 pipeline tests, 5
+provider/approval tests, 18 security tests, 9 CLI unit tests, 6 CLI integration
+tests, and 2 protocol tests. They cover, among other cases:
 
 - source immutability, deterministic plan/output, absolute-source-location
   independence, and byte-identical VaultPacks on one supported host;
@@ -79,7 +81,9 @@ tests. They cover, among other cases:
   JSON-key/node rejection; and independently resealed semantic/target-removal
   tampering;
 - explicit proposal approvals, evidence binding, generated-frontmatter
-  injection resistance, conflict waiver binding, and transcript audit closure;
+  injection resistance, generated body/output commitments, canonical
+  EvidenceId frontmatter/provenance closure, fully resealed generated-output
+  attack rejection, conflict waiver binding, and transcript audit closure;
 - file-level evidence with no span, exact block hash/span evidence, rejection of
   arbitrary/mismatched spans, and provider-visible snapshot identity binding;
 - ZIP/tar traversal and links, duplicate ZIP members, decompression ratio,
@@ -122,11 +126,13 @@ The exact requirement-to-test mapping is in
   is not retained, so some cross-source normalization collisions are typed as
   `PATH_EXACT` and raw-path provenance is incomplete.
 - Provenance covers implemented content operations and exact duplicate source
-  closure, but not the full ALG-PRV-001 typed graph, compiler-generated
-  administrative files, record/edge IDs, decision/approval nodes, or
-  author/license attribution. V1 currently supports only spanless file/body
-  evidence or exact block-hash evidence with an omitted or exact block span;
-  arbitrary byte-span evidence is rejected.
+  closure. Generated outputs bind the exact approved body, rendered bytes,
+  proposal-order EvidenceId values, provenance sources, and operation identity,
+  but provenance does not yet implement the full ALG-PRV-001 typed graph,
+  compiler-generated administrative files, record/edge IDs, decision/approval
+  nodes, or author/license attribution. V1 currently supports only spanless
+  file/body evidence or exact block-hash evidence with an omitted or exact
+  block span; arbitrary byte-span evidence is rejected.
 - Some source and pack members are buffered under hard limits. The V1 20 GB
   workload and ≤2 GB RSS target cannot be claimed until streaming and the
   reference benchmark are verified.
@@ -152,9 +158,9 @@ The exact requirement-to-test mapping is in
   summaries, creation-policy/distribution metadata, and signature metadata from
   the target format are not implemented. Canvas and Markdown rewrite bytes are
   independently reconstructed from sealed operations, and every source-derived
-  output is hash-committed; generated bodies/source IDs do not yet have the same
-  derivation check. An unsigned, wholly resealed artifact also has no external
-  authenticity anchor.
+  output is hash-committed; generated bodies/frontmatter source IDs now have an
+  equivalent approved-proposal derivation check. An unsigned, wholly resealed
+  artifact still has no external authenticity anchor.
 - The public SDK pack writer writes directly to its destination; atomic
   no-clobber pack staging is currently a CLI-only wrapper. There is no installer
   or permission/license/signature display surface.
@@ -168,14 +174,16 @@ The exact requirement-to-test mapping is in
 
 ## Next implementation slices
 
-1. Complete the remaining ALG-NRM-001 Markdown/Canvas golden corpus.
-2. Seal and independently reconstruct generated-note body/source identities,
-   then continue the full ALG-PRV-001 typed graph.
-3. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
+1. Complete the full ALG-PRV-001 typed graph, including the non-circular audit
+   envelope boundary and attribution records.
+2. Add the public SDK augmentation request/record/replay surface and enforce
+   canonical transcripts for every approved AI proposal.
+3. Complete the remaining ALG-NRM-001 Markdown/Canvas golden corpus.
+4. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
    artifact determinism fixtures.
-4. Stream large blobs and run QG-006 at the full reference workload.
-5. Define schema migrations and run property/fuzz and fault-injection suites.
-6. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
+5. Stream large blobs and run QG-006 at the full reference workload.
+6. Define schema migrations and run property/fuzz and fault-injection suites.
+7. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
    ADR before calling a pack signed or marketplace-ready.
 
 No MCP, plugin, marketplace, or neuroscience-inspired runtime behavior should

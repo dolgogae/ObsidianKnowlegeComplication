@@ -107,10 +107,12 @@ author/license attribution. It accepts either a Compiled Vault directory or a
 The current `0.1.0` implementation is a partial projection of that contract. It
 returns deterministic output records containing output hash, producing
 operation ID, complete source identities for copied/rewritten/deduplicated
-content, original logical paths/spans, and generated proposal/evidence. It does
-not yet emit typed record IDs/edges, administrative-file derivations,
-decision/approval nodes, or author/license nodes. Therefore REQ-PRV-001 and
-QG-003 are not release-complete.
+content, original logical paths/spans, and generated proposal, wire evidence,
+canonical EvidenceId, and source identity values. Generated note bodies,
+frontmatter source IDs, provenance, and approval materialization are checked as
+one exact derivation. It does not yet emit typed record IDs/edges,
+administrative-file derivations, decision/approval nodes, or author/license
+nodes. Therefore REQ-PRV-001 and QG-003 are not release-complete.
 
 An explanation value is not itself a trust verdict. A caller must run `verify`
 before treating an artifact or explanation as internally consistent; the full

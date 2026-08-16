@@ -172,6 +172,12 @@ conflict content hashes. The only external V1 resolution is
 `waived_by_policy`. A provider explanation never becomes a waiver or typed
 resolution.
 
+When an approved proposal creates a note, approval derives a required
+materialization commitment from the sealed plan and exact proposal content.
+It binds destination, canonical emitted-body hash, complete rendered-output
+hash, proposal-order EvidenceId values, and operation ID. Providers cannot
+supply or override this compiler-owned commitment.
+
 ## Transcript and offline compilation
 
 The CLI augmentation JSONL contains one header, four canonical transcript

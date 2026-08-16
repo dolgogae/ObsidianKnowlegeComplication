@@ -140,3 +140,25 @@ Append-only. Normative details live in specifications and accepted ADRs.
 - Added three security regressions, one CLI unit test, and one CLI integration
   test. The macOS arm64 local suite increased from 66 to 71 tests and passes
   with warning-free Clippy and clean rustfmt.
+
+## 2026-08-16 — Generated-note derivation commitments
+
+- Completed the pre-release EvidenceId byte formula with fixed-width raw
+  identities, an explicit file/block/span mode byte, and big-endian exact span
+  offsets so host endianness and display strings cannot affect evidence IDs.
+- Added a required tagged materialization to every approved proposal. Generated
+  notes seal destination, canonical emitted-body hash, complete rendered-output
+  hash, proposal-order EvidenceId values, and operation ID; advisory proposals
+  are explicitly non-materializing.
+- Made compilation and independent verification reconstruct the exact generated
+  note from the approved proposal and require equality across materialization,
+  frontmatter, provenance, and output bytes. Pre-materialization development
+  approvals fail closed without a compatibility default.
+- Extended the partial provenance projection with canonical EvidenceId values
+  and exact evidence/source linkage. The full ALG-PRV-001 typed graph,
+  administrative envelope closure, and attribution records remain separate
+  release work.
+- Added four generated-provenance integration tests, including literal identity
+  vectors and attacks that reseal body, frontmatter source IDs, provenance,
+  manifest, checksums, and artifact identity. The local suite increased from 71
+  to 75 tests and remains warning-free and formatted.

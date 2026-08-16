@@ -78,6 +78,13 @@ compilation, and verification revalidate sealed plan/proposal/conflict
 identities. Applications MUST NOT mutate a `DraftPlan` and retain its original
 `plan_id`.
 
+Each `ApprovedProposal` has a required tagged materialization. An advisory
+proposal is `non_materializing`; a generated note seals its destination,
+canonical emitted-body hash, complete rendered-output hash, ordered
+`EvidenceId` values, and operation ID. Missing, mismatched, or stale
+materialization fields fail approval, compilation, and verification rather
+than receiving a compatibility default.
+
 Planning reopens each source that contains a materialized Markdown rewrite once
 to compute its exact expected output hash; it does not serialize those source
 bytes into the plan. A changed, missing, unreadable, malformed, unsafe, or
@@ -201,6 +208,9 @@ only its exact schema/compiler version; migration and compatibility matrices
 are not implemented yet. The pre-release schema 1
 `RewriteMarkdown.expected_output_hash` field is required, so earlier
 working-tree plans without it fail closed rather than receiving a default.
+The same pre-release schema-completion rule applies to the required approved
+proposal materialization field; earlier working-tree approval files without it
+fail closed.
 Deprecations require one minor-version migration window before `1.0` where
 practical and two after `1.0`.
 

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use vaultc_protocol::KnowledgeProposal;
 
 use crate::error::{Result, VaultcError};
-use crate::identity::ContentHash;
+use crate::identity::{ContentHash, EvidenceId, OperationId};
 use crate::plan::{ConflictResolution, DraftPlan};
 use crate::provider::ValidatedProposals;
 
@@ -39,11 +39,26 @@ pub struct ConflictDecisionLog {
     pub decisions: Vec<ConflictDecision>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProposalMaterialization {
+    NonMaterializing,
+    GeneratedNote {
+        destination: String,
+        body_hash: ContentHash,
+        expected_output_hash: ContentHash,
+        evidence_ids: Vec<EvidenceId>,
+        operation_id: OperationId,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApprovedProposal {
     pub proposal: KnowledgeProposal,
     pub content_hash: ContentHash,
     pub approval: ApprovalDecision,
+    pub materialization: ProposalMaterialization,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -82,7 +97,7 @@ pub fn approve_plan_with_conflicts(
     validate_conflict_decisions(&plan, &conflict_log.decisions)?;
     validate_required_conflict_coverage(&plan, &conflict_log.decisions)?;
     validate_proposal_approvals(&plan, &validated, &mut approvals)?;
-    let approved_proposals = collect_approved_proposals(&validated, &approvals)?;
+    let approved_proposals = collect_approved_proposals(&plan, &validated, &approvals)?;
     Ok(ApprovedPlan {
         plan,
         proposal_validations: validated.validations,
@@ -167,6 +182,7 @@ fn validate_proposal_approvals(
 }
 
 fn collect_approved_proposals(
+    plan: &DraftPlan,
     validated: &ValidatedProposals,
     approvals: &ApprovalLog,
 ) -> Result<Vec<ApprovedProposal>> {
@@ -187,10 +203,13 @@ fn collect_approved_proposals(
             )));
         }
         if decision.approved {
+            let materialization =
+                proposal_materialization(plan, &validation.proposal, validation.content_hash)?;
             approved_proposals.push(ApprovedProposal {
                 proposal: validation.proposal.clone(),
                 content_hash: validation.content_hash,
                 approval: (*decision).clone(),
+                materialization,
             });
         }
     }
@@ -200,7 +219,77 @@ fn collect_approved_proposals(
             .as_bytes()
             .cmp(right.proposal.proposal_id.as_bytes())
     });
+    validate_materialization_destinations(plan, &approved_proposals)?;
     Ok(approved_proposals)
+}
+
+pub(crate) fn proposal_materialization(
+    plan: &DraftPlan,
+    proposal: &KnowledgeProposal,
+    proposal_content_hash: ContentHash,
+) -> Result<ProposalMaterialization> {
+    let vaultc_protocol::ProposalKind::CreateGeneratedNote { markdown_body, .. } = &proposal.kind
+    else {
+        return Ok(ProposalMaterialization::NonMaterializing);
+    };
+    let destination = crate::provenance::generated_output_path(proposal).ok_or_else(|| {
+        VaultcError::ProposalInvalid(format!(
+            "generated proposal `{}` has no output path",
+            proposal.proposal_id
+        ))
+    })?;
+    crate::snapshot::validate_output_logical_path(&destination, &plan.policy)?;
+    let evidence_ids = crate::generated::evidence_ids(&proposal.evidence)?;
+    let rendered = crate::generated::render_generated_note(
+        &proposal.proposal_id,
+        markdown_body,
+        &evidence_ids,
+    )?;
+    let operation_id = crate::generated::generated_operation_id(
+        &plan.plan_id.to_string(),
+        &proposal.proposal_id,
+        proposal_content_hash,
+        &destination,
+        rendered.body_hash,
+        rendered.expected_output_hash,
+        &evidence_ids,
+    )?;
+    Ok(ProposalMaterialization::GeneratedNote {
+        destination,
+        body_hash: rendered.body_hash,
+        expected_output_hash: rendered.expected_output_hash,
+        evidence_ids,
+        operation_id,
+    })
+}
+
+fn validate_materialization_destinations(
+    plan: &DraftPlan,
+    proposals: &[ApprovedProposal],
+) -> Result<()> {
+    let mut destinations: BTreeMap<String, String> = plan
+        .operations
+        .iter()
+        .map(|operation| {
+            (
+                crate::plan::portable_key(operation.destination()),
+                operation.destination().to_owned(),
+            )
+        })
+        .collect();
+    for proposal in proposals {
+        let ProposalMaterialization::GeneratedNote { destination, .. } = &proposal.materialization
+        else {
+            continue;
+        };
+        let key = crate::plan::portable_key(destination);
+        if let Some(existing) = destinations.insert(key, destination.clone()) {
+            return Err(VaultcError::ProposalInvalid(format!(
+                "generated output `{destination}` collides with sealed output `{existing}`"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_conflict_decisions(plan: &DraftPlan, decisions: &[ConflictDecision]) -> Result<()> {

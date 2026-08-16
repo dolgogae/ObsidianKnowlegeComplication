@@ -74,10 +74,11 @@ vaultc_sources:
 
 `vaultc_confidence` MUST be omitted if it is not calibrated for the declared task/cohort. License and author attribution required by any source MUST remain reachable from the manifest and provenance, and SHOULD appear in generated content when policy requires visible attribution.
 
-The target `vaultc_sources` entries are ALG-PRV-001 `EvidenceId` values. The
-current writer instead emits each evidence `document_id`, and
-`vaultc_pack_id` is always `null`; both are implementation gaps rather than a
-change to the target format.
+The `vaultc_sources` entries are ALG-PRV-001 `EvidenceId` values in the sealed
+proposal evidence order. The current writer emits those canonical identities
+and binds them to the approval materialization, provenance ledger, and exact
+rendered bytes. `vaultc_pack_id` remains `null` because pack identity/signing
+belongs to the future distribution profile.
 
 ## Manifest
 
@@ -152,8 +153,9 @@ For rewritten Canvas it reconstructs canonical bytes from the sealed source
 value and typed node rewrites. For rewritten Markdown it rederives the ordered
 recipe from sealed link resolution, reverses the recipe against output bytes to
 reconstruct and hash the original source candidate, and reparses the rewritten
-links. It does not yet perform equivalent sealed reconstruction for generated
-frontmatter/body/source IDs, rehash arbitrary evidence-span bytes, validate
-license/attribution, or verify authenticity. Verification therefore establishes
-strong source-derived operation integrity but not complete derivation
-correctness or publisher authenticity for every output class.
+links. Generated notes are reconstructed byte-for-byte from the approved
+proposal and its required materialization commitment, including canonical body
+and output hashes, destination, operation ID, and ordered EvidenceId values.
+V1 rejects arbitrary evidence spans and accepts only file/body evidence or
+exact block evidence. The verifier does not yet validate license/attribution,
+emit the full typed provenance graph, or verify publisher authenticity.

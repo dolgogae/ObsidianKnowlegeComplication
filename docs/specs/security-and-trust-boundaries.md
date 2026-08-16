@@ -81,6 +81,11 @@ allocated Compiled Vault root. All source-derived output operations carry a
 sealed output commitment. Markdown rewrites additionally bind the exact source
 spans, replacement recipe, expected output hash, reverse-reconstructed source
 hash, and semantic reparse; missing required plan fields fail closed.
+Approved generated notes similarly carry a compiler-derived materialization
+commitment for their exact body/output bytes, destination, operation ID, and
+EvidenceId list. The verifier reconstructs the complete note and requires
+exact agreement among the approval, frontmatter, provenance ledger, and
+checksummed output even when surrounding artifact metadata is resealed.
 
 This is not yet the full release threat model:
 

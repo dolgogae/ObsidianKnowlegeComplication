@@ -94,7 +94,11 @@ source once, validates sealed source slices, applies the recipe, reparses the
 result, and discards the bytes after hashing. The artifact verifier reverses
 the recipe against output bytes to reconstruct a source candidate and compare
 its sealed source hash without embedding raw source copies. Resource estimates
-and expected generated-note body/source hashes are still missing.
+are still missing. Approved generated proposals carry a required tagged
+materialization that seals destination, canonical emitted-body hash, complete
+rendered-output hash, ordered EvidenceId values, and operation ID. Compilation
+and verification independently rebuild that value; pre-materialization
+approval files without it fail closed.
 
 ## Failure semantics
 

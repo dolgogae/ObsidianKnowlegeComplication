@@ -27,11 +27,21 @@ Input is a plan, snapshots, operation results, proposal transcript, approvals, a
 
 ```text
 RecordId(r) = H("vaultc:provenance:v1\0" || canonical_json(r without record_id))
-EvidenceId(e) = H("vaultc:evidence:v1\0" || SnapshotId || DocumentId
-                  || optional(BlockId, byte_start, byte_end) || ContentHash)
+EvidenceId(e) = H("vaultc:evidence:v1\0" || raw(SnapshotId)
+                  || raw(DocumentId) || mode
+                  || mode_fields || raw(ContentHash))
 ```
 
 Every JSON value uses the versioned canonical encoder; records are emitted in `(record_type_order, record_id)` order.
+
+`raw(TypedId)` is the fixed 32-byte hash without its display prefix. `mode` is
+one byte: `0x00` for file/body evidence with no block or span, `0x01` for block
+evidence with no repeated span, and `0x02` for block evidence with its exact
+sealed span. `mode_fields` is empty for `0x00`, the raw 32-byte `BlockId` for
+`0x01`, or the raw `BlockId` followed by unsigned 64-bit big-endian
+`byte_start` and `byte_end` for `0x02`. Partial spans, a file-level span, and
+`start > end` are invalid. Display strings, JSON, host endianness, and the
+generic length-prefixed identity helper are not part of this formula.
 
 ## Symbols
 
@@ -64,6 +74,10 @@ Every JSON value uses the versioned canonical encoder; records are emitted in `(
 4. Every evidence span rehashes to the declared content hash.
 5. Every exact-deduplicated output reaches all group members.
 6. Derivation edges are acyclic; associative/semantic relationships use a separate graph.
+7. A generated-note approval seals its destination, canonical emitted body
+   hash, complete rendered-output hash, ordered EvidenceId values, and
+   operation ID. Compilation and verification independently reconstruct that
+   materialization from the approved proposal.
 
 ## Pseudocode
 
@@ -103,6 +117,13 @@ Reject out-of-bounds spans, source-hash mismatch, dangling IDs, cycles, duplicat
 | generated output with proposal but stale approval | invalid |
 | evidence span end greater than file length | invalid |
 | derivation A → B → A | invalid cycle |
+
+The frozen file-level EvidenceId vector uses raw snapshot bytes `0x11` × 32,
+raw document bytes `0x22` × 32, mode `0x00`, and raw content-hash bytes `0x33`
+× 32. Its typed rendering is
+`evidence_ca746ceb4dbbe4c963a82668cc4aa11852a41d84dcea24e8aa36407b52993bbe`.
+Block mode `0x01` and exact-span mode `0x02` MUST produce different identities
+for the same block and content hash.
 
 Exact canonical-JSON RecordId fixtures MUST be frozen with schema implementation.
 

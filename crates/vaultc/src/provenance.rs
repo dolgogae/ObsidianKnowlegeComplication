@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::approval::ApprovedPlan;
 use crate::canonical::to_canonical_json;
 use crate::error::{Result, VaultcError};
-use crate::identity::{ContentHash, OperationId};
+use crate::identity::{ContentHash, EvidenceId};
 use crate::ir::SourceFile;
 use crate::plan::OutputOperation;
 
@@ -35,6 +35,7 @@ pub enum ProvenanceRecord {
         sources: Vec<ProvenanceSource>,
         proposal_id: Option<String>,
         evidence: Vec<vaultc_protocol::EvidenceRefWire>,
+        evidence_ids: Vec<EvidenceId>,
     },
 }
 
@@ -50,7 +51,7 @@ pub struct ProvenanceExplanation {
 pub(crate) fn records_for_output(
     approved: &ApprovedPlan,
     output_hashes: &[(String, ContentHash)],
-) -> Vec<ProvenanceRecord> {
+) -> Result<Vec<ProvenanceRecord>> {
     let mut records = Vec::new();
     for (path, hash) in output_hashes {
         if let Some(operation) = approved
@@ -157,13 +158,53 @@ pub(crate) fn records_for_output(
                 sources,
                 proposal_id: None,
                 evidence: Vec::new(),
+                evidence_ids: Vec::new(),
             });
-        } else if let Some(proposal) = approved
-            .approved_proposals
-            .iter()
-            .find(|proposal| generated_output_path(&proposal.proposal).as_deref() == Some(path))
-        {
-            let operation_id = generated_operation_id(&proposal.proposal.proposal_id);
+        } else if let Some(proposal) = approved.approved_proposals.iter().find(|proposal| {
+            matches!(
+                &proposal.materialization,
+                crate::approval::ProposalMaterialization::GeneratedNote {
+                    destination,
+                    ..
+                } if destination == path
+            )
+        }) {
+            let rebuilt = crate::approval::proposal_materialization(
+                &approved.plan,
+                &proposal.proposal,
+                proposal.content_hash,
+            )?;
+            if rebuilt != proposal.materialization {
+                return Err(VaultcError::ApprovalStale(format!(
+                    "generated proposal `{}` materialization is stale",
+                    proposal.proposal.proposal_id
+                )));
+            }
+            let crate::approval::ProposalMaterialization::GeneratedNote {
+                destination,
+                expected_output_hash,
+                evidence_ids,
+                operation_id,
+                ..
+            } = &proposal.materialization
+            else {
+                return Err(VaultcError::ApprovalStale(format!(
+                    "proposal `{}` has an inconsistent generated materialization",
+                    proposal.proposal.proposal_id
+                )));
+            };
+            if destination != path || expected_output_hash != hash {
+                return Err(VaultcError::ApprovalStale(format!(
+                    "generated proposal `{}` output hash or destination is stale",
+                    proposal.proposal.proposal_id
+                )));
+            }
+            if evidence_ids.len() != proposal.proposal.evidence.len() {
+                return Err(VaultcError::ApprovalStale(format!(
+                    "generated proposal `{}` evidence identity count is stale",
+                    proposal.proposal.proposal_id
+                )));
+            }
             let mut snapshots: Vec<_> = proposal
                 .proposal
                 .evidence
@@ -180,26 +221,39 @@ pub(crate) fn records_for_output(
             snapshots.dedup();
             documents.sort();
             documents.dedup();
-            let mut sources = Vec::new();
-            for evidence in &proposal.proposal.evidence {
-                let Ok(document_id) = evidence.document_id.parse::<crate::identity::DocumentId>()
-                else {
-                    continue;
-                };
-                let Some(document) = approved.plan.workspace.documents.get(&document_id) else {
-                    continue;
-                };
-                let evidence_hash = ContentHash::parse_hex(&evidence.content_hash).ok();
+            let mut sources = Vec::with_capacity(proposal.proposal.evidence.len());
+            for (evidence, evidence_id) in
+                proposal.proposal.evidence.iter().zip(evidence_ids.iter())
+            {
+                if EvidenceId::from_evidence(evidence)? != *evidence_id {
+                    return Err(VaultcError::ApprovalStale(format!(
+                        "generated proposal `{}` evidence identity is stale",
+                        proposal.proposal.proposal_id
+                    )));
+                }
+                let document_id = evidence
+                    .document_id
+                    .parse::<crate::identity::DocumentId>()?;
+                let document = approved
+                    .plan
+                    .workspace
+                    .documents
+                    .get(&document_id)
+                    .ok_or_else(|| {
+                        VaultcError::ApprovalStale(format!(
+                            "generated proposal `{}` evidence references an unknown document",
+                            proposal.proposal.proposal_id
+                        ))
+                    })?;
+                let evidence_hash = ContentHash::parse_hex(&evidence.content_hash)?;
                 sources.push(provenance_source(
                     &document.source_file,
                     Some(document.document_id.to_string()),
-                    evidence_hash,
+                    Some(evidence_hash),
                     evidence.byte_start,
                     evidence.byte_end,
                 ));
             }
-            sources.sort();
-            sources.dedup();
             records.push(ProvenanceRecord::Output {
                 output_path: path.clone(),
                 output_hash: *hash,
@@ -209,11 +263,12 @@ pub(crate) fn records_for_output(
                 sources,
                 proposal_id: Some(proposal.proposal.proposal_id.clone()),
                 evidence: proposal.proposal.evidence.clone(),
+                evidence_ids: evidence_ids.clone(),
             });
         }
     }
     records.sort_by(|left, right| output_path(left).cmp(output_path(right)));
-    records
+    Ok(records)
 }
 
 fn find_source_file<'a>(
@@ -296,10 +351,6 @@ fn sanitize_generated_name(title: &str, proposal_id: &str) -> String {
     let suffix =
         ContentHash::from_domain_bytes("vaultc:proposal-path:v1\0", proposal_id.as_bytes());
     format!("{}~{}", name, &suffix.hex()[..8])
-}
-
-pub(crate) fn generated_operation_id(proposal_id: &str) -> OperationId {
-    OperationId::from_parts("vaultc:generated-operation:v1\0", &[proposal_id.as_bytes()])
 }
 
 fn output_path(record: &ProvenanceRecord) -> &str {

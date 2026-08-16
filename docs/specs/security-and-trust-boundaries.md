@@ -77,7 +77,10 @@ It rechecks source type, size, and content hash before use. The CLI bounds
 control files and provider I/O and validates serialized plans/approvals before
 publication. Canvas parsing rejects duplicate JSON object keys, duplicate node
 IDs, malformed known node fields, and references that would escape the
-allocated Compiled Vault root.
+allocated Compiled Vault root. All source-derived output operations carry a
+sealed output commitment. Markdown rewrites additionally bind the exact source
+spans, replacement recipe, expected output hash, reverse-reconstructed source
+hash, and semantic reparse; missing required plan fields fail closed.
 
 This is not yet the full release threat model:
 

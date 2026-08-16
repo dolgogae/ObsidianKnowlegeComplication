@@ -17,7 +17,12 @@ source_refs:
 
 ## Purpose
 
-The canonical IR separates source syntax from output policy. It is versioned, serializable, deterministic, and sufficient to re-plan without reparsing unchanged files. Original bytes and exact source spans remain available for lossless copying and targeted rewriting.
+The canonical IR separates source syntax from output policy. It is versioned,
+serializable, deterministic, and sufficient to re-plan semantic output policy
+without reparsing unchanged files. Exact source spans and byte identities live
+in the IR; original bytes remain owned by the immutable source snapshot and are
+reopened when compilation or an exact post-rewrite hash requires them. Raw
+source copies MUST NOT be embedded in `DraftPlan` or Compiled Vault audit data.
 
 ## Identity hierarchy
 
@@ -49,13 +54,13 @@ Timestamps from the input filesystem MAY be preserved as informational metadata 
 
 ### Knowledge content
 
-- `Document`: file identity, source bytes/hash, decoded text policy, frontmatter, title/aliases/tags, ordered sections, syntax spans, outbound links.
+- `Document`: file identity and source-byte hash/reference, decoded text policy, frontmatter, title/aliases/tags, ordered sections, syntax spans, outbound links. It does not embed the original file bytes.
 - `Section`: heading level/path, source span, ordered blocks.
 - `Block`: stable block ID, block kind, source span, raw slice hash, comparison form.
 - `Link`: syntax kind, raw target, parsed path/heading/block components, display text, embed flag, resolution state.
 - `Asset`: media type, byte hash, size, original logical paths.
 - `Canvas`: typed nodes/edges plus preserved unknown JSON fields and source file references. Each file reference retains its unique node ID and raw path plus a tagged `pending`, `resolved`, `unresolved`, or `ambiguous` state. Resolved and ambiguous targets use typed Document, Asset, Canvas, or Base identities.
-- `BaseArtifact`: `BaseArtifactId`, opaque bytes, and path only; no inferred internal semantics in V1.
+- `BaseArtifact`: `BaseArtifactId` and an opaque source-file reference/path; no inferred internal semantics in V1. Its bytes remain in the immutable source snapshot and are copied without interpretation.
 - `EvidenceRef`: snapshot ID, document ID, optional block ID/span, and content hash.
 
 ### Future semantic records

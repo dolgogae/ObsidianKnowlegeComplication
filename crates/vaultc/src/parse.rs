@@ -80,7 +80,7 @@ pub(crate) fn parse_file(
     Ok(())
 }
 
-fn parse_markdown(
+pub(crate) fn parse_markdown(
     source_file: SourceFile,
     bytes: &[u8],
     _policy: &CompilerPolicy,

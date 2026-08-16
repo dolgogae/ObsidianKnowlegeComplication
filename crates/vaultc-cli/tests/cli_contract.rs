@@ -249,6 +249,82 @@ fn cli_exit_codes_follow_the_public_contract() {
 }
 
 #[test]
+fn approve_rejects_pre_hash_markdown_plan_as_decision_error() {
+    let temporary = tempfile::tempdir().expect("temporary old-plan workspace");
+    let source = temporary.path().join("source");
+    fs::create_dir(&source).expect("create Markdown source");
+    fs::write(source.join("Index.md"), "Read [[Target]].\n").expect("write linking note");
+    fs::write(source.join("Target.md"), "# Target\n").expect("write target note");
+
+    let source_argument = format!("old-plan={}", source.display());
+    let workspace = temporary.path().join("workspace.sqlite");
+    let plan_path = temporary.path().join("plan.json");
+    let output = run(&[
+        "--workspace",
+        as_utf8(&workspace),
+        "plan",
+        &source_argument,
+        "--out",
+        as_utf8(&plan_path),
+    ]);
+    assert_exit(&output, 0);
+
+    let mut plan: serde_json::Value =
+        serde_json::from_slice(&fs::read(&plan_path).expect("read current plan"))
+            .expect("decode current plan");
+    let plan_id = plan["plan_id"].as_str().expect("plan ID").to_owned();
+    let rewrite = plan["operations"]
+        .as_array_mut()
+        .expect("plan operations")
+        .iter_mut()
+        .find(|operation| operation["type"].as_str() == Some("rewrite_markdown"))
+        .expect("fixture requires a Markdown rewrite");
+    assert!(
+        rewrite
+            .as_object_mut()
+            .expect("rewrite operation object")
+            .remove("expected_output_hash")
+            .is_some(),
+        "current Markdown rewrite must contain expected_output_hash"
+    );
+    let old_plan_path = temporary.path().join("pre-hash-plan.json");
+    fs::write(
+        &old_plan_path,
+        serde_json::to_vec_pretty(&plan).expect("encode pre-hash plan"),
+    )
+    .expect("write pre-hash plan");
+
+    let decisions_path = temporary.path().join("decisions.json");
+    fs::write(
+        &decisions_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "plan_id": plan_id,
+            "decisions": [],
+            "conflicts": []
+        }))
+        .expect("encode decisions"),
+    )
+    .expect("write decisions");
+    let approved_path = temporary.path().join("approved.json");
+    let output = run(&[
+        "approve",
+        as_utf8(&old_plan_path),
+        "--decisions",
+        as_utf8(&decisions_path),
+        "--out",
+        as_utf8(&approved_path),
+    ]);
+    assert_exit(&output, EXIT_DECISION);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("expected_output_hash"),
+        "stderr must identify the missing required plan field: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!approved_path.exists());
+}
+
+#[test]
 fn cli_reports_unresolved_required_conflicts_as_decision_exit() {
     let temporary = tempfile::tempdir().expect("temporary decision workspace");
     let source = temporary.path().join("ambiguous-vault");

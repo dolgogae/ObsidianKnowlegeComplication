@@ -114,3 +114,29 @@ Append-only. Normative details live in specifications and accepted ADRs.
   published schema; formal migration/version matrices remain open.
 - Added five Canvas integration tests. The macOS arm64 local suite increased
   from 61 to 66 tests and passes with warning-free Clippy and clean rustfmt.
+
+## 2026-08-16 — Source-derived output commitments
+
+- Added a required `expected_output_hash` to pre-release schema 1 Markdown
+  rewrite operations. The operation identity now binds snapshot/source hash,
+  destination, expected output hash, and the exact ordered replacement recipe;
+  working-tree plans from before this field fail closed without a compatibility
+  default.
+- Planning derives the recipe from sealed link resolution, reads each affected
+  source once, validates original link slices, applies replacements, reparses
+  the result, and retains only the output hash. Compilation reopens the source,
+  rederives the recipe, and independently reapplies and checks it.
+- Generalized verification so every source-derived Copy, Markdown, and Canvas
+  output must match its sealed commitment. Markdown verification reverses the
+  replacements against the output to reconstruct a source candidate, compares
+  its source hash, and reparses the resulting link semantics without embedding
+  original source bytes in the artifact.
+- Corrected the same-precedence IR wording that implied raw bytes lived in
+  `Document` or `BaseArtifact`; immutable source snapshots own those bytes, and
+  IR/Plan retains only identity, spans, semantic records, and references.
+- Classified planning source/policy/decision/invariant failures as CLI exits
+  `3`/`2`/`4`/`70`; malformed pre-hash plans passed to `approve` now return
+  decision exit `4` instead of provider exit `5`.
+- Added three security regressions, one CLI unit test, and one CLI integration
+  test. The macOS arm64 local suite increased from 66 to 71 tests and passes
+  with warning-free Clippy and clean rustfmt.

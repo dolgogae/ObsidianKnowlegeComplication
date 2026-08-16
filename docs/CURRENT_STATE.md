@@ -26,9 +26,10 @@ Implemented production packages:
 
 - `vaultc`: safe snapshotting, canonical IDs/IR, Markdown and Canvas parsing,
   exact and review-only near deduplication, conflict/path planning, source-aware
-  Markdown rewrites, typed Canvas reference resolution and rewriting, immutable
-  approvals, atomic compilation, provenance, deterministic packing, independent
-  verification, and SQLite workspace state;
+  Markdown rewrites with sealed output commitments and reverse verification,
+  typed Canvas reference resolution and rewriting, immutable approvals, atomic
+  compilation, provenance, deterministic packing, independent verification,
+  and SQLite workspace state;
 - `vaultc-protocol`: versioned provider capabilities, projections, evidence,
   proposals, and transcript records without a vendor SDK dependency;
 - `vaultc-cli`: `inspect`, `plan`, `augment`, `approve`, `compile`, `verify`,
@@ -55,19 +56,23 @@ All commands below passed on macOS arm64 with Rust 1.97.1:
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 66 tests and all doctests passed |
+| `cargo test --workspace --all-features --no-fail-fast` | 71 tests and all doctests passed |
 | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
 
-The 66 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 3
-pack integration tests, 8 pipeline tests, 5 provider/approval tests, 15
-security tests, 8 CLI unit tests, 5 CLI integration tests, and 2 protocol
+The 71 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 3
+pack integration tests, 8 pipeline tests, 5 provider/approval tests, 18
+security tests, 9 CLI unit tests, 6 CLI integration tests, and 2 protocol
 tests. They cover, among other cases:
 
 - source immutability, deterministic plan/output, absolute-source-location
   independence, and byte-identical VaultPacks on one supported host;
 - exact note and attachment provenance, Markdown link rewrites, portable path
   collisions, stale sources, and tampered sealed plans;
+- exact Markdown span application and expected output hashes, reverse
+  reconstruction to the sealed source hash, byte-identical copy commitments,
+  missing required rewrite fields, and semantic output/provenance/manifest
+  attacks that are fully resealed without changing the sealed plan;
 - Document, Asset, Canvas, and Base file-node resolution; deterministic
   destination-relative Canvas rewrites; unknown-field preservation; unchanged
   byte copies; node-scoped ambiguity waivers; output-root containment; duplicate
@@ -81,7 +86,8 @@ tests. They cover, among other cases:
   malformed UTF-8/JSON, resource limits, exclusions, output no-clobber, and
   independently resealed artifact tampering;
 - CLI/SDK plan parity and the full plan → approve → compile → pack → verify →
-  explain lifecycle;
+  explain lifecycle, including stable plan input/decision/internal exit families
+  and fail-closed pre-output-hash plan rejection;
 - provider deadline and SIGINT cancellation while input is blocked, bounded
   shutdown, process-group reaping, and non-publication of partial augmentation.
 
@@ -108,10 +114,10 @@ The exact requirement-to-test mapping is in
   complete normative Markdown/Canvas golden corpus—including broader Unicode,
   escaping, self-reference, and mixed-target vectors—and all
   platform-normalization vectors are not yet present.
-- Markdown/frontmatter/wikilink/embed/ordinary-link parsing and byte-span
-  rewrites exist, but rewritten Markdown operations do not yet seal and
-  independently verify their expected post-rewrite output hash as Canvas
-  operations do.
+- Markdown/frontmatter/wikilink/embed/ordinary-link parsing and exact byte-span
+  rewrites are output-hash-bound and independently reversed to their sealed
+  source hash. The remaining corpus gaps include CRLF/BOM, broader Unicode and
+  escaping, and multiple grow/shrink replacement combinations.
 - Input paths are stored after NFC normalization. The original NFD/NFC spelling
   is not retained, so some cross-source normalization collisions are typed as
   `PATH_EXACT` and raw-path provenance is incomplete.
@@ -144,10 +150,11 @@ The exact requirement-to-test mapping is in
   archives are treated as opaque rather than recursively extracted.
 - The artifact manifest is still minimal: media types, license/attribution
   summaries, creation-policy/distribution metadata, and signature metadata from
-  the target format are not implemented. Canvas output bytes are reconstructed
-  from the sealed plan, but Markdown rewrites and generated bodies do not yet
-  have the same derivation check; an unsigned, wholly resealed artifact also
-  has no external authenticity anchor.
+  the target format are not implemented. Canvas and Markdown rewrite bytes are
+  independently reconstructed from sealed operations, and every source-derived
+  output is hash-committed; generated bodies/source IDs do not yet have the same
+  derivation check. An unsigned, wholly resealed artifact also has no external
+  authenticity anchor.
 - The public SDK pack writer writes directly to its destination; atomic
   no-clobber pack staging is currently a CLI-only wrapper. There is no installer
   or permission/license/signature display surface.
@@ -161,13 +168,14 @@ The exact requirement-to-test mapping is in
 
 ## Next implementation slices
 
-1. Complete the remaining ALG-NRM-001 Markdown/Canvas golden corpus and add
-   sealed expected-output reconstruction for Markdown rewrites.
-2. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
+1. Complete the remaining ALG-NRM-001 Markdown/Canvas golden corpus.
+2. Seal and independently reconstruct generated-note body/source identities,
+   then continue the full ALG-PRV-001 typed graph.
+3. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
    artifact determinism fixtures.
-3. Stream large blobs and run QG-006 at the full reference workload.
-4. Define schema migrations and run property/fuzz and fault-injection suites.
-5. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
+4. Stream large blobs and run QG-006 at the full reference workload.
+5. Define schema migrations and run property/fuzz and fault-injection suites.
+6. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
    ADR before calling a pack signed or marketplace-ready.
 
 No MCP, plugin, marketplace, or neuroscience-inspired runtime behavior should

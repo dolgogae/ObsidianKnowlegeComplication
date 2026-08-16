@@ -44,10 +44,10 @@ implementation gaps are also summarized in
 - Define the non-circular provenance boundary for self-referential
   `manifest.json`, `provenance.jsonl`, and `checksums.txt` administrative files,
   including which plan/config/toolchain record produces each one.
-- Decide how the independent verifier proves rewritten Markdown and generated
-  bytes against sealed operations, and which trust anchor authenticates a
-  resealed but internally consistent unsigned artifact. Canvas rewrites already
-  seal their expected output hash and are independently reconstructed.
+- Complete sealed output reconstruction for generated frontmatter/body/source
+  IDs, and decide which trust anchor authenticates a wholly resealed but
+  internally consistent unsigned artifact. Source-derived Copy, Markdown, and
+  Canvas outputs already carry and verify sealed commitments.
 - Close filesystem race hardening: descriptor-relative/no-follow source opens
   and a portable atomic no-clobber directory publication primitive.
 - Complete archive accounting for compressed bytes, excluded/duplicate member
@@ -141,6 +141,22 @@ change.
   node-scoped required conflict and V1 can publish it only through an explicit
   policy waiver. Rewritten Canvas seals an expected output hash and is
   independently reconstructed; unchanged Canvas remains byte-identical.
+- A same-precedence documentation ambiguity said `Document` and
+  `BaseArtifact` contained source bytes, while the architecture contract and
+  ADR-0006 assign original-byte ownership to immutable source snapshots and
+  forbid raw copies in Compiled Vault audit data. The canonical IR now states
+  that these records retain byte identities, spans, and source references only;
+  planning/compilation reopens the snapshot when exact bytes are required.
+- Markdown rewrite operations seal their source identity, ordered link-target
+  replacements, and exact expected output hash. Planning reads each affected
+  source once and discards bytes after hashing; compilation independently
+  reapplies the recipe; verification checks the output commitment, reverses
+  replacements to a source candidate, compares its sealed source hash, and
+  reparses link semantics. Copy outputs now use the same commitment boundary.
+- Pre-output-hash development plans have no compatibility default: the required
+  field is absent, so SDK/CLI decoding fails closed. CLI planning classifies
+  input/policy/decision/invariant failures as `3`/`2`/`4`/`70`, and `approve`
+  classifies a malformed old plan as decision exit `4`.
 - The current `.vaultpack` is deterministic but unsigned. The lower-precedence
   project-context phrase that called it signed conflicted with the output
   specification; it was corrected in favor of the normative future signing

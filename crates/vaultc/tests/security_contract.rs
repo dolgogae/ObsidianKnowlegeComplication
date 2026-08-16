@@ -9,7 +9,7 @@ use std::path::Path;
 use vaultc::approval::{ConflictDecision, ConflictDecisionLog};
 use vaultc::compile::ArtifactManifest;
 use vaultc::diagnostic::DiagnosticCode;
-use vaultc::plan::ConflictResolution;
+use vaultc::plan::{ConflictResolution, OutputOperation, RewriteReplacement};
 use vaultc::provenance::ProvenanceRecord;
 use vaultc::{
     ApprovalLog, CompilerPolicy, SourceSpec, ValidatedProposals, VaultCompiler, VaultcError,
@@ -82,6 +82,43 @@ fn encode_provenance(records: &[ProvenanceRecord]) -> Vec<u8> {
         encoded.push(b'\n');
     }
     encoded
+}
+
+fn apply_markdown_replacements_for_test(
+    mut source: Vec<u8>,
+    replacements: &[RewriteReplacement],
+) -> Vec<u8> {
+    for replacement in replacements.iter().rev() {
+        let start = usize::try_from(replacement.span.byte_start).expect("replacement start");
+        let end = usize::try_from(replacement.span.byte_end).expect("replacement end");
+        source.splice(
+            start..end,
+            replacement.replacement.as_bytes().iter().copied(),
+        );
+    }
+    source
+}
+
+fn rewrite_provenance_output_hash(root: &Path, output_path: &str, output_bytes: &[u8]) {
+    let provenance_path = root.join(".vaultc/provenance.jsonl");
+    let provenance = fs::read_to_string(&provenance_path).expect("read provenance ledger");
+    let mut records: Vec<ProvenanceRecord> = provenance
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("decode provenance record"))
+        .collect();
+    let record = records
+        .iter_mut()
+        .find(|record| {
+            matches!(
+                record,
+                ProvenanceRecord::Output { output_path: path, .. } if path == output_path
+            )
+        })
+        .expect("rewritten Markdown has an output provenance record");
+    let ProvenanceRecord::Output { output_hash, .. } = record;
+    *output_hash = vaultc::identity::ContentHash::from_bytes(output_bytes);
+    fs::write(provenance_path, encode_provenance(&records))
+        .expect("rewrite provenance to match the forged Markdown hash");
 }
 
 fn write_zip(path: &Path, member: &str, bytes: &[u8]) {
@@ -475,6 +512,242 @@ fn verifier_detects_checksum_tampering_and_unchecksummed_files() {
         .verify(&extra)
         .expect_err("unchecksummed file must be detected");
     assert!(matches!(error, VaultcError::VerificationFailed(_)));
+}
+
+#[test]
+fn verifier_rejects_resealed_markdown_rewrite_output_that_disagrees_with_expected_output_hash() {
+    let compiler = common::compiler();
+    let inspection = compiler
+        .inspect([common::fixture_source(
+            "markdown-integrity",
+            "markdown_rewrite_integrity",
+        )])
+        .expect("inspect Markdown rewrite integrity fixture");
+    let plan = compiler
+        .plan(&inspection)
+        .expect("plan Markdown rewrite integrity fixture");
+    let (output_path, replacements, expected_output_hash) = plan
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            OutputOperation::RewriteMarkdown {
+                source_path,
+                destination,
+                replacements,
+                expected_output_hash,
+                ..
+            } if source_path == "Index.md" => Some((
+                destination.clone(),
+                replacements.clone(),
+                *expected_output_hash,
+            )),
+            _ => None,
+        })
+        .expect("Index.md requires a sealed Markdown rewrite");
+    assert_eq!(replacements.len(), 1, "only the real wikilink is rewritten");
+    let expected = apply_markdown_replacements_for_test(
+        fs::read(common::fixture("markdown_rewrite_integrity/Index.md"))
+            .expect("read source Markdown fixture"),
+        &replacements,
+    );
+    assert_eq!(
+        expected_output_hash,
+        vaultc::identity::ContentHash::from_bytes(&expected),
+        "the sealed Markdown output hash must bind the exact span-applied bytes"
+    );
+
+    let approved = compiler
+        .approve_without_augmentation(plan)
+        .expect("approve Markdown rewrite plan");
+    let temporary = tempfile::tempdir().expect("temporary Markdown artifact parent");
+    let artifact = temporary.path().join("compiled");
+    compiler
+        .compile(&approved, &artifact)
+        .expect("compile Markdown rewrite fixture");
+    compiler
+        .verify(&artifact)
+        .expect("verify untampered Markdown rewrite artifact");
+
+    let actual = fs::read(artifact.join(&output_path)).expect("read rewritten Markdown output");
+    assert_eq!(actual, expected, "only sealed source spans may change");
+    let actual_text = std::str::from_utf8(&actual).expect("rewritten Markdown is UTF-8");
+    assert!(actual_text.contains("[[Target.md|target display]]"));
+    assert!(actual_text.contains("Inline code stays literal: `[[Target]]`."));
+    assert!(actual_text.contains("```text\n[[Target]]\n```"));
+    assert!(actual_text.contains("Sentinel before: alpha  spacing and punctuation !? [] {}."));
+    assert!(actual_text.contains("Sentinel after: omega  spacing and punctuation <>/\\\\."));
+    assert_eq!(
+        fs::read(artifact.join("knowledge/Unchanged.md"))
+            .expect("read unchanged compiled Markdown"),
+        fs::read(common::fixture("markdown_rewrite_integrity/Unchanged.md"))
+            .expect("read unchanged source Markdown"),
+        "a Markdown copy operation must remain byte-identical"
+    );
+
+    let forged = actual_text.replace("ORIGINAL_MEANING", "FORGED_MEANING");
+    assert_ne!(forged.as_bytes(), actual.as_slice());
+    fs::write(artifact.join(&output_path), forged.as_bytes())
+        .expect("semantically forge rewritten Markdown body");
+    rewrite_provenance_output_hash(&artifact, &output_path, forged.as_bytes());
+    reseal_artifact_after_change(&artifact, &output_path);
+    reseal_artifact_after_change(&artifact, ".vaultc/provenance.jsonl");
+
+    let error = compiler
+        .verify(&artifact)
+        .expect_err("a fully resealed semantic Markdown rewrite forgery must be rejected");
+    assert!(
+        matches!(error, VaultcError::VerificationFailed(message) if message.contains("output hash does not match the sealed operation"))
+    );
+}
+
+#[test]
+fn verifier_rejects_resealed_copy_output_that_disagrees_with_plan() {
+    let compiler = common::compiler();
+    let inspection = compiler
+        .inspect([common::fixture_source(
+            "markdown-integrity",
+            "markdown_rewrite_integrity",
+        )])
+        .expect("inspect Markdown copy integrity fixture");
+    let plan = compiler
+        .plan(&inspection)
+        .expect("plan Markdown copy integrity fixture");
+    let (output_path, expected_hash) = plan
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            OutputOperation::Copy {
+                source_path,
+                destination,
+                expected_hash,
+                kind: vaultc::ir::FileKind::Markdown,
+                ..
+            } if source_path == "Unchanged.md" => Some((destination.clone(), *expected_hash)),
+            _ => None,
+        })
+        .expect("Unchanged.md uses a sealed Markdown copy operation");
+    let source = fs::read(common::fixture("markdown_rewrite_integrity/Unchanged.md"))
+        .expect("read unchanged Markdown source");
+    assert_eq!(
+        expected_hash,
+        vaultc::identity::ContentHash::from_bytes(&source)
+    );
+
+    let approved = compiler
+        .approve_without_augmentation(plan)
+        .expect("approve Markdown copy integrity plan");
+    let temporary = tempfile::tempdir().expect("temporary Markdown copy artifact parent");
+    let artifact = temporary.path().join("compiled");
+    compiler
+        .compile(&approved, &artifact)
+        .expect("compile Markdown copy integrity fixture");
+    compiler
+        .verify(&artifact)
+        .expect("verify untampered Markdown copy artifact");
+    assert_eq!(
+        fs::read(artifact.join(&output_path)).expect("read copied Markdown output"),
+        source
+    );
+
+    let forged = String::from_utf8(source)
+        .expect("Markdown copy fixture is UTF-8")
+        .replace("These bytes", "Forged bytes");
+    fs::write(artifact.join(&output_path), forged.as_bytes())
+        .expect("semantically forge copied Markdown body");
+    rewrite_provenance_output_hash(&artifact, &output_path, forged.as_bytes());
+    reseal_artifact_after_change(&artifact, &output_path);
+    reseal_artifact_after_change(&artifact, ".vaultc/provenance.jsonl");
+
+    let error = compiler
+        .verify(&artifact)
+        .expect_err("a fully resealed Copy output forgery must be rejected");
+    assert!(
+        matches!(error, VaultcError::VerificationFailed(message) if message.contains("output hash does not match the sealed operation"))
+    );
+}
+
+#[test]
+fn verifier_rejects_resealed_markdown_expected_hash_and_replacement_plan_tampering() {
+    let compiler = common::compiler();
+    let inspection = compiler
+        .inspect([common::fixture_source(
+            "markdown-integrity",
+            "markdown_rewrite_integrity",
+        )])
+        .expect("inspect Markdown plan tamper fixture");
+    let plan = compiler
+        .plan(&inspection)
+        .expect("plan Markdown plan tamper fixture");
+    let approved = compiler
+        .approve_without_augmentation(plan)
+        .expect("approve Markdown plan tamper fixture");
+    let temporary = tempfile::tempdir().expect("temporary Markdown plan artifact parent");
+    let baseline = temporary.path().join("baseline");
+    compiler
+        .compile(&approved, &baseline)
+        .expect("compile Markdown plan tamper baseline");
+
+    for mutation in [
+        "expected output hash",
+        "missing expected output hash",
+        "replacement",
+    ] {
+        let artifact = temporary
+            .path()
+            .join(format!("tampered-{}", mutation.replace(' ', "-")));
+        common::copy_tree(&baseline, &artifact);
+        let plan_path = artifact.join(".vaultc/plan.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&plan_path).expect("read sealed Markdown plan"))
+                .expect("decode sealed Markdown plan");
+        let operation = value["plan"]["operations"]
+            .as_array_mut()
+            .expect("sealed plan operation array")
+            .iter_mut()
+            .find(|operation| {
+                operation["type"].as_str() == Some("rewrite_markdown")
+                    && operation["source_path"].as_str() == Some("Index.md")
+            })
+            .expect("sealed Index.md rewrite operation");
+        match mutation {
+            "expected output hash" => {
+                assert!(
+                    operation.get("expected_output_hash").is_some(),
+                    "Markdown rewrite operations must seal an expected output hash"
+                );
+                operation["expected_output_hash"] = serde_json::Value::String(
+                    vaultc::identity::ContentHash::from_bytes(b"forged Markdown output").hex(),
+                );
+            }
+            "missing expected output hash" => {
+                operation
+                    .as_object_mut()
+                    .expect("Markdown rewrite operation object")
+                    .remove("expected_output_hash")
+                    .expect("required Markdown expected output hash field");
+            }
+            "replacement" => {
+                operation["replacements"][0]["replacement"] =
+                    serde_json::Value::String("Forged.md".into());
+            }
+            _ => unreachable!(),
+        }
+        fs::write(
+            &plan_path,
+            vaultc::canonical::to_canonical_json_pretty(&value)
+                .expect("encode canonical resealed Markdown plan"),
+        )
+        .expect("write tampered Markdown plan");
+        reseal_artifact_after_change(&artifact, ".vaultc/plan.json");
+
+        let error = compiler
+            .verify(&artifact)
+            .expect_err("fully resealed Markdown plan operation tampering must be rejected");
+        assert!(
+            matches!(error, VaultcError::VerificationFailed(message) if !message.contains("checksum mismatch") && !message.contains("manifest inventory")),
+            "{mutation} must reach and fail the sealed plan integrity boundary"
+        );
+    }
 }
 
 #[test]

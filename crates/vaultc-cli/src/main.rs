@@ -205,6 +205,30 @@ impl CliFailure {
     }
 }
 
+fn plan_failure(error: &VaultcError) -> CliFailure {
+    let code = match error {
+        VaultcError::UnsafePath { .. }
+        | VaultcError::UnsupportedSource(_)
+        | VaultcError::ResourceLimit(_)
+        | VaultcError::MalformedInput { .. }
+        | VaultcError::IdentityMismatch(_)
+        | VaultcError::Io { .. } => EXIT_INPUT,
+        VaultcError::InvalidConfig(_) => EXIT_USAGE,
+        VaultcError::PlanStale(_) => EXIT_DECISION,
+        VaultcError::ProposalInvalid(_)
+        | VaultcError::ApprovalStale(_)
+        | VaultcError::OutputExists(_)
+        | VaultcError::VerificationFailed(_)
+        | VaultcError::Provider(_)
+        | VaultcError::Json(_)
+        | VaultcError::TomlDecode(_)
+        | VaultcError::TomlEncode(_)
+        | VaultcError::Sqlite(_)
+        | VaultcError::Internal(_) => EXIT_INTERNAL,
+    };
+    CliFailure::new(code, error.to_string())
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum AugmentationRecord {
@@ -272,7 +296,7 @@ fn run(cli: Cli) -> CliResult<()> {
                 .map_err(|error| CliFailure::from_vaultc(EXIT_INPUT, error))?;
             let plan = compiler
                 .plan(&inspection)
-                .map_err(|error| CliFailure::from_vaultc(EXIT_DECISION, error))?;
+                .map_err(|error| plan_failure(&error))?;
             write_canonical_json(&out, &plan)?;
             print_plan(&plan, &out, format)?;
             let unresolved = plan.unresolved_required_conflicts().count();
@@ -473,7 +497,7 @@ fn approve_command(
     proposals_path: Option<&Path>,
     out: &Path,
 ) -> CliResult<()> {
-    let plan: DraftPlan = read_json(plan_path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
+    let plan: DraftPlan = read_json(plan_path, CONTROL_FILE_LIMIT, EXIT_DECISION)?;
     plan.validate_integrity()
         .map_err(|error| CliFailure::from_vaultc(EXIT_DECISION, error))?;
     let decision_document: DecisionDocument =
@@ -1666,5 +1690,46 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert!(read_jsonl::<serde_json::Value>(path, 64, 1, 2, EXIT_PROVIDER).is_err());
         assert!(read_jsonl::<serde_json::Value>(path, 64, 8, 1, EXIT_PROVIDER).is_err());
+    }
+
+    #[test]
+    fn plan_error_families_are_classified_without_hiding_invariants() {
+        let input_errors = [
+            VaultcError::UnsafePath {
+                path: "unsafe".into(),
+                reason: "escapes source root".into(),
+            },
+            VaultcError::UnsupportedSource(PathBuf::from("unsupported")),
+            VaultcError::ResourceLimit("source is too large".into()),
+            VaultcError::MalformedInput {
+                path: "bad.zip".into(),
+                reason: "invalid archive".into(),
+            },
+            VaultcError::IdentityMismatch("changed.md".into()),
+            VaultcError::Io {
+                path: PathBuf::from("missing.md"),
+                source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
+            },
+        ];
+        for error in input_errors {
+            assert_eq!(plan_failure(&error).code, EXIT_INPUT);
+        }
+
+        assert_eq!(
+            plan_failure(&VaultcError::InvalidConfig("bad policy".into())).code,
+            EXIT_USAGE
+        );
+        assert_eq!(
+            plan_failure(&VaultcError::PlanStale("decision boundary".into())).code,
+            EXIT_DECISION
+        );
+        assert_eq!(
+            plan_failure(&VaultcError::Internal("broken invariant".into())).code,
+            EXIT_INTERNAL
+        );
+        assert_eq!(
+            plan_failure(&VaultcError::Provider("impossible during planning".into())).code,
+            EXIT_INTERNAL
+        );
     }
 }

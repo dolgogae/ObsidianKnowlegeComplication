@@ -78,6 +78,14 @@ compilation, and verification revalidate sealed plan/proposal/conflict
 identities. Applications MUST NOT mutate a `DraftPlan` and retain its original
 `plan_id`.
 
+Planning reopens each source that contains a materialized Markdown rewrite once
+to compute its exact expected output hash; it does not serialize those source
+bytes into the plan. A changed, missing, unreadable, malformed, unsafe, or
+unsupported source during this phase is CLI input exit `3`; invalid policy is
+exit `2`, stale planning state or required decisions are exit `4`, and an
+unexpected planning invariant is exit `70`. `approve` treats a malformed or
+pre-output-hash `DraftPlan` as a plan/decision error (`4`), not a provider error.
+
 ## CLI commands
 
 The frozen `0.1.0` command forms are:
@@ -190,8 +198,11 @@ The numeric exit codes are frozen for the `0.1.x` CLI:
 Rust APIs follow SemVer. JSON schemas and NDJSON envelopes carry independent
 schema versions. CLI human text is not stable. The current verifier accepts
 only its exact schema/compiler version; migration and compatibility matrices
-are not implemented yet. Deprecations require one minor-version migration
-window before `1.0` where practical and two after `1.0`.
+are not implemented yet. The pre-release schema 1
+`RewriteMarkdown.expected_output_hash` field is required, so earlier
+working-tree plans without it fail closed rather than receiving a default.
+Deprecations require one minor-version migration window before `1.0` where
+practical and two after `1.0`.
 
 ## Language bindings
 

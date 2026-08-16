@@ -95,9 +95,22 @@ fn compiled_layout_excludes_raw_sources_and_preserves_v1_artifacts() {
     assert!(!output.join(".obsidian").exists());
     assert!(output.join("canvases/Board.canvas").is_file());
     assert!(output.join("views/View.base").is_file());
+    let compiled_canvas: serde_json::Value = serde_json::from_slice(
+        &fs::read(output.join("canvases/Board.canvas")).expect("read compiled Canvas"),
+    )
+    .expect("parse rewritten compiled Canvas");
+    let source_canvas: serde_json::Value = serde_json::from_slice(
+        &fs::read(common::fixture("basic_vault/Board.canvas")).expect("read source Canvas"),
+    )
+    .expect("parse source Canvas");
+    assert_eq!(compiled_canvas["nodes"][0]["file"], "../knowledge/Topic.md");
     assert_eq!(
-        fs::read(output.join("canvases/Board.canvas")).expect("read compiled Canvas"),
-        fs::read(common::fixture("basic_vault/Board.canvas")).expect("read source Canvas")
+        compiled_canvas["nodes"][0]["fixture_unknown"],
+        source_canvas["nodes"][0]["fixture_unknown"]
+    );
+    assert_eq!(
+        compiled_canvas["fixture_root_unknown"],
+        source_canvas["fixture_root_unknown"]
     );
     assert_eq!(
         fs::read(output.join("views/View.base")).expect("read compiled Base"),
@@ -275,7 +288,8 @@ fn sealed_plan_operations_cannot_change_before_materialization() {
         .expect("approve deterministic plan");
     let destination = match &mut approved.plan.operations[0] {
         OutputOperation::Copy { destination, .. }
-        | OutputOperation::RewriteMarkdown { destination, .. } => destination,
+        | OutputOperation::RewriteMarkdown { destination, .. }
+        | OutputOperation::RewriteCanvas { destination, .. } => destination,
     };
     *destination = "knowledge/unapproved-plan-mutation.md".into();
 

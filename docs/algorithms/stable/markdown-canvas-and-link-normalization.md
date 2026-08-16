@@ -53,6 +53,11 @@ A wikilink/embed is parsed into `(raw_target, path?, heading?, block_id?, displa
 Rewriting replaces only target spans recorded by the scanner. It preserves surrounding source bytes, display text, embed marker, heading/block suffix, and escaping. The new relative target is calculated from the allocated output path using `/` separators and URL/Obsidian escaping rules appropriate to the link syntax.
 
 Canvas parsing types known fields (`nodes`, `edges`, file nodes and IDs) while preserving unknown JSON fields. Referenced files use the same resolver and output path map. Serialization uses deterministic key policy only for generated/rewritten Canvas; unchanged files may be copied byte-for-byte.
+Canvas `file` rewrites store the destination-relative semantic path with `/`
+separators. They do not apply URL percent encoding or Markdown/wikilink
+escaping; the canonical JSON serializer alone escapes the JSON string. A raw
+unresolved or waived path may be retained only when lexical resolution from
+the allocated Canvas destination remains inside the Compiled Vault root.
 
 ## Pseudocode
 
@@ -75,7 +80,7 @@ Parsing and scanning are `O(n)` expected for `n` bytes; link-index construction 
 
 ## Edge and security cases
 
-Cover BOM, CRLF/CR, NFC/NFD, combining marks, emoji/graphemes, malformed YAML, duplicate YAML keys, code containing `[[`, escaped delimiters, nested brackets, headings with aliases, case collisions, Windows reserved names, JSON depth/size, and overlapping spans. Never perform regex-only rewriting across a full Markdown document.
+Cover BOM, CRLF/CR, NFC/NFD, combining marks, emoji/graphemes, malformed YAML, duplicate YAML keys, code containing `[[`, escaped delimiters, nested brackets, headings with aliases, case collisions, Windows reserved names, JSON depth/size, duplicate JSON object keys, duplicate Canvas node IDs, and overlapping spans. Duplicate JSON keys and node IDs fail closed because a last-wins parse cannot preserve or uniquely address them. Never perform regex-only rewriting across a full Markdown document.
 
 ## Worked example
 

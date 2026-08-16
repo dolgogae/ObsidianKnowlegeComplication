@@ -26,8 +26,9 @@ Implemented production packages:
 
 - `vaultc`: safe snapshotting, canonical IDs/IR, Markdown and Canvas parsing,
   exact and review-only near deduplication, conflict/path planning, source-aware
-  Markdown rewrites, immutable approvals, atomic compilation, provenance,
-  deterministic packing, independent verification, and SQLite workspace state;
+  Markdown rewrites, typed Canvas reference resolution and rewriting, immutable
+  approvals, atomic compilation, provenance, deterministic packing, independent
+  verification, and SQLite workspace state;
 - `vaultc-protocol`: versioned provider capabilities, projections, evidence,
   proposals, and transcript records without a vendor SDK dependency;
 - `vaultc-cli`: `inspect`, `plan`, `augment`, `approve`, `compile`, `verify`,
@@ -54,18 +55,24 @@ All commands below passed on macOS arm64 with Rust 1.97.1:
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 61 tests and all doctests passed |
+| `cargo test --workspace --all-features --no-fail-fast` | 66 tests and all doctests passed |
 | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
 
-The 61 tests comprise 15 `vaultc` unit tests, 3 pack integration tests, 8
-pipeline tests, 5 provider/approval tests, 15 security tests, 8 CLI unit tests,
-5 CLI integration tests, and 2 protocol tests. They cover, among other cases:
+The 66 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 3
+pack integration tests, 8 pipeline tests, 5 provider/approval tests, 15
+security tests, 8 CLI unit tests, 5 CLI integration tests, and 2 protocol
+tests. They cover, among other cases:
 
 - source immutability, deterministic plan/output, absolute-source-location
   independence, and byte-identical VaultPacks on one supported host;
 - exact note and attachment provenance, Markdown link rewrites, portable path
   collisions, stale sources, and tampered sealed plans;
+- Document, Asset, Canvas, and Base file-node resolution; deterministic
+  destination-relative Canvas rewrites; unknown-field preservation; unchanged
+  byte copies; node-scoped ambiguity waivers; output-root containment; duplicate
+  JSON-key/node rejection; and independently resealed semantic/target-removal
+  tampering;
 - explicit proposal approvals, evidence binding, generated-frontmatter
   injection resistance, conflict waiver binding, and transcript audit closure;
 - file-level evidence with no span, exact block hash/span evidence, rejection of
@@ -85,23 +92,26 @@ The exact requirement-to-test mapping is in
 
 | Gate | State | Evidence or remaining work |
 |---|---|---|
-| QG-001 Functional | implemented on macOS arm64 | current automated suite is green; the supported-platform matrix and remaining parser/Canvas gaps are not complete |
+| QG-001 Functional | implemented on macOS arm64 | current automated suite is green; the complete Markdown/Canvas golden corpus and supported-platform matrix are not complete |
 | QG-002 Determinism | implemented on one platform | same-host bytes and absolute-location independence pass; Linux/Windows/toolchain comparison remains |
 | QG-003 Provenance | partial | content outputs have exact source/proposal linkage and audit comparison; the full ALG-PRV-001 typed graph, administrative-file closure, record/edge IDs, and attribution nodes are missing |
 | QG-004 Safety | implemented corpus green | current hostile-input and control-file tests pass; fuzz/property campaigns remain |
 | QG-005 Compatibility | documented | no migration/version compatibility matrix is implemented yet |
 | QG-006 Performance | not verified | the 100,000-note/20 GB/20-minute/2 GB RSS benchmark has not run |
-| QG-007 Documentation | passed for this change | current state, traceability, ADR-0009, specs, and append-only decision log are updated; all relative links across 60 Markdown files resolve |
+| QG-007 Documentation | passed for this change | current state, traceability, specs, and append-only decision log are updated; all repository-relative Markdown links resolve |
 | QG-008 Supply chain | partial | dual licenses and `Cargo.lock` exist; audit policy, SBOM, release provenance, signing, and clean-room release automation remain |
 
 ## Known implementation gaps
 
-- Canvas JSON and file-reference records are parsed and unknown JSON is
-  preserved, but Canvas references are not yet resolved or rewritten. Therefore
-  REQ-PAR-002 is only partially implemented.
+- Canvas file references now resolve through typed Document, Asset, Canvas, and
+  Base targets and rewritten outputs are independently reconstructed. The
+  complete normative Markdown/Canvas golden corpus—including broader Unicode,
+  escaping, self-reference, and mixed-target vectors—and all
+  platform-normalization vectors are not yet present.
 - Markdown/frontmatter/wikilink/embed/ordinary-link parsing and byte-span
-  rewrites exist, but the complete normative Markdown/Canvas golden corpus and
-  all platform-normalization vectors are not yet present.
+  rewrites exist, but rewritten Markdown operations do not yet seal and
+  independently verify their expected post-rewrite output hash as Canvas
+  operations do.
 - Input paths are stored after NFC normalization. The original NFD/NFC spelling
   is not retained, so some cross-source normalization collisions are typed as
   `PATH_EXACT` and raw-path provenance is incomplete.
@@ -134,9 +144,10 @@ The exact requirement-to-test mapping is in
   archives are treated as opaque rather than recursively extracted.
 - The artifact manifest is still minimal: media types, license/attribution
   summaries, creation-policy/distribution metadata, and signature metadata from
-  the target format are not implemented. Verification checks internal
-  consistency but does not rederive rewritten output bytes from immutable
-  source bytes stored outside the artifact.
+  the target format are not implemented. Canvas output bytes are reconstructed
+  from the sealed plan, but Markdown rewrites and generated bodies do not yet
+  have the same derivation check; an unsigned, wholly resealed artifact also
+  has no external authenticity anchor.
 - The public SDK pack writer writes directly to its destination; atomic
   no-clobber pack staging is currently a CLI-only wrapper. There is no installer
   or permission/license/signature display surface.
@@ -150,8 +161,8 @@ The exact requirement-to-test mapping is in
 
 ## Next implementation slices
 
-1. Complete ALG-NRM-001 Canvas reference resolution/rewriting and the normative
-   Markdown/Canvas golden corpus.
+1. Complete the remaining ALG-NRM-001 Markdown/Canvas golden corpus and add
+   sealed expected-output reconstruction for Markdown rewrites.
 2. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
    artifact determinism fixtures.
 3. Stream large blobs and run QG-006 at the full reference workload.

@@ -75,7 +75,9 @@ special files, named secret files, executable extensions, duplicate archive
 members, per-file/total/count limits, and source ZIP expansion-ratio breaches.
 It rechecks source type, size, and content hash before use. The CLI bounds
 control files and provider I/O and validates serialized plans/approvals before
-publication.
+publication. Canvas parsing rejects duplicate JSON object keys, duplicate node
+IDs, malformed known node fields, and references that would escape the
+allocated Compiled Vault root.
 
 This is not yet the full release threat model:
 

@@ -5,7 +5,8 @@ use serde_json::Value;
 
 use crate::diagnostic::SourceSpan;
 use crate::identity::{
-    AssetId, BlockId, CanvasId, ContentHash, DocumentId, LinkId, SnapshotId, SourceFileId,
+    AssetId, BaseArtifactId, BlockId, CanvasId, ContentHash, DocumentId, LinkId, SnapshotId,
+    SourceFileId,
 };
 use crate::source::SourceId;
 
@@ -146,7 +147,29 @@ pub struct Canvas {
 pub struct CanvasFileReference {
     pub node_id: String,
     pub raw_path: String,
-    pub resolved_document: Option<DocumentId>,
+    pub resolution: CanvasReferenceResolution,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum CanvasReferenceTarget {
+    Document(DocumentId),
+    Asset(AssetId),
+    Canvas(CanvasId),
+    Base(BaseArtifactId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum CanvasReferenceResolution {
+    Pending,
+    Resolved {
+        target: CanvasReferenceTarget,
+    },
+    Unresolved,
+    Ambiguous {
+        candidates: Vec<CanvasReferenceTarget>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,6 +227,7 @@ fn source_basename(source_file: &SourceFile) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BaseArtifact {
+    pub base_artifact_id: BaseArtifactId,
     pub source_file: SourceFile,
 }
 

@@ -54,8 +54,8 @@ Timestamps from the input filesystem MAY be preserved as informational metadata 
 - `Block`: stable block ID, block kind, source span, raw slice hash, comparison form.
 - `Link`: syntax kind, raw target, parsed path/heading/block components, display text, embed flag, resolution state.
 - `Asset`: media type, byte hash, size, original logical paths.
-- `Canvas`: typed nodes/edges plus preserved unknown JSON fields and source file references.
-- `BaseArtifact`: opaque bytes and path only; no inferred semantics in V1.
+- `Canvas`: typed nodes/edges plus preserved unknown JSON fields and source file references. Each file reference retains its unique node ID and raw path plus a tagged `pending`, `resolved`, `unresolved`, or `ambiguous` state. Resolved and ambiguous targets use typed Document, Asset, Canvas, or Base identities.
+- `BaseArtifact`: `BaseArtifactId`, opaque bytes, and path only; no inferred internal semantics in V1.
 - `EvidenceRef`: snapshot ID, document ID, optional block ID/span, and content hash.
 
 ### Future semantic records
@@ -81,12 +81,13 @@ Mapping key order and formatting MUST NOT be destroyed when a file is copied unc
 
 Resolution produces zero, one, or many candidates and records the reason. It MUST account for explicit relative paths, Vault-root-like paths, filename stems, headings, block IDs, aliases, case behavior, and source-local namespace. Ambiguity is a conflict; the compiler must not guess based on host filesystem ordering.
 
-The `0.1.0` implementation applies that resolver to Markdown and attachment
-links. Canvas file nodes are decoded into `CanvasFileReference` values and the
-complete unknown-preserving JSON value is retained, but their
-`resolved_document` field is not populated and their paths are copied without
-rewrite. REQ-PAR-002 remains incomplete until Canvas uses the same resolution,
-conflict, rewrite, provenance, and verifier boundary.
+The `0.1.0` implementation applies the same source-local resolution and sealed
+output maps to Markdown links and Canvas file nodes. Canvas targets may be a
+Document, Asset, Canvas, or opaque Base. Zero candidates preserve the raw path
+with a diagnostic; multiple candidates create a node-scoped required conflict.
+Rewritten Canvas uses canonical JSON while unchanged Canvas remains
+byte-for-byte copied. Duplicate JSON object keys and duplicate Canvas node IDs
+fail closed because they cannot be preserved or addressed unambiguously.
 
 ## Schema evolution
 
@@ -95,7 +96,9 @@ explicitly listed older versions through pure migrations and reject unknown
 newer major versions. Migration MUST preserve IDs and provenance unless the
 version notes define an intentional identity break through an ADR. The current
 `0.1.0` reader accepts only schema version 1; no older-version migrations are
-implemented yet.
+implemented yet. Before the first published release, schema 1 was completed
+with typed Canvas-reference states and `BaseArtifactId`; working-tree artifacts
+from earlier development commits are not a supported compatibility version.
 
 ## Invariants
 

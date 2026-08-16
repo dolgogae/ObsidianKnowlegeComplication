@@ -19,7 +19,7 @@ Produce stable, domain-separated identities for bytes, files, records, and compl
 
 ## Inputs and outputs
 
-Input is a `SourceId`, versioned identity policy, and a safely enumerated set of `(logical_path, kind, bytes)`. Output is a sorted manifest, `SourceFileId` values, and one `SnapshotId`.
+Input is a `SourceId`, versioned identity policy, and a safely enumerated set of `(logical_path, kind, bytes)`. Output is a sorted manifest, `SourceFileId` values, one `SnapshotId`, and typed identities for parsed file-level IR items.
 
 ## Formula
 
@@ -30,9 +30,19 @@ ContentHash  = H("vaultc:content:v1\0" || bytes)
 SourceFileId = H("vaultc:file:v1\0" || lp(path) || lp(kind) || ContentHash)
 SnapshotId   = H("vaultc:snapshot:v1\0" || lp(SourceId) || lp(policy_id)
                  || concat(sorted(lp(path) || SourceFileId)))
+DocumentId     = H("vaultc:document:v1\0" || lp(raw(SnapshotId))
+                    || lp(raw(SourceFileId)))
+CanvasId       = H("vaultc:canvas:v1\0" || lp(raw(SnapshotId))
+                    || lp(raw(SourceFileId)))
+BaseArtifactId = H("vaultc:base:v1\0" || lp(raw(SnapshotId))
+                    || lp(raw(SourceFileId)))
 ```
 
 Hex rendering uses lowercase 64-character SHA-256. Typed IDs carry a textual prefix outside the hash, for example `snap_...`; the prefix is not part of the formula unless a schema explicitly says so.
+`raw(TypedId)` means its 32 hash bytes without the textual prefix. The three
+file-level IR identities deliberately use distinct domains even when they bind
+the same snapshot/file pair; a logical path or display name is never used as a
+substitute identity.
 
 ## Symbols
 
@@ -44,6 +54,8 @@ Hex rendering uses lowercase 64-character SHA-256. Typed IDs carry a textual pre
 | `path` | safe normalized logical path | relative UTF-8 path | ALG-NRM-001 |
 | `kind` | classified input kind/media family | versioned ASCII enum | detected |
 | `SourceId` | stable user/domain source identity | non-empty UTF-8, policy-limited | required |
+| `SourceFileId` | immutable normalized-path/kind/content identity | 256-bit ID | required |
+| `SnapshotId` | immutable source snapshot identity | 256-bit ID | required |
 | `policy_id` | identity-affecting inclusion/normalization policy | versioned ASCII ID | `vaultc-source-v1` |
 | `sorted` | ascending comparison | unsigned UTF-8 bytes of path | required |
 | `concat` | unambiguous concatenation | bytes | required |

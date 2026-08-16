@@ -185,6 +185,7 @@ pub(crate) fn verify_directory(root: &Path) -> Result<VerificationReport> {
     }
     crate::approval::validate_approved_plan(&approved, &approved.plan.policy)
         .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
+    validate_canvas_outputs(root, &approved, &actual_paths)?;
     let snapshot_ids: Vec<_> = approved
         .plan
         .snapshots
@@ -312,6 +313,149 @@ fn validate_audit_files(root: &Path, approved: &crate::approval::ApprovedPlan) -
         return Err(VaultcError::VerificationFailed(
             "standalone diagnostics audit does not match the sealed plan".into(),
         ));
+    }
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "copy and rewrite checks share one exhaustive Canvas operation/output closure invariant"
+)]
+fn validate_canvas_outputs(
+    root: &Path,
+    approved: &crate::approval::ApprovedPlan,
+    artifact_paths: &BTreeSet<String>,
+) -> Result<()> {
+    for operation in &approved.plan.operations {
+        let (
+            source_id,
+            snapshot_id,
+            source_path,
+            destination,
+            expected_source_hash,
+            rewrites,
+            expected_output_hash,
+        ) = match operation {
+            crate::plan::OutputOperation::Copy {
+                source_id,
+                snapshot_id,
+                source_path,
+                destination,
+                expected_hash,
+                kind: crate::ir::FileKind::Canvas,
+                ..
+            } => (
+                source_id,
+                snapshot_id,
+                source_path,
+                destination,
+                expected_hash,
+                None,
+                *expected_hash,
+            ),
+            crate::plan::OutputOperation::RewriteCanvas {
+                source_id,
+                snapshot_id,
+                source_path,
+                destination,
+                expected_hash,
+                expected_output_hash,
+                rewrites,
+                ..
+            } => (
+                source_id,
+                snapshot_id,
+                source_path,
+                destination,
+                expected_hash,
+                Some(rewrites.as_slice()),
+                *expected_output_hash,
+            ),
+            crate::plan::OutputOperation::Copy { .. }
+            | crate::plan::OutputOperation::RewriteMarkdown { .. } => continue,
+        };
+        let canvas = approved
+            .plan
+            .workspace
+            .canvases
+            .values()
+            .find(|canvas| {
+                &canvas.source_file.source_id == source_id
+                    && canvas.source_file.snapshot_id == *snapshot_id
+                    && canvas.source_file.logical_path == *source_path
+            })
+            .ok_or_else(|| {
+                VaultcError::VerificationFailed(format!(
+                    "Canvas operation source `{source_id}/{source_path}` is absent from the sealed workspace"
+                ))
+            })?;
+        if canvas.source_file.content_hash != *expected_source_hash {
+            return Err(VaultcError::VerificationFailed(format!(
+                "Canvas operation source hash is stale for `{destination}`"
+            )));
+        }
+        for reference in &canvas.file_references {
+            if let crate::ir::CanvasReferenceResolution::Resolved { target } = &reference.resolution
+            {
+                let target_path = match target {
+                    crate::ir::CanvasReferenceTarget::Document(document_id) => {
+                        approved.plan.output_paths.get(document_id)
+                    }
+                    crate::ir::CanvasReferenceTarget::Asset(asset_id) => {
+                        approved.plan.asset_output_paths.get(asset_id)
+                    }
+                    crate::ir::CanvasReferenceTarget::Canvas(canvas_id) => {
+                        approved.plan.canvas_output_paths.get(canvas_id)
+                    }
+                    crate::ir::CanvasReferenceTarget::Base(base_artifact_id) => {
+                        approved.plan.base_output_paths.get(base_artifact_id)
+                    }
+                }
+                .ok_or_else(|| {
+                    VaultcError::VerificationFailed(format!(
+                        "Canvas reference target for `{destination}` has no sealed output path"
+                    ))
+                })?;
+                if !artifact_paths.contains(target_path) {
+                    return Err(VaultcError::VerificationFailed(format!(
+                        "Canvas reference target `{target_path}` is missing from the checksummed artifact"
+                    )));
+                }
+            }
+        }
+        let path = root.join(destination);
+        let actual = fs::read(&path).map_err(|error| VaultcError::io(&path, error))?;
+        if ContentHash::from_bytes(&actual) != expected_output_hash {
+            return Err(VaultcError::VerificationFailed(format!(
+                "Canvas output hash does not match the sealed operation for `{destination}`"
+            )));
+        }
+        if let Some(rewrites) = rewrites {
+            let expected = crate::plan::render_rewritten_canvas(canvas, rewrites)
+                .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
+            if actual != expected {
+                return Err(VaultcError::VerificationFailed(format!(
+                    "Canvas output bytes do not match the sealed rewrite for `{destination}`"
+                )));
+            }
+        } else {
+            let (actual_value, actual_references) =
+                crate::parse::parse_canvas_json(source_path, &actual)
+                    .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
+            if actual_value != canvas.value
+                || actual_references.len() != canvas.file_references.len()
+                || actual_references
+                    .iter()
+                    .zip(&canvas.file_references)
+                    .any(|(actual, sealed)| {
+                        actual.node_id != sealed.node_id || actual.raw_path != sealed.raw_path
+                    })
+            {
+                return Err(VaultcError::VerificationFailed(format!(
+                    "copied Canvas semantics do not match the sealed workspace for `{destination}`"
+                )));
+            }
+        }
     }
     Ok(())
 }

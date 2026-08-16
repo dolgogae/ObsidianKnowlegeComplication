@@ -9,6 +9,7 @@ decision_refs:
   - ADR-0003
   - ADR-0006
   - ADR-0009
+  - ADR-0010
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -18,7 +19,11 @@ source_refs:
 
 ## Provenance invariant
 
-Every output file has at least one derivation edge. A copied or rewritten note points to its source snapshot/file and relevant source spans. A deduplicated output points to every exact member. An AI-generated output points to an approved proposal and all supporting evidence. A synthesized claim without evidence is invalid.
+Every output file has exactly one direct producing operation. A copied or
+rewritten note reaches its source snapshot/file and relevant source spans. A
+deduplicated output reaches every exact member. An AI-generated output reaches
+one current approval, its approved proposal, and all ordered supporting
+evidence. A synthesized claim without evidence is invalid.
 
 The independent verifier MUST reconstruct the expected record for each sealed
 output operation or approved generated note and compare it exactly with the
@@ -27,6 +32,27 @@ source exists: an unrelated valid source is not provenance for an output.
 Standalone audit summaries and the embedded approved plan MUST agree exactly.
 
 The detailed record algorithm is [`../algorithms/stable/provenance-and-evidence.md`](../algorithms/stable/provenance-and-evidence.md).
+
+Every physical content path and the plan/conflict/diagnostic/transcript audit
+paths are represented in the stored typed graph. The graph uses required
+schema-1 `record_` identities, the fixed record order, dependent-to-prerequisite
+edge direction, relation/type matrix, and closure rules in ADR-0010. The graph
+is canonical JSON Lines with exactly one canonical record per non-empty line
+and a final LF.
+
+The ledger cannot contain its own final hash. Therefore provenance, manifest,
+and checksums are a narrow virtual audit envelope constructed from final bytes
+by verification and explanation. This is not missing provenance and MUST NOT
+be replaced by a forged self-referential stored edge. A VaultPack package
+subject is also virtual and separately requested. Stored and virtual records
+share the same identity formula and public record schema.
+
+Parsed Markdown frontmatter author/license declarations are retained without
+legal inference. Recognized keys are ASCII-case-insensitive `author`,
+`authors`, `license`, and `licenses`; the original key and complete canonical
+typed JSON value are preserved. Missing, declared, opaque, and not-applicable
+states are distinct. Exact deduplication and generated evidence retain every
+contributing document's declarations.
 
 ## Duplicate policy
 
@@ -76,10 +102,11 @@ provider suggestion never becomes a resolution without approval.
 The `DraftPlan` is immutable. Each conflict has a canonical `content_hash`
 computed from its kind, required flag, optional typed subject, ordered
 documents, message, and score; the resolution is deliberately excluded from
-this hash. A Canvas-reference subject binds the `CanvasId`, unique node ID, and
-raw file path. Each ambiguous Canvas file node receives its own subject and
-conflict even when its human-readable path and candidate documents equal
-another node's. External decisions live
+this hash. A Markdown-link subject binds the source `DocumentId`, `LinkId`, and
+raw target. A Canvas-reference subject binds the `CanvasId`, unique node ID,
+and raw file path. Each ambiguous Markdown link or Canvas file node receives
+its own subject and conflict even when its human-readable target and candidate
+documents equal another node's. External decisions live
 in `ApprovedPlan.conflict_decisions` and bind the sealed `plan_id`,
 `conflict_id`, `conflict_content_hash`, resolver, and policy version. Unknown,
 duplicate, wrong-plan, stale-hash, or already-resolved decisions fail closed.
@@ -98,21 +125,23 @@ Claims are first-class, context- and time-scoped propositions. Contradictory cla
 
 ## Explanation API
 
-The normative V1 `explain_provenance` result is the typed directed derivation
-graph required by ALG-PRV-001: source, operation, decision, proposal, approval,
-output, and edge records, including compiler-generated administrative files and
-author/license attribution. It accepts either a Compiled Vault directory or a
-`.vaultpack` and never calls an AI provider or original network location.
+The normative V1 explanation result is a versioned page of the reachable typed
+directed derivation graph required by ALG-PRV-001: source, operation, decision,
+proposal, approval, output, and edge records, including compiler-generated
+administrative files and author/license declarations. It accepts either a
+Compiled Vault directory or a `.vaultpack` and never calls an AI provider or
+original network location.
 
-The current `0.1.0` implementation is a partial projection of that contract. It
-returns deterministic output records containing output hash, producing
-operation ID, complete source identities for copied/rewritten/deduplicated
-content, original logical paths/spans, and generated proposal, wire evidence,
-canonical EvidenceId, and source identity values. Generated note bodies,
-frontmatter source IDs, provenance, and approval materialization are checked as
-one exact derivation. It does not yet emit typed record IDs/edges,
-administrative-file derivations, decision/approval nodes, or author/license
-nodes. Therefore REQ-PRV-001 and QG-003 are not release-complete.
+The default page limit is 256 records and 4 MiB; hard limits are 4,096 records
+and 16 MiB. Cursors bind graph, subject, and last global sort key. A stale,
+tampered, cross-artifact, or cross-subject cursor fails closed. A convenience
+full explanation may collect pages only within the hard bounds and otherwise
+returns a resource-limit error.
+
+Inner-path explanations from a directory and VaultPack are identical. An
+explicit package query returns a virtual package output/operation binding the
+observed outer bytes and inner artifact identity; it is not added to inner
+queries and does not authenticate the publisher.
 
 An explanation value is not itself a trust verdict. A caller must run `verify`
 before treating an artifact or explanation as internally consistent; the full

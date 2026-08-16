@@ -58,6 +58,8 @@ The authoritative live status and exact limitations are in
 - exact and near-duplicate golden vectors;
 - path/case/title/frontmatter conflict resolution;
 - checksums, provenance records, approval invalidation, and pack archive headers.
+- literal typed provenance RecordId vectors, strict record ordering, allowed
+  edge matrix/cardinality, attribution states, and cursor bindings.
 
 ### Property and fuzz tests
 
@@ -80,6 +82,15 @@ Include ZIP slip, tar traversal, symlink/hardlink escape, decompression bomb, hu
 - Compile interruption never publishes partial output.
 - Independent verifier catches each intentionally corrupted artifact class.
 - Future MCP and Obsidian adapters pass contract and permission tests without bypassing framework invariants.
+
+Typed provenance acceptance MUST cover Copy, Markdown/Canvas rewrite, exact
+note/asset deduplication, generated evidence and approval, Markdown/Canvas
+waivers, the four stored audit paths, the three virtual audit-envelope paths,
+directory/pack inner parity, and an explicit virtual package subject. Fully
+resealed attacks include missing/extra/duplicate producer edges, dangling or
+wrong-kind endpoints, cycles, unrelated valid source substitution, ordered
+evidence changes, attribution removal, stale decisions/approvals, legacy flat
+records, graph schema changes, and cursor replay across subject/artifact.
 
 ### Required regressions not yet implemented
 

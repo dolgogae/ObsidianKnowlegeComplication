@@ -9,6 +9,7 @@ decision_refs:
   - ADR-0003
   - ADR-0004
   - ADR-0006
+  - ADR-0010
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
 ---
@@ -21,18 +22,28 @@ Make every output explainable from immutable inputs, deterministic operations, a
 
 ## Inputs and outputs
 
-Input is a plan, snapshots, operation results, proposal transcript, approvals, and output file hashes. Output is canonical JSON Lines forming a typed directed derivation graph plus indexes for explanation.
+Input is a plan, snapshots, operation results, proposal transcript, approvals,
+output file hashes, and the audit-envelope inventory. Output is canonical JSON
+Lines forming a typed directed derivation graph plus bounded indexes for
+explanation. The stored graph and the virtual self-referential envelope are
+separated exactly as defined by ADR-0010.
 
 ## Record identity
 
 ```text
-RecordId(r) = H("vaultc:provenance:v1\0" || canonical_json(r without record_id))
+RecordId(r) = H("vaultc:provenance:v1\0"
+                || canonical_json({schema_version: 1, kind: r.kind}))
 EvidenceId(e) = H("vaultc:evidence:v1\0" || raw(SnapshotId)
                   || raw(DocumentId) || mode
                   || mode_fields || raw(ContentHash))
 ```
 
-Every JSON value uses the versioned canonical encoder; records are emitted in `(record_type_order, record_id)` order.
+Every JSON value uses the versioned canonical encoder. `RecordId` renders as
+`record_` followed by 64 lowercase hexadecimal characters; that display prefix
+is excluded from the hash. Edges are records and use `RecordId`, not a separate
+`EdgeId`. Records are emitted in `(record_type_order, raw RecordId bytes)`
+order, where source, operation, decision, proposal, approval, output, and edge
+have orders 0 through 6 respectively.
 
 `raw(TypedId)` is the fixed 32-byte hash without its display prefix. `mode` is
 one byte: `0x00` for file/body evidence with no block or span, `0x01` for block
@@ -58,13 +69,21 @@ generic length-prefixed identity helper are not part of this formula.
 
 ## Record types
 
-- `source`: snapshot/file/block identity, path, author/license attribution.
+- `source`: snapshot/file/evidence identity, path, declared/opaque attribution
+  state, or plan/policy/toolchain build input.
 - `operation`: copy, rewrite, deduplicate, generate, serialize, package.
 - `decision`: conflict resolution or explicit waiver.
 - `proposal`: provider/model/transcript hash and validation result.
 - `approval`: approver/policy decision bound to proposal and plan hashes.
 - `output`: output path/hash and producing operation.
-- `edge`: typed `derived_from`, `supported_by`, `rewritten_from`, `deduplicates`, `approved_by`, or `packaged_as` relationship.
+- `edge`: typed `derived_from`, `supported_by`, `rewritten_from`,
+  `deduplicates`, `approved_by`, `decided_by`, or `packaged_as` relationship,
+  directed from derived/dependent record to prerequisite.
+
+The exact record fields, edge type matrix, ordered-position encoding, stored
+versus virtual storage class, and author/license declaration projection are
+normative in ADR-0010. Human-readable conflict messages and source display
+names are never authorization identities.
 
 ## Closure rules
 
@@ -78,11 +97,21 @@ generic length-prefixed identity helper are not part of this formula.
    hash, complete rendered-output hash, ordered EvidenceId values, and
    operation ID. Compilation and verification independently reconstruct that
    materialization from the approved proposal.
+8. Every applied decision, materializing proposal, approval, and source record
+   is reachable from at least one output. The serialized plan audit output also
+   closes non-materializing validated proposals and decision history.
+9. Stored graph records cover content plus plan/conflict/diagnostic/transcript
+   audit files. Provenance, manifest, and checksums are virtual audit-envelope
+   roots constructed only after their final bytes exist.
+10. Successfully decoded `author(s)` and `license(s)` frontmatter declarations
+    remain reachable from every copied, deduplicated, or evidence-derived
+    output. Opaque frontmatter is recorded as opaque with its sealed hash;
+    attribution is never guessed.
 
 ## Pseudocode
 
 ```text
-records = construct typed records from sealed plan and staged output
+records = construct stored typed records from sealed plan and pre-envelope output
 for evidence in records:
     validate IDs, bounds, source content hash, attribution
 for output in manifest:
@@ -93,6 +122,9 @@ require proposals validated and approvals current
 topologically validate derivation edges
 canonicalize records; compute record IDs; sort; emit JSONL
 re-read emitted file and repeat closure validation
+write manifest, then checksums
+construct virtual envelope graph from final physical bytes
+validate full logical graph = stored graph union virtual envelope
 ```
 
 ## Complexity
@@ -101,7 +133,17 @@ For `V` records, `E` edges, and evidence bytes already hashed during snapshottin
 
 ## Edge and security cases
 
-Reject out-of-bounds spans, source-hash mismatch, dangling IDs, cycles, duplicate record IDs with distinct payloads, stale approvals, provider-supplied record IDs, license/author erasure, and disclosure of secrets in rationale/log fields. Paths in provenance are data and never opened without safe resolution.
+Reject out-of-bounds spans, source-hash mismatch, dangling IDs, self-edges,
+edge-to-edge endpoints, cycles, duplicate record IDs even with identical
+payloads, non-canonical records, stale approvals, provider-supplied record IDs,
+license/author erasure, and disclosure of secrets in rationale/log fields.
+Paths in provenance are data and never opened without safe resolution.
+
+`.vaultc/provenance.jsonl`, `.vaultc/manifest.json`, and
+`.vaultc/checksums.txt` MUST NOT claim stored records for themselves. Their
+records are marked virtual and synthesized from final bytes. A `.vaultpack`
+package record is likewise virtual and exists only for an explicit package
+query; it does not prove publisher authenticity.
 
 ## Worked example
 
@@ -126,6 +168,13 @@ Block mode `0x01` and exact-span mode `0x02` MUST produce different identities
 for the same block and content hash.
 
 Exact canonical-JSON RecordId fixtures MUST be frozen with schema implementation.
+
+The explanation cursor is
+`H("vaultc:provenance-cursor:v1\0" || raw(GraphHash) ||
+raw(SubjectHash) || record_type_order || raw(last RecordId))`, rendered as
+`cursor_` plus lowercase hexadecimal. A decoder may find the opaque cursor by
+recomputing candidates while scanning; it must not trust caller-provided
+offsets.
 
 ## Correctness and rollback
 

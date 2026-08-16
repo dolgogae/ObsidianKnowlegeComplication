@@ -10,6 +10,7 @@ decision_refs:
   - ADR-0004
   - ADR-0006
   - ADR-0009
+  - ADR-0010
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -84,12 +85,20 @@ belongs to the future distribution profile.
 
 The manifest includes format/schema/compiler versions, artifact ID, ordered source snapshot IDs, plan ID, configuration hash, approved proposal hashes, output file inventory, media types, sizes, hashes, license/attribution summaries, creation policy, and optional signature metadata. Wall-clock creation time is informational and excluded from reproducibility identity.
 
-The `0.1.0` manifest currently contains `schema_version`, `compiler_version`,
+The `0.1.0` manifest contains `schema_version`, `compiler_version`,
 `artifact_id`, `plan_id`, `policy_hash`, `projection_hash`, ordered source
-snapshot IDs, approved proposal hashes, and
+snapshot IDs, approved proposal hashes, required
+`provenance_schema_version`, required `provenance_graph_hash`, and
 `files[{path, byte_len, sha256}]`. Its inventory excludes `manifest.json` and
-`checksums.txt`; it does not yet carry media types, license/attribution,
-creation/distribution policy, or signature metadata.
+`checksums.txt` and includes the stored provenance ledger. It does not yet
+carry media types, license summaries, creation/distribution policy, or
+signature metadata.
+
+ADR-0010 freezes the non-circular inventory layers. The stored provenance
+graph covers content plus plan/conflict/diagnostic/transcript audit outputs.
+Provenance, manifest, and checksums themselves have virtual audit-envelope
+records synthesized from their final bytes and exact inventories; those
+records MUST NOT be serialized back into the provenance file.
 
 ## Checksums
 

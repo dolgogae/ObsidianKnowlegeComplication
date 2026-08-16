@@ -8,6 +8,7 @@ decision_refs:
   - ADR-0001
   - ADR-0004
   - ADR-0009
+  - ADR-0010
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -71,7 +72,7 @@ contains the reference projection builder and supervised subprocess adapter.
 | compile | `VaultCompiler::compile` | `&ApprovedPlan` + absent destination | `CompiledArtifact` | yes; sibling-stages then renames a new directory; portable race-free no-clobber remains open |
 | pack | `vaultc::pack::create_pack`; CLI `compile --pack` | verified Compiled Vault + absent `.vaultpack` path | deterministic pack | yes; SDK writes directly, CLI stages/no-clobbers |
 | verify | `VaultCompiler::verify` | Compiled Vault or `.vaultpack` | `VerificationReport` | no |
-| explain | `VaultCompiler::explain_provenance` | artifact + output path | `ProvenanceExplanation` | no |
+| explain | `VaultCompiler::explain_provenance_page`; bounded `explain_provenance` convenience | artifact + typed path/package query | versioned `ProvenancePage` or complete bounded explanation | no |
 
 All serialized plans and approvals are untrusted control files. Approval,
 compilation, and verification revalidate sealed plan/proposal/conflict
@@ -112,7 +113,10 @@ vaultc approve PLAN --decisions FILE [--proposals FILE] --out FILE
 vaultc [--policy FILE] compile APPROVED_PLAN --output PATH
     [--pack FILE] [--format human|json]
 vaultc verify PATH_OR_PACK [--format human|json]
-vaultc explain PATH_OR_PACK OUTPUT_PATH [--format human|json]
+vaultc explain PATH_OR_PACK OUTPUT_PATH
+    [--limit COUNT] [--cursor CURSOR] [--format human|json]
+vaultc explain PACK --package
+    [--limit COUNT] [--cursor CURSOR] [--format human|json]
 ```
 
 `SOURCE` is `ID=PATH`. A bare path derives an ASCII-safe ID from its final
@@ -141,6 +145,13 @@ no-clobber file semantics. The directory compilation and subsequent pack
 creation are two publications, not one combined transaction. The V1 contract
 still requires closing the cross-platform destination check/rename race before
 release qualification.
+
+`explain` emits schema-versioned typed provenance. Its default and hard limits
+are 256/4,096 records and 4/16 MiB respectively. A returned cursor is bound to
+the graph, subject, and last global sort key. Package queries are valid only
+for `.vaultpack` and return virtual outer-package integrity records; inner-path
+queries remain identical between a directory and its pack. Invalid query
+limits are exit `2`; malformed, stale, or cross-artifact cursors are exit `7`.
 
 ## Decision document
 

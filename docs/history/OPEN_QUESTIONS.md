@@ -8,6 +8,7 @@ decision_refs:
   - ADR-0002
   - ADR-0004
   - ADR-0009
+  - ADR-0010
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -37,13 +38,9 @@ implementation gaps are also summarized in
 - Define typed conflict actions for selected link targets, path mappings, and
   other real `user_resolved` operations. Until then, ADR-0009 permits only an
   explicit policy waiver overlay.
-- Complete ALG-PRV-001 typed `source/operation/decision/proposal/approval/output/edge`
-  records, canonical record/evidence IDs, administrative-file closure, and
-  author/license attribution. The current flat output ledger is only a partial
-  projection and must not redefine the stable algorithm.
-- Define the non-circular provenance boundary for self-referential
-  `manifest.json`, `provenance.jsonl`, and `checksums.txt` administrative files,
-  including which plan/config/toolchain record produces each one.
+- Move typed-provenance explanation indexing from the bounded in-memory V1
+  implementation to a bounded on-disk/streaming representation before the
+  large-Vault performance gate can pass.
 - Decide which trust anchor authenticates a wholly resealed but internally
   consistent unsigned artifact. Source-derived Copy, Markdown, Canvas, and
   approved generated-note outputs now carry and verify sealed commitments.
@@ -167,3 +164,11 @@ change.
   project-context phrase that called it signed conflicted with the output
   specification; it was corrected in favor of the normative future signing
   profile.
+- ADR-0010 defines the complete typed provenance graph, `record_` identity and
+  record order, dependent-to-prerequisite edge matrix, author/license
+  declaration retention, and bounded cursor-bound explanation. Content plus
+  plan/conflict/diagnostic/transcript outputs live in the stored graph.
+  Provenance/manifest/checksums and an explicitly queried VaultPack package
+  subject are deterministic virtual records constructed after final bytes
+  exist, eliminating self-hash fixed points. Legacy flat development ledgers
+  fail closed.

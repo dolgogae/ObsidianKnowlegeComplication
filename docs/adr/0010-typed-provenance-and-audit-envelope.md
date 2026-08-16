@@ -149,7 +149,11 @@ payload whose recomputed ID differs from the stored ID is invalid.
 - `decision` is the exact immutable conflict-decision overlay bound to its
   plan and conflict content hash.
 - `proposal` binds provider/model identity, proposal/content identity,
-  transcript commitment, and validation result.
+  transcript commitment, and a successful validation result. Only structurally
+  valid proposals become typed proposal nodes. Rejected provider values may
+  contain intentionally unparseable typed IDs; their exact audit bytes remain
+  committed by the sealed plan/transcript outputs and MUST NOT be coerced into
+  trusted graph identities.
 - `approval` binds approver, policy, plan, proposal content, and approved
   materialization commitment.
 - `output` binds normalized logical path or virtual package subject, exact
@@ -298,6 +302,13 @@ tar/zstd profile, and ordered member commitments. A package query on a
 directory is unsupported. The virtual package record is an integrity
 observation, not publisher authenticity. A future detached PackReceipt or
 signature profile may authenticate that record without creating a self-hash.
+
+The deterministic profile label is asserted only after the verifier safely
+extracts and validates the inner artifact, recreates the package with the exact
+current writer/toolchain profile, and byte-compares the complete outer archive.
+An archive with equivalent members but different zstd parameters, tar headers,
+member order, or extra encoding bytes is non-canonical and fails verification;
+it MUST NOT receive the deterministic profile record.
 
 ## Consequences
 

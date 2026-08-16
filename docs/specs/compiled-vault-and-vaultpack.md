@@ -145,6 +145,13 @@ every output operation. Once that profile exists, signature verification MUST
 occur before installation, and signatures will not replace content-hash
 verification, permission display, license review, or provenance inspection.
 
+Verification of a `.vaultpack` requires both a valid inner Compiled Vault and
+byte equality with a package recreated by the exact declared deterministic
+tar/zstd writer profile. Equivalent extracted members encoded with different
+compression parameters or archive headers are not canonical VaultPacks and
+are rejected. Only a canonical outer archive may receive the virtual
+`vaultc-tar-zstd-deterministic-v1` package provenance profile.
+
 ## Verification
 
 The normative verifier checks archive safety, regular-file-only members, duplicate

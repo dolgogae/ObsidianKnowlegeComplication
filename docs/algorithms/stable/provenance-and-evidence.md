@@ -99,7 +99,9 @@ names are never authorization identities.
    materialization from the approved proposal.
 8. Every applied decision, materializing proposal, approval, and source record
    is reachable from at least one output. The serialized plan audit output also
-   closes non-materializing validated proposals and decision history.
+   closes non-materializing successfully validated proposals and decision
+   history. Rejected provider values remain in the sealed plan/transcript audit
+   bytes rather than being coerced into typed graph identities.
 9. Stored graph records cover content plus plan/conflict/diagnostic/transcript
    audit files. Provenance, manifest, and checksums are virtual audit-envelope
    roots constructed only after their final bytes exist.

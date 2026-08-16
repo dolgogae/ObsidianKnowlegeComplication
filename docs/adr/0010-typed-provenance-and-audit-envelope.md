@@ -210,7 +210,13 @@ erase metadata.
 
 The manifest keeps its pre-release schema number `1` and gains required
 `provenance_schema_version` and `provenance_graph_hash` fields. The graph hash
-is domain-separated over the exact canonical JSONL bytes of `L`.
+is stored as an unprefixed lowercase-hex `ContentHash` and is computed exactly
+as:
+
+```text
+StoredGraphHash = SHA-256("vaultc:provenance-graph:v1\0"
+                          || exact canonical JSONL bytes of L)
+```
 
 This is completion of an unpublished `0.1.0` schema, not a migration promise.
 Legacy unversioned flat ledgers and manifests missing the new required fields
@@ -227,7 +233,8 @@ reachable induced subgraph in global record order.
 - default: 256 records and 4 MiB response bytes;
 - hard maximum: 4,096 records and 16 MiB response bytes;
 - one record exceeding the byte limit fails without returning a partial page;
-- `next_cursor` is bound to the graph hash, subject hash, and last sort key;
+- `next_cursor` is bound to the subject's complete explanation hash, subject
+  hash, and last sort key;
 - malformed, stale, cross-artifact, or cross-subject cursors fail closed;
 - a page may contain an edge whose other endpoint is on a later page, and
   therefore reports whether the explanation is complete.
@@ -240,6 +247,38 @@ The ledger decoder reads bounded lines and enforces record/line/aggregate
 limits. Its index MAY be memory-backed below policy limits and MUST move to a
 bounded on-disk representation before the large-Vault performance gate can
 pass.
+
+Subject and cursor byte formulas are fixed:
+
+```text
+SubjectHash(ArtifactPath(path)) =
+  SHA-256("vaultc:provenance-subject:v1\0" || 0x00
+          || u64be(len(path_utf8)) || path_utf8)
+
+SubjectHash(Package) =
+  SHA-256("vaultc:provenance-subject:v1\0" || 0x01)
+
+ExplanationGraphHash(subject) =
+  SHA-256("vaultc:provenance-explanation:v1\0"
+          || exact canonical JSONL bytes of the complete sorted
+             reachable logical record set for subject)
+
+Cursor = SHA-256("vaultc:provenance-cursor:v1\0"
+                 || raw(ExplanationGraphHash)
+                 || raw(SubjectHash)
+                 || u8(record_type_order)
+                 || raw(last RecordId))
+```
+
+`len(path_utf8)` is an unsigned 64-bit big-endian byte length. Record type
+order is the single frozen byte `0..=6`, not text or a host integer. Stored,
+subject, and explanation hashes are `ContentHash` values rendered as 64
+lowercase hexadecimal characters when serialized. Cursor is a typed 32-byte
+identity rendered as `cursor_` plus 64 lowercase hexadecimal characters; its
+display prefix is not hashed. Because an explicit package explanation includes
+the outer archive observation in its logical record set, its cursor is bound
+to those exact outer bytes. An inner-path directory/pack explanation has the
+same logical records and therefore the same cursor.
 
 ### VaultPack boundary
 

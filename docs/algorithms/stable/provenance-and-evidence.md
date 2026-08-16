@@ -169,10 +169,13 @@ for the same block and content hash.
 
 Exact canonical-JSON RecordId fixtures MUST be frozen with schema implementation.
 
-The explanation cursor is
-`H("vaultc:provenance-cursor:v1\0" || raw(GraphHash) ||
-raw(SubjectHash) || record_type_order || raw(last RecordId))`, rendered as
-`cursor_` plus lowercase hexadecimal. A decoder may find the opaque cursor by
+The stored graph, subject, explanation, and cursor identities use the exact
+ADR-0010 formulas. In particular, the cursor is
+`H("vaultc:provenance-cursor:v1\0" || raw(ExplanationGraphHash) ||
+raw(SubjectHash) || u8(record_type_order) || raw(last RecordId))`, rendered as
+`cursor_` plus lowercase hexadecimal. Artifact-path subjects use a `0x00` tag,
+an unsigned 64-bit big-endian UTF-8 byte length, and the path bytes; package
+subjects use only tag `0x01`. A decoder may find the opaque cursor by
 recomputing candidates while scanning; it must not trust caller-provided
 offsets.
 

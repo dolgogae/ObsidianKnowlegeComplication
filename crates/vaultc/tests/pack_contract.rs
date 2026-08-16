@@ -1,8 +1,11 @@
 mod common;
 
-use std::fs;
+use std::collections::BTreeSet;
+use std::fs::{self, File};
+use std::io::{Read as _, Write as _};
 use std::path::Path;
 
+use vaultc::provenance::{ProvenanceQuery, ProvenanceRecordKind, ProvenanceSubject};
 use vaultc::{SourceSpec, VaultcError};
 
 fn compile_and_pack(source: &Path, artifact_root: &Path, pack: &Path) {
@@ -53,8 +56,16 @@ fn vaultpack_is_byte_deterministic_verifiable_and_explainable() {
     let explanation = compiler
         .explain_provenance(&first, "knowledge/Index.md")
         .expect("explain output directly from pack");
-    assert_eq!(explanation.output_path, "knowledge/Index.md");
-    assert_eq!(explanation.records.len(), 1);
+    assert_eq!(
+        explanation.subject,
+        ProvenanceSubject::ArtifactPath {
+            path: "knowledge/Index.md".into()
+        }
+    );
+    assert!(explanation.records.iter().any(|record| matches!(
+        &record.kind,
+        ProvenanceRecordKind::Output(output) if output.subject == explanation.subject
+    )));
 }
 
 #[test]
@@ -85,6 +96,131 @@ fn vaultpack_verifier_rejects_a_valid_archive_with_tampered_content() {
         .verify(&pack)
         .expect_err("tampered VaultPack must fail closed");
     assert!(matches!(error, VaultcError::VerificationFailed(_)));
+}
+
+#[test]
+fn verifier_rejects_noncanonical_vaultpack_encoding() {
+    let compiler = common::compiler();
+    let inspection = compiler
+        .inspect([common::fixture_source("basic", "basic_vault")])
+        .expect("inspect canonical-pack source");
+    let plan = compiler
+        .plan(&inspection)
+        .expect("plan canonical-pack source");
+    let approved = compiler
+        .approve_without_augmentation(plan)
+        .expect("approve canonical-pack plan");
+    let temporary = tempfile::tempdir().expect("temporary canonical-pack parent");
+    let artifact = temporary.path().join("compiled");
+    compiler
+        .compile(&approved, &artifact)
+        .expect("compile canonical-pack source");
+    let canonical = temporary.path().join("canonical.vaultpack");
+    vaultc::pack::create_pack(&artifact, &canonical, compiler.policy().output.zstd_level)
+        .expect("create canonical VaultPack");
+
+    let mut tar_bytes = Vec::new();
+    zstd::Decoder::new(File::open(&canonical).expect("open canonical VaultPack"))
+        .expect("decode canonical VaultPack")
+        .read_to_end(&mut tar_bytes)
+        .expect("read canonical tar payload");
+    let noncanonical = temporary.path().join("noncanonical.vaultpack");
+    let output = File::create(&noncanonical).expect("create noncanonical VaultPack");
+    let alternate_level = if compiler.policy().output.zstd_level == 19 {
+        1
+    } else {
+        19
+    };
+    let mut encoder =
+        zstd::Encoder::new(output, alternate_level).expect("create alternate zstd encoder");
+    encoder
+        .write_all(&tar_bytes)
+        .expect("recompress the exact canonical tar payload");
+    encoder.finish().expect("finish alternate zstd stream");
+    assert_ne!(
+        fs::read(&canonical).expect("read canonical VaultPack"),
+        fs::read(&noncanonical).expect("read noncanonical VaultPack"),
+        "alternate zstd encoding must change only the outer bytes"
+    );
+
+    assert!(matches!(
+        compiler.verify(&noncanonical),
+        Err(VaultcError::VerificationFailed(_))
+    ));
+    assert!(matches!(
+        compiler.explain_provenance_page(&noncanonical, &ProvenanceQuery::package()),
+        Err(VaultcError::VerificationFailed(_))
+    ));
+
+    let wrong_level = temporary.path().join("wrong-level.vaultpack");
+    assert!(matches!(
+        vaultc::pack::create_pack(&artifact, &wrong_level, alternate_level),
+        Err(VaultcError::InvalidConfig(_))
+    ));
+    assert!(
+        !wrong_level.exists(),
+        "profile mismatch must fail before publishing a destination"
+    );
+}
+
+#[test]
+fn highly_compressible_hostile_pack_is_rejected_without_residue() {
+    let compiler = common::compiler();
+    let temporary = tempfile::tempdir().expect("temporary hostile-pack parent");
+    let hostile = temporary.path().join("hostile.vaultpack");
+    let output = File::create(&hostile).expect("create hostile VaultPack");
+    let encoder = zstd::Encoder::new(output, 19).expect("create hostile zstd stream");
+    let mut archive = tar::Builder::new(encoder);
+    archive.mode(tar::HeaderMode::Deterministic);
+    let payload = vec![0_u8; 4 * 1024 * 1024];
+    let mut header = tar::Header::new_gnu();
+    header.set_size(payload.len() as u64);
+    header.set_mode(0o644);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    header.set_cksum();
+    archive
+        .append_data(&mut header, "highly-compressible.bin", payload.as_slice())
+        .expect("append highly-compressible hostile member");
+    let encoder = archive.into_inner().expect("finish hostile tar stream");
+    encoder.finish().expect("finish hostile zstd stream");
+    let compressed_len = fs::metadata(&hostile)
+        .expect("stat hostile VaultPack")
+        .len();
+    assert!(
+        compressed_len.saturating_mul(100) < payload.len() as u64,
+        "fixture must exceed the default archive expansion ratio"
+    );
+
+    let entries_before: BTreeSet<_> = fs::read_dir(temporary.path())
+        .expect("read hostile-pack parent before verification")
+        .map(|entry| entry.expect("hostile-pack parent entry").file_name())
+        .collect();
+    for result in [
+        compiler.verify(&hostile).map(|_| ()),
+        compiler
+            .explain_provenance_page(&hostile, &ProvenanceQuery::package())
+            .map(|_| ()),
+    ] {
+        assert!(
+            matches!(
+                &result,
+                Err(VaultcError::ResourceLimit(message))
+                    if message.contains("expansion ratio")
+            ),
+            "hostile pack must fail at the expansion-ratio boundary: {result:?}"
+        );
+    }
+    let entries_after: BTreeSet<_> = fs::read_dir(temporary.path())
+        .expect("read hostile-pack parent after verification")
+        .map(|entry| entry.expect("hostile-pack parent entry").file_name())
+        .collect();
+    assert_eq!(
+        entries_after, entries_before,
+        "failed verify/explain must leave no output or temporary sibling residue"
+    );
 }
 
 #[test]

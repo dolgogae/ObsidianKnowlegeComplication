@@ -8,7 +8,10 @@ use serde::Serialize;
 use vaultc::approval::ProposalMaterialization;
 use vaultc::compile::ArtifactManifest;
 use vaultc::identity::{BlockId, ContentHash, DocumentId, EvidenceId, OperationId, SnapshotId};
-use vaultc::provenance::{ProvenanceRecord, ProvenanceSource};
+use vaultc::provenance::{
+    EdgePosition, EdgeRecord, EdgeRelation, OperationRecord, OutputRole, OutputStorage,
+    ProvenanceRecord, ProvenanceRecordKind, ProvenanceSubject, SourceRecord,
+};
 use vaultc::{ApprovalDecision, ApprovalLog, ApprovedPlan, DraftPlan, VaultCompiler, VaultcError};
 use vaultc_protocol::{
     EvidenceRefWire, KnowledgeProposal, PROPOSAL_SCHEMA_VERSION, ProposalKind, ProviderIdentity,
@@ -288,79 +291,166 @@ fn assert_generated_materialization(
     assert_eq!(*operation_id, expected_operation_id);
 }
 
-fn expected_generated_provenance(
+fn outgoing(records: &[ProvenanceRecord], from: vaultc::identity::RecordId) -> Vec<&EdgeRecord> {
+    records
+        .iter()
+        .filter_map(|record| match &record.kind {
+            ProvenanceRecordKind::Edge(edge) if edge.from == from => Some(edge),
+            _ => None,
+        })
+        .collect()
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the assertion checks one generated output's complete typed proposal, approval, evidence, and edge closure"
+)]
+fn assert_generated_provenance(
+    records: &[ProvenanceRecord],
     approved: &ApprovedPlan,
     proposal: &KnowledgeProposal,
     generated_bytes: &[u8],
-) -> ProvenanceRecord {
-    let mut source_snapshot_ids: Vec<_> = proposal
-        .evidence
-        .iter()
-        .map(|evidence| evidence.snapshot_id.clone())
-        .collect();
-    let mut source_document_ids: Vec<_> = proposal
-        .evidence
-        .iter()
-        .map(|evidence| evidence.document_id.clone())
-        .collect();
-    source_snapshot_ids.sort();
-    source_snapshot_ids.dedup();
-    source_document_ids.sort();
-    source_document_ids.dedup();
-
-    let sources: Vec<_> = proposal
-        .evidence
-        .iter()
-        .map(|evidence| {
-            let document_id = evidence
-                .document_id
-                .parse()
-                .expect("fixture evidence document ID");
-            let document = approved
-                .plan
-                .workspace
-                .documents
-                .get(&document_id)
-                .expect("fixture evidence document belongs to plan");
-            ProvenanceSource {
-                source_id: document.source_file.source_id.to_string(),
-                snapshot_id: document.source_file.snapshot_id.to_string(),
-                source_file_id: document.source_file.file_id.to_string(),
-                source_path: document.source_file.logical_path.clone(),
-                source_content_hash: document.source_file.content_hash,
-                source_document_id: Some(document.document_id.to_string()),
-                evidence_content_hash: Some(
-                    ContentHash::parse_hex(&evidence.content_hash)
-                        .expect("fixture evidence content hash"),
-                ),
-                byte_start: evidence.byte_start,
-                byte_end: evidence.byte_end,
-            }
-        })
-        .collect();
+) {
     let approved_proposal = approved
         .approved_proposals
         .iter()
         .find(|approved| approved.proposal.proposal_id == proposal.proposal_id)
         .expect("approved generated proposal");
     let ProposalMaterialization::GeneratedNote {
+        destination,
+        body_hash,
+        expected_output_hash,
         operation_id,
         evidence_ids,
-        ..
     } = &approved_proposal.materialization
     else {
         panic!("generated proposal has a generated-note materialization");
     };
-    ProvenanceRecord::Output {
-        output_path: GENERATED_PATH.into(),
-        output_hash: ContentHash::from_bytes(generated_bytes),
-        operation_id: operation_id.to_string(),
-        source_snapshot_ids,
-        source_document_ids,
-        sources,
-        proposal_id: Some(proposal.proposal_id.clone()),
-        evidence: proposal.evidence.clone(),
-        evidence_ids: evidence_ids.clone(),
+    let output = records
+        .iter()
+        .find(|record| {
+            matches!(
+                &record.kind,
+                ProvenanceRecordKind::Output(output)
+                    if output.subject == (ProvenanceSubject::ArtifactPath {
+                        path: GENERATED_PATH.into(),
+                    })
+            )
+        })
+        .expect("generated typed output record");
+    let ProvenanceRecordKind::Output(output_value) = &output.kind else {
+        unreachable!();
+    };
+    assert_eq!(
+        output_value.content_hash,
+        ContentHash::from_bytes(generated_bytes)
+    );
+    assert_eq!(output_value.byte_len, generated_bytes.len() as u64);
+    assert_eq!(output_value.role, OutputRole::Content);
+    assert_eq!(output_value.storage, OutputStorage::Stored);
+
+    let operation = records
+        .iter()
+        .find(|record| record.record_id == output_value.producing_operation)
+        .expect("generated typed operation record");
+    let ProvenanceRecordKind::Operation(OperationRecord::Generate {
+        operation_id: graph_operation_id,
+        plan_id,
+        proposal_id,
+        proposal_content_hash,
+        destination: graph_destination,
+        body_hash: graph_body_hash,
+        expected_output_hash: graph_output_hash,
+        evidence_ids: graph_evidence_ids,
+    }) = &operation.kind
+    else {
+        panic!("generated output producer must be Generate");
+    };
+    assert_eq!(graph_operation_id, operation_id);
+    assert_eq!(*plan_id, approved.plan.plan_id);
+    assert_eq!(proposal_id, &proposal.proposal_id);
+    assert_eq!(*proposal_content_hash, approved_proposal.content_hash);
+    assert_eq!(graph_destination, destination);
+    assert_eq!(graph_body_hash, body_hash);
+    assert_eq!(graph_output_hash, expected_output_hash);
+    assert_eq!(graph_evidence_ids, evidence_ids);
+
+    let operation_edges = outgoing(records, operation.record_id);
+    let proposal_edge = operation_edges
+        .iter()
+        .find(|edge| edge.relation == EdgeRelation::DerivedFrom)
+        .expect("Generate derives from Proposal");
+    let approval_edge = operation_edges
+        .iter()
+        .find(|edge| edge.relation == EdgeRelation::ApprovedBy)
+        .expect("Generate is approved by Approval");
+    let proposal_record = records
+        .iter()
+        .find(|record| record.record_id == proposal_edge.to)
+        .expect("typed Proposal target");
+    let ProvenanceRecordKind::Proposal(proposal_value) = &proposal_record.kind else {
+        panic!("Generate DerivedFrom target must be Proposal");
+    };
+    assert_eq!(proposal_value.proposal_id, proposal.proposal_id);
+    assert_eq!(proposal_value.plan_id, approved.plan.plan_id);
+    assert_eq!(proposal_value.content_hash, approved_proposal.content_hash);
+    assert_eq!(proposal_value.evidence_ids, *evidence_ids);
+    let approval_record = records
+        .iter()
+        .find(|record| record.record_id == approval_edge.to)
+        .expect("typed Approval target");
+    let ProvenanceRecordKind::Approval(approval_value) = &approval_record.kind else {
+        panic!("Generate ApprovedBy target must be Approval");
+    };
+    assert_eq!(approval_value.decision, approved_proposal.approval);
+    assert_eq!(
+        approval_value.materialization,
+        approved_proposal.materialization
+    );
+
+    let mut evidence_edges: Vec<_> = outgoing(records, proposal_record.record_id)
+        .into_iter()
+        .filter(|edge| edge.relation == EdgeRelation::SupportedBy)
+        .collect();
+    evidence_edges.sort_by_key(|edge| match edge.position {
+        EdgePosition::Ordered { index } => index,
+        EdgePosition::Unordered => panic!("generated evidence edge must be ordered"),
+    });
+    assert_eq!(evidence_edges.len(), proposal.evidence.len());
+    for (index, edge) in evidence_edges.iter().enumerate() {
+        assert_eq!(
+            edge.position,
+            EdgePosition::Ordered {
+                index: index as u64
+            }
+        );
+        let source = records
+            .iter()
+            .find(|record| record.record_id == edge.to)
+            .expect("typed Evidence source target");
+        let ProvenanceRecordKind::Source(SourceRecord::Evidence(source)) = &source.kind else {
+            panic!("SupportedBy target must be Evidence");
+        };
+        let evidence = &proposal.evidence[index];
+        let document_id = evidence.document_id.parse().expect("fixture DocumentId");
+        let document = approved
+            .plan
+            .workspace
+            .documents
+            .get(&document_id)
+            .expect("evidence document belongs to plan");
+        assert_eq!(source.evidence_id, evidence_ids[index]);
+        assert_eq!(source.snapshot_id, document.source_file.snapshot_id);
+        assert_eq!(source.document_id, document.document_id);
+        assert_eq!(source.source_file_id, document.source_file.file_id);
+        assert_eq!(source.source_path, document.source_file.logical_path);
+        assert_eq!(
+            source.source_content_hash,
+            document.source_file.content_hash
+        );
+        assert_eq!(source.content_hash.hex(), evidence.content_hash);
+        assert_eq!(source.byte_start, evidence.byte_start);
+        assert_eq!(source.byte_end, evidence.byte_end);
     }
 }
 
@@ -401,7 +491,10 @@ fn reseal_artifact_after_change(root: &Path, logical_path: &str) {
         .find(|file| file.path == logical_path)
         .expect("changed artifact file is covered by the manifest");
     file.byte_len = bytes.len() as u64;
-    file.sha256 = hex::encode(Sha256::digest(bytes));
+    file.sha256 = hex::encode(Sha256::digest(&bytes));
+    if logical_path == ".vaultc/provenance.jsonl" {
+        manifest.provenance_graph_hash = vaultc::provenance::stored_graph_hash(&bytes);
+    }
     manifest.artifact_id = vaultc::canonical::canonical_hash(
         "vaultc:artifact:v1\0",
         &(
@@ -439,17 +532,53 @@ fn rewrite_generated_output_hash(root: &Path, output_bytes: &[u8]) {
         .lines()
         .map(|line| serde_json::from_str(line).expect("decode provenance record"))
         .collect();
-    let record = records
-        .iter_mut()
-        .find(|record| {
+    let output_index = records
+        .iter()
+        .position(|record| {
             matches!(
-                record,
-                ProvenanceRecord::Output { output_path, .. } if output_path == GENERATED_PATH
+                &record.kind,
+                ProvenanceRecordKind::Output(output)
+                    if output.subject == (ProvenanceSubject::ArtifactPath {
+                        path: GENERATED_PATH.into(),
+                    })
             )
         })
         .expect("generated output has provenance");
-    let ProvenanceRecord::Output { output_hash, .. } = record;
-    *output_hash = ContentHash::from_bytes(output_bytes);
+    let old_id = records[output_index].record_id;
+    let ProvenanceRecordKind::Output(mut output) = records[output_index].kind.clone() else {
+        unreachable!();
+    };
+    output.content_hash = ContentHash::from_bytes(output_bytes);
+    output.byte_len = output_bytes.len() as u64;
+    let replacement = ProvenanceRecord::new(ProvenanceRecordKind::Output(output))
+        .expect("re-identify forged generated Output");
+    let new_id = replacement.record_id;
+    records[output_index] = replacement;
+    for record in &mut records {
+        let ProvenanceRecordKind::Edge(edge) = &record.kind else {
+            continue;
+        };
+        if edge.from != old_id && edge.to != old_id {
+            continue;
+        }
+        let mut edge = edge.clone();
+        if edge.from == old_id {
+            edge.from = new_id;
+        }
+        if edge.to == old_id {
+            edge.to = new_id;
+        }
+        *record = ProvenanceRecord::new(ProvenanceRecordKind::Edge(edge))
+            .expect("re-identify forged generated Edge");
+    }
+    records.sort_by(|left, right| {
+        left.type_order().cmp(&right.type_order()).then_with(|| {
+            left.record_id
+                .hash()
+                .as_bytes()
+                .cmp(right.record_id.hash().as_bytes())
+        })
+    });
     fs::write(&provenance_path, encode_provenance(&records))
         .expect("rewrite generated provenance output hash");
 }
@@ -535,13 +664,7 @@ fn generated_frontmatter_uses_exact_canonical_evidence_ids_and_provenance_closur
     let explanation = compiler
         .explain_provenance(&artifact, GENERATED_PATH)
         .expect("explain generated provenance");
-    assert_eq!(
-        explanation.records,
-        vec![expected_generated_provenance(
-            &approved, &proposal, &generated,
-        )],
-        "generated explanation must be the exact approved evidence/source closure"
-    );
+    assert_generated_provenance(&explanation.records, &approved, &proposal, &generated);
 }
 
 #[test]
@@ -589,6 +712,10 @@ fn verifier_rejects_resealed_generated_body_or_source_ids() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one table-driven adversarial test mutates all four generated identity commitments"
+)]
 fn generated_provenance_rejects_proposal_evidence_and_source_identity_tampering() {
     let (compiler, approved, _) = approved_generated_fixture();
     let temporary = tempfile::tempdir().expect("temporary closure tamper parent");
@@ -607,37 +734,75 @@ fn generated_provenance_rejects_proposal_evidence_and_source_identity_tampering(
             .lines()
             .map(|line| serde_json::from_str(line).expect("decode generated provenance"))
             .collect();
-        let record = records
-            .iter_mut()
-            .find(|record| {
-                matches!(
-                    record,
-                    ProvenanceRecord::Output { output_path, .. } if output_path == GENERATED_PATH
-                )
-            })
-            .expect("generated provenance record");
-        let ProvenanceRecord::Output {
-            proposal_id,
-            evidence,
-            evidence_ids,
-            sources,
-            ..
-        } = record;
         match attack {
-            "proposal" => *proposal_id = Some("proposal-generated-forged".into()),
+            "proposal" => {
+                let record = records
+                    .iter_mut()
+                    .find(|record| matches!(&record.kind, ProvenanceRecordKind::Proposal(_)))
+                    .expect("generated Proposal record");
+                let ProvenanceRecordKind::Proposal(proposal) = &mut record.kind else {
+                    unreachable!();
+                };
+                proposal.proposal_id = "proposal-generated-forged".into();
+            }
             "evidence" => {
-                evidence
+                let record = records
+                    .iter_mut()
+                    .find(|record| matches!(&record.kind, ProvenanceRecordKind::Proposal(_)))
+                    .expect("generated Proposal record");
+                let ProvenanceRecordKind::Proposal(proposal) = &mut record.kind else {
+                    unreachable!();
+                };
+                proposal
+                    .evidence_ids
                     .pop()
-                    .expect("fixture has multiple evidence records");
+                    .expect("fixture has multiple EvidenceIds");
             }
             "evidence-id" => {
-                evidence_ids[0] = format!("evidence_{}", "0".repeat(64))
+                let record = records
+                    .iter_mut()
+                    .find(|record| {
+                        matches!(
+                            &record.kind,
+                            ProvenanceRecordKind::Source(SourceRecord::Evidence(_))
+                        )
+                    })
+                    .expect("generated Evidence source record");
+                let ProvenanceRecordKind::Source(SourceRecord::Evidence(evidence)) =
+                    &mut record.kind
+                else {
+                    unreachable!();
+                };
+                evidence.evidence_id = format!("evidence_{}", "0".repeat(64))
                     .parse()
                     .expect("syntactically valid forged EvidenceId");
             }
             "source" => {
-                let replacement = sources[1].source_document_id.clone();
-                sources[0].source_document_id = replacement;
+                let replacement = records
+                    .iter()
+                    .find_map(|record| match &record.kind {
+                        ProvenanceRecordKind::Source(SourceRecord::Evidence(evidence)) => {
+                            Some(evidence.document_id)
+                        }
+                        _ => None,
+                    })
+                    .expect("generated Evidence source record");
+                let record = records
+                    .iter_mut()
+                    .rev()
+                    .find(|record| {
+                        matches!(
+                            &record.kind,
+                            ProvenanceRecordKind::Source(SourceRecord::Evidence(_))
+                        )
+                    })
+                    .expect("second generated Evidence source record");
+                let ProvenanceRecordKind::Source(SourceRecord::Evidence(evidence)) =
+                    &mut record.kind
+                else {
+                    unreachable!();
+                };
+                evidence.document_id = replacement;
             }
             _ => unreachable!(),
         }

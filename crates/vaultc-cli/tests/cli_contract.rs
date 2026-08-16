@@ -117,6 +117,7 @@ fn augmentation_payload_hash(payload: &serde_json::Value, plan: &DraftPlan) -> S
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     let temporary = tempfile::tempdir().expect("temporary CLI workspace");
     let source = fixture("basic_vault");
@@ -187,6 +188,8 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     assert!(compiled_vault.join(".vaultc/manifest.json").is_file());
     assert!(pack.is_file());
 
+    let mut inner_pages = Vec::new();
+    let mut inner_page_json = Vec::new();
     for artifact in [&compiled_vault, &pack] {
         let output = run(&["verify", as_utf8(artifact), "--format", "json"]);
         assert_exit(&output, 0);
@@ -199,15 +202,140 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
             "explain",
             as_utf8(artifact),
             "knowledge/Index.md",
+            "--limit",
+            "4096",
             "--format",
             "json",
         ]);
         assert_exit(&output, 0);
-        let explanation: serde_json::Value =
+        inner_page_json.push(output.stdout.clone());
+        let page: serde_json::Value =
             serde_json::from_slice(&output.stdout).expect("decode provenance JSON");
-        assert_eq!(explanation["output_path"], "knowledge/Index.md");
-        assert_eq!(explanation["records"].as_array().map(Vec::len), Some(1));
+        assert_eq!(page["schema_version"], 1);
+        assert!(page["graph_hash"].as_str().is_some());
+        assert_eq!(
+            page["subject"],
+            serde_json::json!({
+                "type": "artifact_path",
+                "path": "knowledge/Index.md"
+            })
+        );
+        assert!(
+            page["records"]
+                .as_array()
+                .is_some_and(|records| !records.is_empty())
+        );
+        assert_eq!(page["next_cursor"], serde_json::Value::Null);
+        assert_eq!(page["complete"], true);
+        inner_pages.push(page);
     }
+    assert_eq!(
+        inner_pages[0], inner_pages[1],
+        "inner-path provenance pages must be identical for a directory and its VaultPack"
+    );
+    assert_eq!(
+        inner_page_json[0], inner_page_json[1],
+        "inner-path JSON bytes must be identical for a directory and its VaultPack"
+    );
+
+    let first_page = run(&[
+        "explain",
+        as_utf8(&compiled_vault),
+        "knowledge/Index.md",
+        "--limit",
+        "1",
+        "--format",
+        "json",
+    ]);
+    assert_exit(&first_page, 0);
+    let first_page: serde_json::Value =
+        serde_json::from_slice(&first_page.stdout).expect("decode first provenance page");
+    assert_eq!(first_page["records"].as_array().map(Vec::len), Some(1));
+    assert_eq!(first_page["complete"], false);
+    let cursor = first_page["next_cursor"]
+        .as_str()
+        .expect("incomplete page must return a cursor");
+
+    let second_page = run(&[
+        "explain",
+        as_utf8(&compiled_vault),
+        "knowledge/Index.md",
+        "--limit",
+        "1",
+        "--cursor",
+        cursor,
+        "--format",
+        "json",
+    ]);
+    assert_exit(&second_page, 0);
+    let second_page: serde_json::Value =
+        serde_json::from_slice(&second_page.stdout).expect("decode resumed provenance page");
+    assert_eq!(second_page["records"].as_array().map(Vec::len), Some(1));
+    assert_ne!(first_page["records"], second_page["records"]);
+
+    let human_page = run(&[
+        "explain",
+        as_utf8(&compiled_vault),
+        "knowledge/Index.md",
+        "--limit",
+        "1",
+    ]);
+    assert_exit(&human_page, 0);
+    let human_page = String::from_utf8_lossy(&human_page.stdout);
+    assert!(human_page.contains("complete: false"));
+    assert!(human_page.contains("next cursor: cursor_"));
+
+    let package_page = run(&[
+        "explain",
+        as_utf8(&pack),
+        "--package",
+        "--limit",
+        "4096",
+        "--format",
+        "json",
+    ]);
+    assert_exit(&package_page, 0);
+    let package_page: serde_json::Value =
+        serde_json::from_slice(&package_page.stdout).expect("decode package provenance page");
+    assert_eq!(package_page["schema_version"], 1);
+    assert!(
+        package_page["records"]
+            .as_array()
+            .is_some_and(|records| !records.is_empty())
+    );
+    assert_eq!(
+        package_page["subject"],
+        serde_json::json!({ "type": "package" })
+    );
+    let package_records = package_page["records"]
+        .as_array()
+        .expect("package provenance records");
+    assert!(package_records.iter().any(|record| {
+        record["kind"]["type"] == "operation" && record["kind"]["value"]["type"] == "package"
+    }));
+    assert!(package_records.iter().any(|record| {
+        record["kind"]["type"] == "output"
+            && record["kind"]["value"]["storage"] == "virtual_package"
+    }));
+
+    assert_exit(
+        &run(&["explain", as_utf8(&compiled_vault), "--package"]),
+        EXIT_VERIFY,
+    );
+    assert_exit(
+        &run(&[
+            "explain",
+            as_utf8(&compiled_vault),
+            "knowledge/Index.md",
+            "--cursor",
+            "not-a-valid-cursor",
+        ]),
+        EXIT_VERIFY,
+    );
+    assert_exit(
+        &run(&["explain", as_utf8(&pack), "--package", "--cursor", cursor]),
+        EXIT_VERIFY,
+    );
 
     let output = run(&[
         "compile",
@@ -216,6 +344,16 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
         as_utf8(&compiled_vault),
     ]);
     assert_exit(&output, EXIT_OUTPUT);
+
+    fs::write(
+        compiled_vault.join(".vaultc/provenance.jsonl"),
+        b"not a provenance record\n",
+    )
+    .expect("tamper provenance graph");
+    assert_exit(
+        &run(&["explain", as_utf8(&compiled_vault), "knowledge/Index.md"]),
+        EXIT_VERIFY,
+    );
 }
 
 #[test]
@@ -245,6 +383,16 @@ fn cli_exit_codes_follow_the_public_contract() {
 
     let invalid_artifact = temporary.path().join("not-an-artifact");
     fs::write(&invalid_artifact, b"not a vaultpack").expect("write invalid artifact");
+    assert_exit(
+        &run(&[
+            "explain",
+            as_utf8(&invalid_artifact),
+            "knowledge/Index.md",
+            "--limit",
+            "0",
+        ]),
+        EXIT_USAGE,
+    );
     assert_exit(&run(&["verify", as_utf8(&invalid_artifact)]), EXIT_VERIFY);
 }
 
@@ -613,22 +761,28 @@ printf '%s\n' "{\"protocol_version\":1,\"request_id\":\"augmentation-1\",\"messa
     assert_exit(&explanation, 0);
     let explanation: serde_json::Value =
         serde_json::from_slice(&explanation.stdout).expect("decode provenance explanation");
-    assert_eq!(
-        explanation["records"][0]["evidence"][0]["snapshot_id"],
-        snapshot_id
-    );
-    assert_eq!(
-        explanation["records"][0]["evidence"][0]["byte_start"],
-        serde_json::Value::Null
-    );
-    assert_eq!(
-        explanation["records"][0]["evidence"][1]["block_id"],
-        block_id
-    );
-    assert_eq!(
-        explanation["records"][0]["evidence"][1]["byte_start"],
-        serde_json::Value::Null
-    );
+    let evidence_records = explanation["records"]
+        .as_array()
+        .expect("typed provenance records")
+        .iter()
+        .filter(|record| {
+            record["kind"]["type"] == "source" && record["kind"]["value"]["type"] == "evidence"
+        })
+        .map(|record| &record["kind"]["value"]["value"])
+        .collect::<Vec<_>>();
+    assert_eq!(evidence_records.len(), 2);
+    let file_evidence = evidence_records
+        .iter()
+        .find(|record| record["block_id"].is_null())
+        .expect("file-level evidence record");
+    assert_eq!(file_evidence["snapshot_id"], snapshot_id);
+    assert_eq!(file_evidence["byte_start"], serde_json::Value::Null);
+    let block_evidence = evidence_records
+        .iter()
+        .find(|record| record["block_id"] == block_id)
+        .expect("block evidence record");
+    assert_eq!(block_evidence["snapshot_id"], snapshot_id);
+    assert_eq!(block_evidence["byte_start"], serde_json::Value::Null);
 }
 
 #[cfg(unix)]

@@ -39,6 +39,8 @@ pub struct ManifestFile {
 pub struct ArtifactManifest {
     pub schema_version: u32,
     pub compiler_version: String,
+    pub provenance_schema_version: u32,
+    pub provenance_graph_hash: ContentHash,
     pub artifact_id: ContentHash,
     pub plan_id: String,
     pub policy_hash: ContentHash,
@@ -356,25 +358,22 @@ fn compile_into(
             ".vaultc/provenance.jsonl",
         ],
     )?;
-    let output_hashes: Vec<_> = initial_files
+    let graph_files: Vec<_> = initial_files
         .iter()
-        .filter(|file| !file.path.starts_with(".vaultc/"))
         .map(|file| {
-            Ok((
-                file.path.clone(),
-                ContentHash::from_bytes(
-                    &fs::read(root.join(&file.path))
-                        .map_err(|error| VaultcError::io(root.join(&file.path), error))?,
-                ),
-            ))
+            let path = root.join(&file.path);
+            let bytes = fs::read(&path).map_err(|error| VaultcError::io(&path, error))?;
+            Ok(crate::provenance::GraphFile {
+                path: file.path.clone(),
+                byte_len: file.byte_len,
+                content_hash: ContentHash::from_bytes(&bytes),
+            })
         })
         .collect::<Result<_>>()?;
-    let provenance = crate::provenance::records_for_output(approved, &output_hashes)?;
-    write_new_file(
-        root,
-        ".vaultc/provenance.jsonl",
-        &crate::provenance::encode_jsonl(&provenance)?,
-    )?;
+    let provenance = crate::provenance::build_stored_records(approved, &graph_files)?;
+    let provenance_bytes = crate::provenance::encode_jsonl(&provenance)?;
+    let provenance_graph_hash = crate::provenance::stored_graph_hash(&provenance_bytes);
+    write_new_file(root, ".vaultc/provenance.jsonl", &provenance_bytes)?;
 
     let files_for_identity = inventory(root, &[".vaultc/manifest.json", ".vaultc/checksums.txt"])?;
     let approved_proposal_hashes: Vec<_> = approved
@@ -390,6 +389,8 @@ fn compile_into(
     let manifest = ArtifactManifest {
         schema_version: 1,
         compiler_version: env!("CARGO_PKG_VERSION").into(),
+        provenance_schema_version: crate::provenance::PROVENANCE_SCHEMA_VERSION,
+        provenance_graph_hash,
         artifact_id,
         plan_id: approved.plan.plan_id.to_string(),
         policy_hash: policy.semantic_hash()?,

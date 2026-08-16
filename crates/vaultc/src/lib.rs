@@ -27,7 +27,16 @@ pub use approval::{
 pub use compile::{CompileOptions, CompiledArtifact};
 pub use config::{CompilerPolicy, SafetyLimits};
 pub use error::{Result, VaultcError};
+pub use identity::RecordId;
 pub use plan::{DraftPlan, Inspection};
+pub use provenance::{
+    ApprovalRecord, AttributionDeclaration, AttributionKind, AttributionState,
+    BuildInputSourceRecord, DecisionRecord, EdgePosition, EdgeRecord, EdgeRelation,
+    EvidenceSourceRecord, OperationRecord, OutputRecord, OutputRole, OutputStorage,
+    PackageMemberCommitment, ProposalRecord, ProvenanceExplanation, ProvenancePage,
+    ProvenanceQuery, ProvenanceRecord, ProvenanceRecordKind, ProvenanceSubject, SourceRecord,
+    VaultFileSourceRecord,
+};
 pub use provider::{KnowledgeAugmentor, ProposalValidation, ValidatedProposals};
 pub use source::{SourceId, SourceSpec};
 pub use verify::VerificationReport;
@@ -113,6 +122,14 @@ impl VaultCompiler {
         output_path: &str,
     ) -> Result<provenance::ProvenanceExplanation> {
         provenance::explain(artifact.as_ref(), output_path)
+    }
+
+    pub fn explain_provenance_page(
+        &self,
+        artifact: impl AsRef<Path>,
+        query: &provenance::ProvenanceQuery,
+    ) -> Result<provenance::ProvenancePage> {
+        provenance::explain_page(artifact.as_ref(), query)
     }
 }
 

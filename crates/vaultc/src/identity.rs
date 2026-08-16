@@ -167,6 +167,7 @@ typed_id!(BaseArtifactId, "base");
 typed_id!(PlanId, "plan");
 typed_id!(OperationId, "op");
 typed_id!(EvidenceId, "evidence");
+typed_id!(RecordId, "record");
 
 impl SourceFileId {
     /// Compute ALG-SNP-001's file identity. Unlike the generic `from_parts`

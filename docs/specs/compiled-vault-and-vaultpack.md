@@ -146,10 +146,11 @@ Verification is independently callable and must not trust a prior successful
 compile status.
 
 The current verifier requires its exact schema and compiler version and checks
-the implemented internal audit relationships. It does not compare output bytes
-with a sealed expected post-rewrite/generated hash, fully reconstruct generated
-frontmatter/body, rehash arbitrary evidence-span bytes, validate
-license/attribution, verify authenticity, or semantically reparse Markdown and
-Canvas rewrites. Until those checks exist, verification establishes checksum
-and internal audit consistency, not complete derivation correctness or
-publisher authenticity.
+the implemented internal audit relationships. For rewritten Canvas it
+reconstructs canonical bytes from the sealed source value and typed node
+rewrites, reparses the result, and compares the expected output hash. It does
+not yet perform the equivalent sealed reconstruction for rewritten Markdown or
+generated frontmatter/body, rehash arbitrary evidence-span bytes, validate
+license/attribution, or verify authenticity. Verification is therefore
+stronger for Canvas rewrites but still does not establish complete derivation
+correctness or publisher authenticity for every output class.

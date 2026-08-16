@@ -91,3 +91,26 @@ Append-only. Normative details live in specifications and accepted ADRs.
   projection-field decoding, a real generated-note NDJSON lifecycle through
   explain, stale augmentation rejection, and tampered approved-transcript
   rejection. The local suite increased from 59 to 61 tests.
+
+## 2026-08-16 — Typed Canvas reference rewriting
+
+- Completed the pre-release schema 1 Canvas contract with typed pending,
+  resolved, unresolved, and ambiguous reference states and Document, Asset,
+  Canvas, and Base targets. Added `BaseArtifactId` using a distinct stable
+  snapshot/file identity domain after resolving its missing normative formula.
+- Allocated all four target output maps before resolution. Rewritten Canvas now
+  records node-scoped target changes and an expected output hash in a sealed
+  `RewriteCanvas` operation; unchanged Canvas is still copied byte-for-byte.
+- Bound Canvas ambiguity conflicts to Canvas ID, node ID, and raw path. Zero
+  candidates retain only root-contained raw paths with diagnostics; multiple
+  candidates require an explicit V1 policy waiver; source/output-root escapes,
+  duplicate JSON object keys, and duplicate node IDs fail closed.
+- Extended compilation and independent verification to reconstruct canonical
+  Canvas bytes, preserve unknown fields, validate typed target membership, and
+  reject semantic changes or removed targets even after checksums, manifest,
+  and artifact ID are resealed.
+- Treated this as completion of unpublished `0.1.0` schema 1 rather than a
+  compatibility migration. Earlier working-tree artifacts were never a
+  published schema; formal migration/version matrices remain open.
+- Added five Canvas integration tests. The macOS arm64 local suite increased
+  from 61 to 66 tests and passes with warning-free Clippy and clean rustfmt.

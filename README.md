@@ -14,8 +14,8 @@ The framework is the policy and integrity boundary between untrusted source
 Vaults and a publishable result. It:
 
 - seals directory, ZIP, and `tar.zst` inputs without changing them;
-- parses Markdown/frontmatter/Obsidian links and inventories Canvas, Bases, and
-  attachments in a canonical IR;
+- parses Markdown/frontmatter/Obsidian links, resolves and rewrites typed Canvas
+  file references, and inventories Bases and attachments in a canonical IR;
 - plans exact deduplication, link rewrites, portable output paths, and typed
   conflicts before writing anything;
 - accepts optional provider-neutral AI proposals as data, then validates their

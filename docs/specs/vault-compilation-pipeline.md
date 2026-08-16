@@ -86,11 +86,13 @@ content hash. V1 external conflict decisions are policy waivers only, as
 defined by ADR-0009.
 
 The current `0.1.0` `DraftPlan` seals schema/compiler version, plan/projection/
-inspection identities, policy, snapshots, canonical workspace, document and
-asset output maps, operations, duplicate reports, conflicts, and diagnostics.
-It does not yet store resource estimates or expected post-rewrite/generated
-output hashes. Independent semantic output reconstruction therefore remains a
-REQ-CMP/ALG-PRV gap.
+inspection identities, policy, snapshots, canonical workspace, Document,
+Asset, Canvas, and Base output maps, operations, duplicate reports, conflicts,
+and diagnostics. A Canvas rewrite operation seals its ordered node rewrites and
+expected output hash, allowing independent reconstruction from the retained
+Canvas value. Resource estimates and expected post-rewrite/generated hashes
+for Markdown and generated notes are still missing, so independent semantic
+output reconstruction remains incomplete outside Canvas.
 
 ## Failure semantics
 

@@ -9,8 +9,13 @@ use crate::config::CompilerPolicy;
 use crate::dedup::{DedupReport, ExactDuplicateGroup, NearDuplicateCandidate};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceSpan};
 use crate::error::{Result, VaultcError};
-use crate::identity::{AssetId, ContentHash, DocumentId, OperationId, PlanId, SnapshotId};
-use crate::ir::{CanonicalWorkspace, Document, FileKind, LinkResolution};
+use crate::identity::{
+    AssetId, BaseArtifactId, CanvasId, ContentHash, DocumentId, OperationId, PlanId, SnapshotId,
+};
+use crate::ir::{
+    CanonicalWorkspace, CanvasReferenceResolution, CanvasReferenceTarget, Document, FileKind,
+    LinkResolution,
+};
 use crate::snapshot::{VaultSnapshot, validate_output_logical_path};
 use crate::source::{SourceId, SourceSpec};
 
@@ -66,11 +71,27 @@ pub struct DraftPlan {
     pub workspace: CanonicalWorkspace,
     pub output_paths: BTreeMap<DocumentId, String>,
     pub asset_output_paths: BTreeMap<AssetId, String>,
+    pub canvas_output_paths: BTreeMap<CanvasId, String>,
+    pub base_output_paths: BTreeMap<BaseArtifactId, String>,
     pub operations: Vec<OutputOperation>,
     pub exact_groups: Vec<ExactDuplicateGroup>,
     pub near_candidates: Vec<NearDuplicateCandidate>,
     pub conflicts: Vec<Conflict>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Clone, Copy)]
+struct OutputPathMaps<'a> {
+    documents: &'a BTreeMap<DocumentId, String>,
+    assets: &'a BTreeMap<AssetId, String>,
+    canvases: &'a BTreeMap<CanvasId, String>,
+    bases: &'a BTreeMap<BaseArtifactId, String>,
+}
+
+struct AuxiliaryPathAllocation {
+    canvases: BTreeMap<CanvasId, String>,
+    bases: BTreeMap<BaseArtifactId, String>,
+    conflicts: Vec<Conflict>,
 }
 
 impl DraftPlan {
@@ -141,6 +162,7 @@ impl DraftPlan {
             }
             previous_conflict_id = Some(&conflict.conflict_id);
         }
+        validate_canvas_conflict_coverage(&self.workspace, &self.conflicts)?;
 
         let expected_plan_id = calculate_plan_id(
             self.schema_version,
@@ -150,6 +172,8 @@ impl DraftPlan {
             self.projection_hash,
             &self.output_paths,
             &self.asset_output_paths,
+            &self.canvas_output_paths,
+            &self.base_output_paths,
             &self.operations,
             &self.exact_groups,
             &self.near_candidates,
@@ -169,6 +193,14 @@ impl DraftPlan {
 pub struct RewriteReplacement {
     pub span: SourceSpan,
     pub replacement: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CanvasReferenceRewrite {
+    pub node_id: String,
+    pub original_path: String,
+    pub replacement_path: String,
+    pub target: CanvasReferenceTarget,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,22 +224,32 @@ pub enum OutputOperation {
         expected_hash: ContentHash,
         replacements: Vec<RewriteReplacement>,
     },
+    RewriteCanvas {
+        operation_id: OperationId,
+        source_id: SourceId,
+        snapshot_id: SnapshotId,
+        source_path: String,
+        destination: String,
+        expected_hash: ContentHash,
+        expected_output_hash: ContentHash,
+        rewrites: Vec<CanvasReferenceRewrite>,
+    },
 }
 
 impl OutputOperation {
     pub fn operation_id(&self) -> OperationId {
         match self {
-            Self::Copy { operation_id, .. } | Self::RewriteMarkdown { operation_id, .. } => {
-                *operation_id
-            }
+            Self::Copy { operation_id, .. }
+            | Self::RewriteMarkdown { operation_id, .. }
+            | Self::RewriteCanvas { operation_id, .. } => *operation_id,
         }
     }
 
     pub fn destination(&self) -> &str {
         match self {
-            Self::Copy { destination, .. } | Self::RewriteMarkdown { destination, .. } => {
-                destination
-            }
+            Self::Copy { destination, .. }
+            | Self::RewriteMarkdown { destination, .. }
+            | Self::RewriteCanvas { destination, .. } => destination,
         }
     }
 }
@@ -243,10 +285,21 @@ pub struct Conflict {
     pub content_hash: ContentHash,
     pub kind: ConflictKind,
     pub required: bool,
+    pub subject: Option<ConflictSubject>,
     pub resolution: ConflictResolution,
     pub documents: Vec<DocumentId>,
     pub message: String,
     pub score: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ConflictSubject {
+    CanvasReference {
+        canvas_id: CanvasId,
+        node_id: String,
+        raw_path: String,
+    },
 }
 
 impl Conflict {
@@ -263,9 +316,20 @@ impl Conflict {
                 self.conflict_id
             )));
         }
+        if let Some(ConflictSubject::CanvasReference {
+            node_id, raw_path, ..
+        }) = &self.subject
+            && (node_id.is_empty() || node_id.contains('\0') || raw_path.contains('\0'))
+        {
+            return Err(VaultcError::PlanStale(format!(
+                "conflict `{}` has an invalid Canvas reference subject",
+                self.conflict_id
+            )));
+        }
         let expected = calculate_conflict_content_hash(
             self.kind,
             self.required,
+            self.subject.as_ref(),
             &self.documents,
             &self.message,
             self.score,
@@ -317,6 +381,8 @@ struct PlanIdentity<'a> {
     projection_hash: ContentHash,
     output_paths: &'a BTreeMap<DocumentId, String>,
     asset_output_paths: &'a BTreeMap<AssetId, String>,
+    canvas_output_paths: &'a BTreeMap<CanvasId, String>,
+    base_output_paths: &'a BTreeMap<BaseArtifactId, String>,
     operations: &'a [OutputOperation],
     exact_groups: &'a [ExactDuplicateGroup],
     near_candidates: &'a [NearDuplicateCandidate],
@@ -333,6 +399,8 @@ fn calculate_plan_id(
     projection_hash: ContentHash,
     output_paths: &BTreeMap<DocumentId, String>,
     asset_output_paths: &BTreeMap<AssetId, String>,
+    canvas_output_paths: &BTreeMap<CanvasId, String>,
+    base_output_paths: &BTreeMap<BaseArtifactId, String>,
     operations: &[OutputOperation],
     exact_groups: &[ExactDuplicateGroup],
     near_candidates: &[NearDuplicateCandidate],
@@ -347,6 +415,8 @@ fn calculate_plan_id(
         projection_hash,
         output_paths,
         asset_output_paths,
+        canvas_output_paths,
+        base_output_paths,
         operations,
         exact_groups,
         near_candidates,
@@ -363,6 +433,7 @@ fn calculate_plan_id(
 struct ConflictContentIdentity<'a> {
     kind: ConflictKind,
     required: bool,
+    subject: Option<&'a ConflictSubject>,
     documents: &'a [DocumentId],
     message: &'a str,
     score: Option<f64>,
@@ -371,6 +442,7 @@ struct ConflictContentIdentity<'a> {
 fn calculate_conflict_content_hash(
     kind: ConflictKind,
     required: bool,
+    subject: Option<&ConflictSubject>,
     documents: &[DocumentId],
     message: &str,
     score: Option<f64>,
@@ -385,6 +457,7 @@ fn calculate_conflict_content_hash(
         &ConflictContentIdentity {
             kind,
             required,
+            subject,
             documents,
             message,
             score,
@@ -596,6 +669,12 @@ fn validate_workspace_sources(
     }
     for (canvas_id, canvas) in &workspace.canvases {
         validate_file(&canvas.source_file)?;
+        if canvas.source_file.kind != FileKind::Canvas {
+            return Err(VaultcError::PlanStale(format!(
+                "Canvas {} references a non-Canvas source",
+                canvas.canvas_id
+            )));
+        }
         let expected_id = crate::identity::CanvasId::from_parts(
             "vaultc:canvas:v1\0",
             &[
@@ -608,6 +687,47 @@ fn validate_workspace_sources(
                 "Canvas {} identity does not match its source",
                 canvas.canvas_id
             )));
+        }
+        let parsed_references =
+            crate::parse::canvas_file_references(&canvas.value, &canvas.source_file.logical_path)
+                .map_err(|error| VaultcError::PlanStale(error.to_string()))?;
+        if parsed_references.len() != canvas.file_references.len() {
+            return Err(VaultcError::PlanStale(format!(
+                "Canvas {} file-reference index does not match its JSON value",
+                canvas.canvas_id
+            )));
+        }
+        for (parsed, sealed) in parsed_references.iter().zip(&canvas.file_references) {
+            if parsed.node_id != sealed.node_id || parsed.raw_path != sealed.raw_path {
+                return Err(VaultcError::PlanStale(format!(
+                    "Canvas {} file-reference index is stale",
+                    canvas.canvas_id
+                )));
+            }
+            match &sealed.resolution {
+                CanvasReferenceResolution::Pending => {
+                    return Err(VaultcError::PlanStale(format!(
+                        "Canvas {} contains a pending file reference",
+                        canvas.canvas_id
+                    )));
+                }
+                CanvasReferenceResolution::Resolved { target } => {
+                    validate_canvas_target(workspace, *target)?;
+                }
+                CanvasReferenceResolution::Unresolved => {}
+                CanvasReferenceResolution::Ambiguous { candidates } => {
+                    if candidates.len() < 2 || candidates.windows(2).any(|pair| pair[0] >= pair[1])
+                    {
+                        return Err(VaultcError::PlanStale(format!(
+                            "Canvas {} ambiguity candidates are not strictly canonical",
+                            canvas.canvas_id
+                        )));
+                    }
+                    for target in candidates {
+                        validate_canvas_target(workspace, *target)?;
+                    }
+                }
+            }
         }
     }
     for (asset_id, asset) in &workspace.assets {
@@ -665,6 +785,7 @@ fn validate_workspace_sources(
             )));
         }
     }
+    let mut base_ids = BTreeSet::new();
     for base in &workspace.bases {
         validate_file(&base.source_file)?;
         if base.source_file.kind != FileKind::Base {
@@ -672,6 +793,130 @@ fn validate_workspace_sources(
                 "opaque Base IR references a non-Base source".into(),
             ));
         }
+        let expected_id = BaseArtifactId::from_parts(
+            "vaultc:base:v1\0",
+            &[
+                base.source_file.snapshot_id.hash().as_bytes(),
+                base.source_file.file_id.hash().as_bytes(),
+            ],
+        );
+        if base.base_artifact_id != expected_id || !base_ids.insert(base.base_artifact_id) {
+            return Err(VaultcError::PlanStale(format!(
+                "Base artifact {} has an invalid or duplicate identity",
+                base.base_artifact_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_canvas_target(
+    workspace: &CanonicalWorkspace,
+    target: CanvasReferenceTarget,
+) -> Result<()> {
+    let exists = match target {
+        CanvasReferenceTarget::Document(document_id) => {
+            workspace.documents.contains_key(&document_id)
+        }
+        CanvasReferenceTarget::Asset(asset_id) => workspace.assets.contains_key(&asset_id),
+        CanvasReferenceTarget::Canvas(canvas_id) => workspace.canvases.contains_key(&canvas_id),
+        CanvasReferenceTarget::Base(base_artifact_id) => workspace
+            .bases
+            .iter()
+            .any(|base| base.base_artifact_id == base_artifact_id),
+    };
+    if !exists {
+        return Err(VaultcError::PlanStale(
+            "Canvas reference target is absent from the canonical workspace".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_canvas_conflict_coverage(
+    workspace: &CanonicalWorkspace,
+    conflicts: &[Conflict],
+) -> Result<()> {
+    let mut expected = BTreeSet::new();
+    for canvas in workspace.canvases.values() {
+        for reference in &canvas.file_references {
+            if let CanvasReferenceResolution::Ambiguous { candidates } = &reference.resolution {
+                expected.insert((
+                    canvas.canvas_id,
+                    reference.node_id.clone(),
+                    reference.raw_path.clone(),
+                    candidates.clone(),
+                ));
+            }
+        }
+    }
+
+    let mut actual = BTreeSet::new();
+    for conflict in conflicts {
+        let Some(ConflictSubject::CanvasReference {
+            canvas_id,
+            node_id,
+            raw_path,
+        }) = &conflict.subject
+        else {
+            continue;
+        };
+        let canvas = workspace.canvases.get(canvas_id).ok_or_else(|| {
+            VaultcError::PlanStale(format!(
+                "conflict `{}` references an unknown Canvas",
+                conflict.conflict_id
+            ))
+        })?;
+        let reference = canvas
+            .file_references
+            .iter()
+            .find(|reference| reference.node_id == *node_id && reference.raw_path == *raw_path)
+            .ok_or_else(|| {
+                VaultcError::PlanStale(format!(
+                    "conflict `{}` references an unknown Canvas file node",
+                    conflict.conflict_id
+                ))
+            })?;
+        let CanvasReferenceResolution::Ambiguous { candidates } = &reference.resolution else {
+            return Err(VaultcError::PlanStale(format!(
+                "conflict `{}` subject is not an ambiguous Canvas reference",
+                conflict.conflict_id
+            )));
+        };
+        let mut documents: Vec<_> = candidates
+            .iter()
+            .filter_map(|target| match target {
+                CanvasReferenceTarget::Document(document_id) => Some(*document_id),
+                CanvasReferenceTarget::Asset(_)
+                | CanvasReferenceTarget::Canvas(_)
+                | CanvasReferenceTarget::Base(_) => None,
+            })
+            .collect();
+        documents.sort();
+        documents.dedup();
+        if conflict.kind != ConflictKind::LinkAmbiguity
+            || !conflict.required
+            || conflict.resolution != ConflictResolution::Unresolved
+            || conflict.documents != documents
+            || conflict.message != canvas_ambiguity_message(*canvas_id, reference, candidates)
+            || conflict.score.is_some()
+            || !actual.insert((
+                *canvas_id,
+                node_id.clone(),
+                raw_path.clone(),
+                candidates.clone(),
+            ))
+        {
+            return Err(VaultcError::PlanStale(format!(
+                "conflict `{}` is not the canonical Canvas ambiguity record",
+                conflict.conflict_id
+            )));
+        }
+    }
+    if actual != expected {
+        return Err(VaultcError::PlanStale(
+            "Canvas ambiguity conflicts do not cover the canonical workspace".into(),
+        ));
     }
     Ok(())
 }
@@ -699,10 +944,39 @@ fn validate_plan_paths_and_operations(plan: &DraftPlan) -> Result<()> {
             "asset output path map does not cover the canonical workspace".into(),
         ));
     }
+    if plan
+        .canvas_output_paths
+        .keys()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        != plan.workspace.canvases.keys().copied().collect()
+    {
+        return Err(VaultcError::PlanStale(
+            "Canvas output path map does not cover the canonical workspace".into(),
+        ));
+    }
+    if plan
+        .base_output_paths
+        .keys()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        != plan
+            .workspace
+            .bases
+            .iter()
+            .map(|base| base.base_artifact_id)
+            .collect()
+    {
+        return Err(VaultcError::PlanStale(
+            "Base output path map does not cover the canonical workspace".into(),
+        ));
+    }
     for path in plan
         .output_paths
         .values()
         .chain(plan.asset_output_paths.values())
+        .chain(plan.canvas_output_paths.values())
+        .chain(plan.base_output_paths.values())
     {
         validate_output_logical_path(path, &plan.policy)?;
     }
@@ -724,6 +998,10 @@ fn validate_plan_paths_and_operations(plan: &DraftPlan) -> Result<()> {
         .collect();
     let mut previous_operation: Option<(&str, OperationId)> = None;
     let mut destinations = BTreeSet::new();
+    let mut covered_document_outputs = BTreeSet::new();
+    let mut covered_asset_outputs = BTreeSet::new();
+    let mut covered_canvases = BTreeSet::new();
+    let mut covered_bases = BTreeSet::new();
     for operation in &plan.operations {
         validate_output_logical_path(operation.destination(), &plan.policy)?;
         if !destinations.insert(portable_key(operation.destination())) {
@@ -749,6 +1027,13 @@ fn validate_plan_paths_and_operations(plan: &DraftPlan) -> Result<()> {
                 ..
             }
             | OutputOperation::RewriteMarkdown {
+                source_id,
+                snapshot_id,
+                source_path,
+                expected_hash,
+                ..
+            }
+            | OutputOperation::RewriteCanvas {
                 source_id,
                 snapshot_id,
                 source_path,
@@ -782,6 +1067,88 @@ fn validate_plan_paths_and_operations(plan: &DraftPlan) -> Result<()> {
                         "copy operation source `{source_path}` has the wrong kind"
                     )));
                 }
+                if *kind == FileKind::Markdown {
+                    let document = plan
+                        .workspace
+                        .documents
+                        .values()
+                        .find(|document| document.source_file == *source)
+                        .ok_or_else(|| {
+                            VaultcError::PlanStale(format!(
+                                "Markdown copy source `{source_path}` is absent from the canonical workspace"
+                            ))
+                        })?;
+                    if plan.output_paths.get(&document.document_id) != Some(destination)
+                        || !covered_document_outputs.insert(destination.clone())
+                    {
+                        return Err(VaultcError::PlanStale(format!(
+                            "Markdown copy operation for `{source_path}` does not match its sealed output map"
+                        )));
+                    }
+                } else if *kind == FileKind::Asset {
+                    let (asset_id, _) = plan
+                        .workspace
+                        .assets
+                        .iter()
+                        .find(|(_, asset)| asset.canonical_source() == Some(source))
+                        .ok_or_else(|| {
+                            VaultcError::PlanStale(format!(
+                                "asset copy source `{source_path}` is not the canonical source occurrence"
+                            ))
+                        })?;
+                    if plan.asset_output_paths.get(asset_id) != Some(destination)
+                        || !covered_asset_outputs.insert(destination.clone())
+                    {
+                        return Err(VaultcError::PlanStale(format!(
+                            "asset copy operation for `{source_path}` does not match its sealed output map"
+                        )));
+                    }
+                } else if *kind == FileKind::Canvas {
+                    let canvas = plan
+                        .workspace
+                        .canvases
+                        .values()
+                        .find(|canvas| canvas.source_file == *source)
+                        .ok_or_else(|| {
+                            VaultcError::PlanStale(format!(
+                                "Canvas copy source `{source_path}` is absent from the canonical workspace"
+                            ))
+                        })?;
+                    if plan.canvas_output_paths.get(&canvas.canvas_id) != Some(destination)
+                        || !covered_canvases.insert(canvas.canvas_id)
+                        || !planned_canvas_rewrites(
+                            canvas,
+                            destination,
+                            &plan.output_paths,
+                            &plan.asset_output_paths,
+                            &plan.canvas_output_paths,
+                            &plan.base_output_paths,
+                        )?
+                        .is_empty()
+                    {
+                        return Err(VaultcError::PlanStale(format!(
+                            "Canvas copy operation for `{source_path}` does not match its sealed references"
+                        )));
+                    }
+                } else if *kind == FileKind::Base {
+                    let base = plan
+                        .workspace
+                        .bases
+                        .iter()
+                        .find(|base| base.source_file == *source)
+                        .ok_or_else(|| {
+                            VaultcError::PlanStale(format!(
+                                "Base copy source `{source_path}` is absent from the canonical workspace"
+                            ))
+                        })?;
+                    if plan.base_output_paths.get(&base.base_artifact_id) != Some(destination)
+                        || !covered_bases.insert(base.base_artifact_id)
+                    {
+                        return Err(VaultcError::PlanStale(format!(
+                            "Base copy operation for `{source_path}` does not match its sealed output map"
+                        )));
+                    }
+                }
                 operation_id(&("copy", source_id, source_path, destination, expected_hash))?
             }
             OutputOperation::RewriteMarkdown {
@@ -793,6 +1160,23 @@ fn validate_plan_paths_and_operations(plan: &DraftPlan) -> Result<()> {
                 if source.kind != FileKind::Markdown {
                     return Err(VaultcError::PlanStale(format!(
                         "rewrite operation source `{source_path}` is not Markdown"
+                    )));
+                }
+                let document = plan
+                    .workspace
+                    .documents
+                    .values()
+                    .find(|document| document.source_file == *source)
+                    .ok_or_else(|| {
+                        VaultcError::PlanStale(format!(
+                            "Markdown rewrite source `{source_path}` is absent from the canonical workspace"
+                        ))
+                    })?;
+                if plan.output_paths.get(&document.document_id) != Some(destination)
+                    || !covered_document_outputs.insert(destination.clone())
+                {
+                    return Err(VaultcError::PlanStale(format!(
+                        "Markdown rewrite operation for `{source_path}` does not match its sealed output map"
                     )));
                 }
                 let mut previous_end = 0_u64;
@@ -815,6 +1199,47 @@ fn validate_plan_paths_and_operations(plan: &DraftPlan) -> Result<()> {
                     replacements,
                 ))?
             }
+            OutputOperation::RewriteCanvas {
+                destination,
+                expected_output_hash,
+                rewrites,
+                ..
+            } => {
+                if source.kind != FileKind::Canvas {
+                    return Err(VaultcError::PlanStale(format!(
+                        "Canvas rewrite source `{source_path}` is not Canvas JSON"
+                    )));
+                }
+                let canvas = plan
+                    .workspace
+                    .canvases
+                    .values()
+                    .find(|canvas| canvas.source_file == *source)
+                    .ok_or_else(|| {
+                        VaultcError::PlanStale(format!(
+                            "Canvas rewrite source `{source_path}` is absent from the canonical workspace"
+                        ))
+                    })?;
+                let planned = planned_canvas_rewrites(
+                    canvas,
+                    destination,
+                    &plan.output_paths,
+                    &plan.asset_output_paths,
+                    &plan.canvas_output_paths,
+                    &plan.base_output_paths,
+                )?;
+                let rendered = render_rewritten_canvas(canvas, rewrites)?;
+                if plan.canvas_output_paths.get(&canvas.canvas_id) != Some(destination)
+                    || !covered_canvases.insert(canvas.canvas_id)
+                    || &planned != rewrites
+                    || ContentHash::from_bytes(&rendered) != *expected_output_hash
+                {
+                    return Err(VaultcError::PlanStale(format!(
+                        "Canvas rewrite operation for `{source_path}` does not match its sealed resolution"
+                    )));
+                }
+                canvas_rewrite_operation_id(source, destination, *expected_output_hash, rewrites)?
+            }
         };
         if operation.operation_id() != expected_operation_id {
             return Err(VaultcError::PlanStale(format!(
@@ -822,6 +1247,21 @@ fn validate_plan_paths_and_operations(plan: &DraftPlan) -> Result<()> {
                 operation.operation_id()
             )));
         }
+    }
+    if covered_document_outputs != plan.output_paths.values().cloned().collect()
+        || covered_asset_outputs != plan.asset_output_paths.values().cloned().collect()
+        || covered_canvases != plan.workspace.canvases.keys().copied().collect()
+        || covered_bases
+            != plan
+                .workspace
+                .bases
+                .iter()
+                .map(|base| base.base_artifact_id)
+                .collect()
+    {
+        return Err(VaultcError::PlanStale(
+            "operations do not cover their sealed output maps".into(),
+        ));
     }
     Ok(())
 }
@@ -848,6 +1288,11 @@ pub fn build_plan(inspection: &Inspection, policy: &CompilerPolicy) -> Result<Dr
         }
     }
     let (asset_output_paths, asset_path_diagnostics) = allocate_asset_paths(&workspace, policy)?;
+    let auxiliary_paths =
+        allocate_canvas_and_base_paths(&workspace, &output_paths, &asset_output_paths, policy)?;
+    let canvas_output_paths = auxiliary_paths.canvases;
+    let base_output_paths = auxiliary_paths.bases;
+    conflicts.extend(auxiliary_paths.conflicts);
 
     add_lookup_conflicts(&workspace, &representative_map, &mut conflicts)?;
     add_frontmatter_conflicts(&workspace, &mut conflicts)?;
@@ -891,8 +1336,12 @@ pub fn build_plan(inspection: &Inspection, policy: &CompilerPolicy) -> Result<Dr
     resolve_links(
         &mut workspace,
         &representative_map,
-        &output_paths,
-        &asset_output_paths,
+        OutputPathMaps {
+            documents: &output_paths,
+            assets: &asset_output_paths,
+            canvases: &canvas_output_paths,
+            bases: &base_output_paths,
+        },
         &mut conflicts,
         &mut diagnostics,
     )?;
@@ -902,7 +1351,8 @@ pub fn build_plan(inspection: &Inspection, policy: &CompilerPolicy) -> Result<Dr
         &representative_map,
         &output_paths,
         &asset_output_paths,
-        policy,
+        &canvas_output_paths,
+        &base_output_paths,
     )?;
     conflicts.extend(operation_conflicts);
     conflicts.sort_by(|left, right| left.conflict_id.cmp(&right.conflict_id));
@@ -923,6 +1373,8 @@ pub fn build_plan(inspection: &Inspection, policy: &CompilerPolicy) -> Result<Dr
         projection_hash,
         &output_paths,
         &asset_output_paths,
+        &canvas_output_paths,
+        &base_output_paths,
         &operations,
         &dedup.exact_groups,
         &dedup.near_candidates,
@@ -940,6 +1392,8 @@ pub fn build_plan(inspection: &Inspection, policy: &CompilerPolicy) -> Result<Dr
         workspace,
         output_paths,
         asset_output_paths,
+        canvas_output_paths,
+        base_output_paths,
         operations,
         exact_groups: dedup.exact_groups,
         near_candidates: dedup.near_candidates,
@@ -1064,6 +1518,87 @@ fn allocate_asset_paths(
     Ok((output, diagnostics))
 }
 
+fn allocate_canvas_and_base_paths(
+    workspace: &CanonicalWorkspace,
+    output_paths: &BTreeMap<DocumentId, String>,
+    asset_output_paths: &BTreeMap<AssetId, String>,
+    policy: &CompilerPolicy,
+) -> Result<AuxiliaryPathAllocation> {
+    let mut allocated: BTreeMap<String, String> = output_paths
+        .values()
+        .chain(asset_output_paths.values())
+        .map(|path| (portable_key(path), path.clone()))
+        .collect();
+    let mut canvas_output_paths = BTreeMap::new();
+    let mut base_output_paths = BTreeMap::new();
+    let mut conflicts = Vec::new();
+
+    for (canvas_id, canvas) in &workspace.canvases {
+        let preferred = format!("canvases/{}", canvas.source_file.logical_path);
+        let (destination, collision) = allocate_auxiliary_path(
+            &preferred,
+            &canvas.canvas_id.suffix_base32(52),
+            &mut allocated,
+            policy,
+        )?;
+        if let Some((kind, existing)) = collision {
+            conflicts.push(conflict(
+                kind,
+                false,
+                Vec::new(),
+                format!(
+                    "portable Canvas path collision between `{existing}` and `{preferred}`; allocated `{destination}`"
+                ),
+                None,
+                ConflictResolution::AutoResolvedByNormativeRule,
+            )?);
+        }
+        canvas_output_paths.insert(*canvas_id, destination);
+    }
+
+    let mut bases: Vec<_> = workspace.bases.iter().collect();
+    bases.sort_by(|left, right| {
+        left.source_file
+            .source_id
+            .cmp(&right.source_file.source_id)
+            .then_with(|| {
+                left.source_file
+                    .logical_path
+                    .as_bytes()
+                    .cmp(right.source_file.logical_path.as_bytes())
+            })
+            .then_with(|| left.base_artifact_id.cmp(&right.base_artifact_id))
+    });
+    for base in bases {
+        let preferred = format!("views/{}", base.source_file.logical_path);
+        let (destination, collision) = allocate_auxiliary_path(
+            &preferred,
+            &base.base_artifact_id.suffix_base32(52),
+            &mut allocated,
+            policy,
+        )?;
+        if let Some((kind, existing)) = collision {
+            conflicts.push(conflict(
+                kind,
+                false,
+                Vec::new(),
+                format!(
+                    "portable Base path collision between `{existing}` and `{preferred}`; allocated `{destination}`"
+                ),
+                None,
+                ConflictResolution::AutoResolvedByNormativeRule,
+            )?);
+        }
+        base_output_paths.insert(base.base_artifact_id, destination);
+    }
+
+    Ok(AuxiliaryPathAllocation {
+        canvases: canvas_output_paths,
+        bases: base_output_paths,
+        conflicts,
+    })
+}
+
 fn add_lookup_conflicts(
     workspace: &CanonicalWorkspace,
     representative_map: &BTreeMap<DocumentId, DocumentId>,
@@ -1171,11 +1706,16 @@ fn add_frontmatter_conflicts(
 fn resolve_links(
     workspace: &mut CanonicalWorkspace,
     representative_map: &BTreeMap<DocumentId, DocumentId>,
-    output_paths: &BTreeMap<DocumentId, String>,
-    asset_output_paths: &BTreeMap<AssetId, String>,
+    output_paths: OutputPathMaps<'_>,
     conflicts: &mut Vec<Conflict>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
+    let OutputPathMaps {
+        documents: document_output_paths,
+        assets: asset_output_paths,
+        canvases: canvas_output_paths,
+        bases: base_output_paths,
+    } = output_paths;
     let documents = workspace.documents.clone();
     let mut path_index: BTreeMap<(SourceId, String), Vec<DocumentId>> = BTreeMap::new();
     let mut key_index: BTreeMap<String, Vec<DocumentId>> = BTreeMap::new();
@@ -1203,6 +1743,52 @@ fn resolve_links(
                 *asset_id,
             );
         }
+    }
+    let mut canvas_path_index: BTreeMap<(SourceId, String), Vec<CanvasReferenceTarget>> =
+        BTreeMap::new();
+    for ((source_id, path), document_ids) in &path_index {
+        let targets = canvas_path_index
+            .entry((source_id.clone(), path.clone()))
+            .or_default();
+        targets.extend(
+            document_ids
+                .iter()
+                .copied()
+                .map(CanvasReferenceTarget::Document),
+        );
+    }
+    for (asset_id, asset) in &workspace.assets {
+        for source in &asset.sources {
+            canvas_path_index
+                .entry((
+                    source.source_id.clone(),
+                    normalize_link_path(&source.logical_path),
+                ))
+                .or_default()
+                .push(CanvasReferenceTarget::Asset(*asset_id));
+        }
+    }
+    for (canvas_id, canvas) in &workspace.canvases {
+        canvas_path_index
+            .entry((
+                canvas.source_file.source_id.clone(),
+                normalize_link_path(&canvas.source_file.logical_path),
+            ))
+            .or_default()
+            .push(CanvasReferenceTarget::Canvas(*canvas_id));
+    }
+    for base in &workspace.bases {
+        canvas_path_index
+            .entry((
+                base.source_file.source_id.clone(),
+                normalize_link_path(&base.source_file.logical_path),
+            ))
+            .or_default()
+            .push(CanvasReferenceTarget::Base(base.base_artifact_id));
+    }
+    for targets in canvas_path_index.values_mut() {
+        targets.sort();
+        targets.dedup();
     }
 
     for document in workspace.documents.values_mut() {
@@ -1291,7 +1877,218 @@ fn resolve_links(
         }
     }
 
-    let _ = output_paths;
+    for canvas in workspace.canvases.values_mut() {
+        let source_id = canvas.source_file.source_id.clone();
+        let logical_path = canvas.source_file.logical_path.clone();
+        let source_file_id = canvas.source_file.file_id;
+        let destination = canvas_output_paths.get(&canvas.canvas_id).ok_or_else(|| {
+            VaultcError::Internal(format!(
+                "Canvas {} has no allocated output path",
+                canvas.canvas_id
+            ))
+        })?;
+        for reference in &mut canvas.file_references {
+            let resolved_source_path =
+                resolve_relative_source_path(&logical_path, &reference.raw_path).ok_or_else(
+                    || VaultcError::UnsafePath {
+                        path: format!("{logical_path}#{}", reference.node_id),
+                        reason: format!(
+                            "Canvas file reference `{}` escapes the source Vault root",
+                            reference.raw_path
+                        ),
+                    },
+                )?;
+            let candidates = resolve_canvas_reference_candidates(
+                &source_id,
+                &resolved_source_path,
+                &reference.raw_path,
+                &canvas_path_index,
+                &key_index,
+            );
+            match candidates.len() {
+                1 => {
+                    let target = candidates[0];
+                    canvas_reference_output_path(
+                        target,
+                        document_output_paths,
+                        asset_output_paths,
+                        canvas_output_paths,
+                        base_output_paths,
+                    )
+                    .ok_or_else(|| {
+                        VaultcError::Internal(
+                            "resolved Canvas reference has no allocated output path".into(),
+                        )
+                    })?;
+                    reference.resolution = CanvasReferenceResolution::Resolved { target };
+                }
+                2.. => {
+                    reference.resolution = CanvasReferenceResolution::Ambiguous {
+                        candidates: candidates.clone(),
+                    };
+                    ensure_preserved_canvas_target_is_contained(
+                        destination,
+                        &reference.raw_path,
+                        &logical_path,
+                        &reference.node_id,
+                    )?;
+                    let documents = candidates
+                        .iter()
+                        .filter_map(|target| match target {
+                            CanvasReferenceTarget::Document(document_id) => Some(*document_id),
+                            CanvasReferenceTarget::Asset(_)
+                            | CanvasReferenceTarget::Canvas(_)
+                            | CanvasReferenceTarget::Base(_) => None,
+                        })
+                        .collect();
+                    let message =
+                        canvas_ambiguity_message(canvas.canvas_id, reference, &candidates);
+                    conflicts.push(conflict_with_subject(
+                        ConflictKind::LinkAmbiguity,
+                        true,
+                        Some(ConflictSubject::CanvasReference {
+                            canvas_id: canvas.canvas_id,
+                            node_id: reference.node_id.clone(),
+                            raw_path: reference.raw_path.clone(),
+                        }),
+                        documents,
+                        message.clone(),
+                        None,
+                        ConflictResolution::Unresolved,
+                    )?);
+                    diagnostics.push(Diagnostic {
+                        code: DiagnosticCode::LinkAmbiguity,
+                        severity: Severity::Warning,
+                        message,
+                        logical_path: Some(logical_path.clone()),
+                        source_file_id: Some(source_file_id),
+                        document_id: None,
+                        span: None,
+                        remediation: None,
+                    });
+                }
+                0 => {
+                    reference.resolution = CanvasReferenceResolution::Unresolved;
+                    ensure_preserved_canvas_target_is_contained(
+                        destination,
+                        &reference.raw_path,
+                        &logical_path,
+                        &reference.node_id,
+                    )?;
+                    diagnostics.push(Diagnostic {
+                        code: DiagnosticCode::LinkUnresolved,
+                        severity: Severity::Warning,
+                        message: format!(
+                            "unresolved Canvas file reference `{}`",
+                            reference.raw_path
+                        ),
+                        logical_path: Some(logical_path.clone()),
+                        source_file_id: Some(source_file_id),
+                        document_id: None,
+                        span: None,
+                        remediation: None,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_canvas_reference_candidates(
+    source_id: &SourceId,
+    resolved_source_path: &str,
+    raw_path: &str,
+    path_index: &BTreeMap<(SourceId, String), Vec<CanvasReferenceTarget>>,
+    key_index: &BTreeMap<String, Vec<DocumentId>>,
+) -> Vec<CanvasReferenceTarget> {
+    let mut candidates = path_index
+        .get(&(source_id.clone(), normalize_link_path(resolved_source_path)))
+        .cloned()
+        .unwrap_or_default();
+    if candidates.is_empty() && !resolved_source_path.to_ascii_lowercase().ends_with(".md") {
+        candidates = path_index
+            .get(&(
+                source_id.clone(),
+                normalize_link_path(&format!("{resolved_source_path}.md")),
+            ))
+            .cloned()
+            .unwrap_or_default();
+    }
+    if candidates.is_empty() {
+        let stem = Path::new(raw_path)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(raw_path);
+        candidates.extend(
+            key_index
+                .get(&crate::parse::normalize_lookup_key(stem))
+                .into_iter()
+                .flatten()
+                .copied()
+                .map(CanvasReferenceTarget::Document),
+        );
+    }
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+fn canvas_reference_output_path<'a>(
+    target: CanvasReferenceTarget,
+    output_paths: &'a BTreeMap<DocumentId, String>,
+    asset_output_paths: &'a BTreeMap<AssetId, String>,
+    canvas_output_paths: &'a BTreeMap<CanvasId, String>,
+    base_output_paths: &'a BTreeMap<BaseArtifactId, String>,
+) -> Option<&'a String> {
+    match target {
+        CanvasReferenceTarget::Document(document_id) => output_paths.get(&document_id),
+        CanvasReferenceTarget::Asset(asset_id) => asset_output_paths.get(&asset_id),
+        CanvasReferenceTarget::Canvas(canvas_id) => canvas_output_paths.get(&canvas_id),
+        CanvasReferenceTarget::Base(base_artifact_id) => base_output_paths.get(&base_artifact_id),
+    }
+}
+
+fn canvas_reference_target_label(target: &CanvasReferenceTarget) -> String {
+    match target {
+        CanvasReferenceTarget::Document(id) => id.to_string(),
+        CanvasReferenceTarget::Asset(id) => id.to_string(),
+        CanvasReferenceTarget::Canvas(id) => id.to_string(),
+        CanvasReferenceTarget::Base(id) => id.to_string(),
+    }
+}
+
+fn canvas_ambiguity_message(
+    canvas_id: CanvasId,
+    reference: &crate::ir::CanvasFileReference,
+    candidates: &[CanvasReferenceTarget],
+) -> String {
+    let candidate_labels = candidates
+        .iter()
+        .map(canvas_reference_target_label)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Canvas {canvas_id} file reference `{}` at node `{}` resolves to multiple targets: {candidate_labels}",
+        reference.raw_path, reference.node_id
+    )
+}
+
+fn ensure_preserved_canvas_target_is_contained(
+    canvas_destination: &str,
+    raw_path: &str,
+    source_path: &str,
+    node_id: &str,
+) -> Result<()> {
+    if resolve_relative_source_path(canvas_destination, raw_path).is_none() {
+        return Err(VaultcError::UnsafePath {
+            path: format!("{source_path}#{node_id}"),
+            reason: format!(
+                "preserved Canvas file reference `{raw_path}` escapes the compiled Vault root"
+            ),
+        });
+    }
     Ok(())
 }
 
@@ -1362,7 +2159,8 @@ fn build_operations(
     representative_map: &BTreeMap<DocumentId, DocumentId>,
     output_paths: &BTreeMap<DocumentId, String>,
     asset_output_paths: &BTreeMap<AssetId, String>,
-    policy: &CompilerPolicy,
+    canvas_output_paths: &BTreeMap<CanvasId, String>,
+    base_output_paths: &BTreeMap<BaseArtifactId, String>,
 ) -> Result<(Vec<OutputOperation>, Vec<Conflict>)> {
     let representatives: BTreeSet<_> = representative_map.values().copied().collect();
     let mut operations = Vec::new();
@@ -1423,41 +2221,42 @@ fn build_operations(
             FileKind::Asset,
         )?);
     }
-    let mut allocated: BTreeMap<String, String> = operations
-        .iter()
-        .map(|operation| {
-            (
-                portable_key(operation.destination()),
-                operation.destination().to_owned(),
-            )
-        })
-        .collect();
-    let mut path_conflicts = Vec::new();
-    for canvas in workspace.canvases.values() {
-        let preferred = format!("canvases/{}", canvas.source_file.logical_path);
-        let (destination, collision) = allocate_auxiliary_path(
-            &preferred,
-            &canvas.canvas_id.suffix_base32(52),
-            &mut allocated,
-            policy,
+    for (canvas_id, canvas) in &workspace.canvases {
+        let destination = canvas_output_paths[canvas_id].clone();
+        let rewrites = planned_canvas_rewrites(
+            canvas,
+            &destination,
+            output_paths,
+            asset_output_paths,
+            canvas_output_paths,
+            base_output_paths,
         )?;
-        if let Some((kind, existing)) = collision {
-            path_conflicts.push(conflict(
-                kind,
-                false,
-                Vec::new(),
-                format!(
-                    "portable Canvas path collision between `{existing}` and `{preferred}`; allocated `{destination}`"
-                ),
-                None,
-                ConflictResolution::AutoResolvedByNormativeRule,
+        if rewrites.is_empty() {
+            operations.push(copy_operation(
+                &canvas.source_file,
+                destination,
+                FileKind::Canvas,
             )?);
+        } else {
+            let output = render_rewritten_canvas(canvas, &rewrites)?;
+            let expected_output_hash = ContentHash::from_bytes(&output);
+            let operation_id = canvas_rewrite_operation_id(
+                &canvas.source_file,
+                &destination,
+                expected_output_hash,
+                &rewrites,
+            )?;
+            operations.push(OutputOperation::RewriteCanvas {
+                operation_id,
+                source_id: canvas.source_file.source_id.clone(),
+                snapshot_id: canvas.source_file.snapshot_id,
+                source_path: canvas.source_file.logical_path.clone(),
+                destination,
+                expected_hash: canvas.source_file.content_hash,
+                expected_output_hash,
+                rewrites,
+            });
         }
-        operations.push(copy_operation(
-            &canvas.source_file,
-            destination,
-            FileKind::Canvas,
-        )?);
     }
     let mut bases: Vec<_> = workspace.bases.iter().collect();
     bases.sort_by(|left, right| {
@@ -1470,31 +2269,12 @@ fn build_operations(
                     .as_bytes()
                     .cmp(right.source_file.logical_path.as_bytes())
             })
-            .then_with(|| left.source_file.file_id.cmp(&right.source_file.file_id))
+            .then_with(|| left.base_artifact_id.cmp(&right.base_artifact_id))
     });
     for base in bases {
-        let preferred = format!("views/{}", base.source_file.logical_path);
-        let (destination, collision) = allocate_auxiliary_path(
-            &preferred,
-            &base.source_file.file_id.suffix_base32(52),
-            &mut allocated,
-            policy,
-        )?;
-        if let Some((kind, existing)) = collision {
-            path_conflicts.push(conflict(
-                kind,
-                false,
-                Vec::new(),
-                format!(
-                    "portable Base path collision between `{existing}` and `{preferred}`; allocated `{destination}`"
-                ),
-                None,
-                ConflictResolution::AutoResolvedByNormativeRule,
-            )?);
-        }
         operations.push(copy_operation(
             &base.source_file,
-            destination,
+            base_output_paths[&base.base_artifact_id].clone(),
             FileKind::Base,
         )?);
     }
@@ -1513,7 +2293,211 @@ fn build_operations(
             )));
         }
     }
-    Ok((operations, path_conflicts))
+    Ok((operations, Vec::new()))
+}
+
+fn planned_canvas_rewrites(
+    canvas: &crate::ir::Canvas,
+    destination: &str,
+    output_paths: &BTreeMap<DocumentId, String>,
+    asset_output_paths: &BTreeMap<AssetId, String>,
+    canvas_output_paths: &BTreeMap<CanvasId, String>,
+    base_output_paths: &BTreeMap<BaseArtifactId, String>,
+) -> Result<Vec<CanvasReferenceRewrite>> {
+    let mut rewrites = Vec::new();
+    for reference in &canvas.file_references {
+        match &reference.resolution {
+            CanvasReferenceResolution::Resolved { target } => {
+                let target_output = canvas_reference_output_path(
+                    *target,
+                    output_paths,
+                    asset_output_paths,
+                    canvas_output_paths,
+                    base_output_paths,
+                )
+                .ok_or_else(|| {
+                    VaultcError::PlanStale(format!(
+                        "Canvas {} resolved target has no output path",
+                        canvas.canvas_id
+                    ))
+                })?;
+                let replacement_path = relative_output_target(destination, target_output);
+                if replacement_path != reference.raw_path {
+                    rewrites.push(CanvasReferenceRewrite {
+                        node_id: reference.node_id.clone(),
+                        original_path: reference.raw_path.clone(),
+                        replacement_path,
+                        target: *target,
+                    });
+                }
+            }
+            CanvasReferenceResolution::Unresolved | CanvasReferenceResolution::Ambiguous { .. } => {
+                ensure_preserved_canvas_target_is_contained(
+                    destination,
+                    &reference.raw_path,
+                    &canvas.source_file.logical_path,
+                    &reference.node_id,
+                )?;
+            }
+            CanvasReferenceResolution::Pending => {
+                return Err(VaultcError::PlanStale(format!(
+                    "Canvas {} contains a pending reference",
+                    canvas.canvas_id
+                )));
+            }
+        }
+    }
+    rewrites.sort_by(|left, right| left.node_id.as_bytes().cmp(right.node_id.as_bytes()));
+    Ok(rewrites)
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "Canvas mutation, unknown-field preservation, and semantic reparse form one output invariant"
+)]
+pub(crate) fn render_rewritten_canvas(
+    canvas: &crate::ir::Canvas,
+    rewrites: &[CanvasReferenceRewrite],
+) -> Result<Vec<u8>> {
+    if rewrites.is_empty()
+        || rewrites
+            .windows(2)
+            .any(|pair| pair[0].node_id.as_bytes() >= pair[1].node_id.as_bytes())
+    {
+        return Err(VaultcError::PlanStale(format!(
+            "Canvas {} rewrites must be non-empty and strictly ordered by node ID",
+            canvas.canvas_id
+        )));
+    }
+    let indexed =
+        crate::parse::canvas_file_references(&canvas.value, &canvas.source_file.logical_path)
+            .map_err(|error| VaultcError::PlanStale(error.to_string()))?;
+    if indexed.len() != canvas.file_references.len()
+        || indexed
+            .iter()
+            .zip(&canvas.file_references)
+            .any(|(parsed, sealed)| {
+                parsed.node_id != sealed.node_id || parsed.raw_path != sealed.raw_path
+            })
+    {
+        return Err(VaultcError::PlanStale(format!(
+            "Canvas {} file-reference index is stale",
+            canvas.canvas_id
+        )));
+    }
+
+    let mut rewritten_value = canvas.value.clone();
+    let nodes = rewritten_value
+        .get_mut("nodes")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| {
+            VaultcError::PlanStale(format!("Canvas {} lost its node array", canvas.canvas_id))
+        })?;
+    for rewrite in rewrites {
+        if rewrite.original_path == rewrite.replacement_path {
+            return Err(VaultcError::PlanStale(format!(
+                "Canvas {} contains a no-op rewrite for node `{}`",
+                canvas.canvas_id, rewrite.node_id
+            )));
+        }
+        let reference = canvas
+            .file_references
+            .iter()
+            .find(|reference| reference.node_id == rewrite.node_id)
+            .ok_or_else(|| {
+                VaultcError::PlanStale(format!(
+                    "Canvas {} rewrite references unknown node `{}`",
+                    canvas.canvas_id, rewrite.node_id
+                ))
+            })?;
+        if reference.raw_path != rewrite.original_path
+            || reference.resolution
+                != (CanvasReferenceResolution::Resolved {
+                    target: rewrite.target,
+                })
+        {
+            return Err(VaultcError::PlanStale(format!(
+                "Canvas {} rewrite for node `{}` is not bound to its resolved reference",
+                canvas.canvas_id, rewrite.node_id
+            )));
+        }
+        let mut matches = 0_usize;
+        for node in nodes.iter_mut() {
+            if node.get("id").and_then(serde_json::Value::as_str) == Some(rewrite.node_id.as_str())
+            {
+                matches += 1;
+                if node.get("type").and_then(serde_json::Value::as_str) != Some("file")
+                    || node.get("file").and_then(serde_json::Value::as_str)
+                        != Some(rewrite.original_path.as_str())
+                {
+                    return Err(VaultcError::PlanStale(format!(
+                        "Canvas {} rewrite node `{}` is not the sealed file reference",
+                        canvas.canvas_id, rewrite.node_id
+                    )));
+                }
+                let node = node.as_object_mut().ok_or_else(|| {
+                    VaultcError::PlanStale(format!(
+                        "Canvas {} rewrite node `{}` is not an object",
+                        canvas.canvas_id, rewrite.node_id
+                    ))
+                })?;
+                node.insert(
+                    "file".into(),
+                    serde_json::Value::String(rewrite.replacement_path.clone()),
+                );
+            }
+        }
+        if matches != 1 {
+            return Err(VaultcError::PlanStale(format!(
+                "Canvas {} rewrite node `{}` did not match exactly one file node",
+                canvas.canvas_id, rewrite.node_id
+            )));
+        }
+    }
+
+    let encoded = crate::canonical::canonical_value_pretty(rewritten_value.clone())?;
+    let (reparsed_value, reparsed_references) =
+        crate::parse::parse_canvas_json(&canvas.source_file.logical_path, &encoded)
+            .map_err(|error| VaultcError::PlanStale(error.to_string()))?;
+    if reparsed_value != rewritten_value || reparsed_references.len() != indexed.len() {
+        return Err(VaultcError::PlanStale(format!(
+            "rewritten Canvas {} failed semantic reparse",
+            canvas.canvas_id
+        )));
+    }
+    for (original, reparsed) in indexed.iter().zip(&reparsed_references) {
+        let expected_path = rewrites
+            .iter()
+            .find(|rewrite| rewrite.node_id == original.node_id)
+            .map_or(original.raw_path.as_str(), |rewrite| {
+                rewrite.replacement_path.as_str()
+            });
+        if reparsed.node_id != original.node_id || reparsed.raw_path != expected_path {
+            return Err(VaultcError::PlanStale(format!(
+                "rewritten Canvas {} changed an unintended file reference",
+                canvas.canvas_id
+            )));
+        }
+    }
+    Ok(encoded)
+}
+
+fn canvas_rewrite_operation_id(
+    source: &crate::ir::SourceFile,
+    destination: &str,
+    expected_output_hash: ContentHash,
+    rewrites: &[CanvasReferenceRewrite],
+) -> Result<OperationId> {
+    operation_id(&(
+        "rewrite_canvas",
+        &source.source_id,
+        source.snapshot_id,
+        &source.logical_path,
+        destination,
+        source.content_hash,
+        expected_output_hash,
+        rewrites,
+    ))
 }
 
 fn allocate_auxiliary_path(
@@ -1590,6 +2574,19 @@ fn projection_hash(workspace: &CanonicalWorkspace) -> Result<ContentHash> {
 fn conflict(
     kind: ConflictKind,
     required: bool,
+    documents: Vec<DocumentId>,
+    message: String,
+    score: Option<f64>,
+    resolution: ConflictResolution,
+) -> Result<Conflict> {
+    conflict_with_subject(kind, required, None, documents, message, score, resolution)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn conflict_with_subject(
+    kind: ConflictKind,
+    required: bool,
+    subject: Option<ConflictSubject>,
     mut documents: Vec<DocumentId>,
     message: String,
     score: Option<f64>,
@@ -1597,13 +2594,20 @@ fn conflict(
 ) -> Result<Conflict> {
     documents.sort();
     documents.dedup();
-    let content_hash =
-        calculate_conflict_content_hash(kind, required, &documents, &message, score)?;
+    let content_hash = calculate_conflict_content_hash(
+        kind,
+        required,
+        subject.as_ref(),
+        &documents,
+        &message,
+        score,
+    )?;
     Ok(Conflict {
         conflict_id: format!("conflict_{}", content_hash.hex()),
         content_hash,
         kind,
         required,
+        subject,
         resolution,
         documents,
         message,

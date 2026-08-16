@@ -28,13 +28,13 @@ source_refs:
 
 ## Current `0.1.0` evidence
 
-Local macOS arm64 execution with Rust 1.97.1 has 61 passing tests plus passing
+Local macOS arm64 execution with Rust 1.97.1 has 66 passing tests plus passing
 doctest harnesses, warning-free workspace Clippy, and a clean rustfmt check.
 This evidence does not make the full release gates green:
 
 | Gate | Current state |
 |---|---|
-| QG-001 | partial: current functions pass locally; Canvas rewrite, full corpora, and supported-platform matrix remain |
+| QG-001 | partial: current functions pass locally; the complete Markdown/Canvas corpora and supported-platform matrix remain |
 | QG-002 | partial: same-host and cross-absolute-source-root byte equality pass; cross-platform/toolchain comparison remains |
 | QG-003 | partial: implemented content records have strict closure; full ALG-PRV-001 typed graph, administrative files, record/edge IDs, and attribution remain |
 | QG-004 | partial: targeted hostile-input suite passes; fuzz/property campaigns and remaining platform/adversarial classes remain |
@@ -84,9 +84,8 @@ Include ZIP slip, tar traversal, symlink/hardlink escape, decompression bomb, hu
 ### Required regressions not yet implemented
 
 - `verifier_rejects_resealed_copy_output_that_disagrees_with_plan`;
-- `verifier_rejects_resealed_rewrite_output_that_disagrees_with_expected_output_hash`;
+- `verifier_rejects_resealed_markdown_rewrite_output_that_disagrees_with_expected_output_hash`;
 - `verifier_rejects_resealed_generated_body_or_source_ids`;
-- `canvas_references_resolve_rewrite_and_reparse`;
 - `cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path`;
 - `archive_declared_member_count_and_compressed_bytes_are_bounded`;
 - `sdk_pack_failure_does_not_leave_partial_destination`;

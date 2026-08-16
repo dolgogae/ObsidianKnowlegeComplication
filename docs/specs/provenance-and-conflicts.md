@@ -74,8 +74,12 @@ policy error). They are not variants of the V1 `ConflictKind` enum.
 provider suggestion never becomes a resolution without approval.
 
 The `DraftPlan` is immutable. Each conflict has a canonical `content_hash`
-computed from its kind, required flag, ordered documents, and message; the
-resolution is deliberately excluded from this hash. External decisions live
+computed from its kind, required flag, optional typed subject, ordered
+documents, message, and score; the resolution is deliberately excluded from
+this hash. A Canvas-reference subject binds the `CanvasId`, unique node ID, and
+raw file path. Each ambiguous Canvas file node receives its own subject and
+conflict even when its human-readable path and candidate documents equal
+another node's. External decisions live
 in `ApprovedPlan.conflict_decisions` and bind the sealed `plan_id`,
 `conflict_id`, `conflict_content_hash`, resolver, and policy version. Unknown,
 duplicate, wrong-plan, stale-hash, or already-resolved decisions fail closed.

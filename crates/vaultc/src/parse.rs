@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
+use std::fmt::Formatter;
 use std::path::Path;
 
 use comrak::{Options, markdown_to_html};
+use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
 
@@ -9,10 +11,13 @@ use crate::canonical::to_canonical_json;
 use crate::config::CompilerPolicy;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, SourceSpan};
 use crate::error::{Result, VaultcError};
-use crate::identity::{AssetId, BlockId, CanvasId, ContentHash, DocumentId, LinkId};
+use crate::identity::{
+    AssetId, BaseArtifactId, BlockId, CanvasId, ContentHash, DocumentId, LinkId,
+};
 use crate::ir::{
     Asset, BaseArtifact, Block, BlockKind, CanonicalWorkspace, Canvas, CanvasFileReference,
-    Document, FileKind, IR_SCHEMA_VERSION, Link, LinkResolution, LinkSyntax, Section, SourceFile,
+    CanvasReferenceResolution, Document, FileKind, IR_SCHEMA_VERSION, Link, LinkResolution,
+    LinkSyntax, Section, SourceFile,
 };
 
 type ParsedFrontmatter = (
@@ -47,7 +52,17 @@ pub(crate) fn parse_file(
                 )
                 .for_path(source_file.logical_path.clone()),
             );
-            workspace.bases.push(BaseArtifact { source_file });
+            let base_artifact_id = BaseArtifactId::from_parts(
+                "vaultc:base:v1\0",
+                &[
+                    source_file.snapshot_id.hash().as_bytes(),
+                    source_file.file_id.hash().as_bytes(),
+                ],
+            );
+            workspace.bases.push(BaseArtifact {
+                base_artifact_id,
+                source_file,
+            });
         }
         FileKind::Asset => {
             let asset_id =
@@ -789,32 +804,7 @@ fn parse_canvas(
     bytes: &[u8],
     _diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<Canvas> {
-    let text = std::str::from_utf8(bytes).map_err(|error| VaultcError::MalformedInput {
-        path: source_file.logical_path.clone(),
-        reason: format!("Canvas must be UTF-8: {error}"),
-    })?;
-    let value: Value = serde_json::from_str(text).map_err(|error| VaultcError::MalformedInput {
-        path: source_file.logical_path.clone(),
-        reason: format!("invalid JSON Canvas: {error}"),
-    })?;
-    let mut file_references = Vec::new();
-    if let Some(nodes) = value.get("nodes").and_then(Value::as_array) {
-        for node in nodes {
-            if node.get("type").and_then(Value::as_str) == Some("file")
-                && let (Some(id), Some(file)) = (
-                    node.get("id").and_then(Value::as_str),
-                    node.get("file").and_then(Value::as_str),
-                )
-            {
-                file_references.push(CanvasFileReference {
-                    node_id: id.to_owned(),
-                    raw_path: file.to_owned(),
-                    resolved_document: None,
-                });
-            }
-        }
-    }
-    file_references.sort_by(|left, right| left.node_id.as_bytes().cmp(right.node_id.as_bytes()));
+    let (value, file_references) = parse_canvas_json(&source_file.logical_path, bytes)?;
     let canvas_id = CanvasId::from_parts(
         "vaultc:canvas:v1\0",
         &[
@@ -828,6 +818,184 @@ fn parse_canvas(
         value,
         file_references,
     })
+}
+
+pub(crate) fn parse_canvas_json(
+    logical_path: &str,
+    bytes: &[u8],
+) -> Result<(Value, Vec<CanvasFileReference>)> {
+    let text = std::str::from_utf8(bytes).map_err(|error| VaultcError::MalformedInput {
+        path: logical_path.to_owned(),
+        reason: format!("Canvas must be UTF-8: {error}"),
+    })?;
+    let UniqueJsonValue(value) =
+        serde_json::from_str(text).map_err(|error| VaultcError::MalformedInput {
+            path: logical_path.to_owned(),
+            reason: format!("invalid JSON Canvas: {error}"),
+        })?;
+    let file_references = canvas_file_references(&value, logical_path)?;
+    Ok((value, file_references))
+}
+
+pub(crate) fn canvas_file_references(
+    value: &Value,
+    logical_path: &str,
+) -> Result<Vec<CanvasFileReference>> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| VaultcError::MalformedInput {
+            path: logical_path.to_owned(),
+            reason: "JSON Canvas root must be an object".into(),
+        })?;
+    let nodes: &[Value] = match object.get("nodes") {
+        Some(nodes) => nodes
+            .as_array()
+            .ok_or_else(|| VaultcError::MalformedInput {
+                path: logical_path.to_owned(),
+                reason: "JSON Canvas `nodes` must be an array".into(),
+            })?,
+        None => &[],
+    };
+    if object.get("edges").is_some_and(|edges| !edges.is_array()) {
+        return Err(VaultcError::MalformedInput {
+            path: logical_path.to_owned(),
+            reason: "JSON Canvas `edges` must be an array".into(),
+        });
+    }
+
+    let mut node_ids = BTreeSet::new();
+    let mut file_references = Vec::new();
+    for node in nodes {
+        let node = node
+            .as_object()
+            .ok_or_else(|| VaultcError::MalformedInput {
+                path: logical_path.to_owned(),
+                reason: "JSON Canvas nodes must be objects".into(),
+            })?;
+        let node_id =
+            node.get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| VaultcError::MalformedInput {
+                    path: logical_path.to_owned(),
+                    reason: "JSON Canvas node is missing a string `id`".into(),
+                })?;
+        if node_id.is_empty() {
+            return Err(VaultcError::MalformedInput {
+                path: logical_path.to_owned(),
+                reason: "JSON Canvas node ID must not be empty".into(),
+            });
+        }
+        if !node_ids.insert(node_id) {
+            return Err(VaultcError::MalformedInput {
+                path: logical_path.to_owned(),
+                reason: format!("JSON Canvas contains duplicate node ID `{node_id}`"),
+            });
+        }
+        if node.get("type").and_then(Value::as_str) == Some("file") {
+            let raw_path = node.get("file").and_then(Value::as_str).ok_or_else(|| {
+                VaultcError::MalformedInput {
+                    path: logical_path.to_owned(),
+                    reason: format!("JSON Canvas file node `{node_id}` is missing a string `file`"),
+                }
+            })?;
+            file_references.push(CanvasFileReference {
+                node_id: node_id.to_owned(),
+                raw_path: raw_path.to_owned(),
+                resolution: CanvasReferenceResolution::Pending,
+            });
+        }
+    }
+    file_references.sort_by(|left, right| left.node_id.as_bytes().cmp(right.node_id.as_bytes()));
+    Ok(file_references)
+}
+
+struct UniqueJsonValue(Value);
+
+impl<'de> Deserialize<'de> for UniqueJsonValue {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(UniqueJsonVisitor)
+    }
+}
+
+struct UniqueJsonVisitor;
+
+impl<'de> Visitor<'de> for UniqueJsonVisitor {
+    type Value = UniqueJsonValue;
+
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a JSON value without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::Bool(value)))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::Number(value.into())))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::Number(value.into())))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> std::result::Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let number = serde_json::Number::from_f64(value)
+            .ok_or_else(|| E::custom("JSON number must be finite"))?;
+        Ok(UniqueJsonValue(Value::Number(number)))
+    }
+
+    fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_string(value.to_owned())
+    }
+
+    fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::String(value)))
+    }
+
+    fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::Null))
+    }
+
+    fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::Null))
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(UniqueJsonValue(value)) = sequence.next_element()? {
+            values.push(value);
+        }
+        Ok(UniqueJsonValue(Value::Array(values)))
+    }
+
+    fn visit_map<A>(self, mut object: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut values = serde_json::Map::new();
+        while let Some(key) = object.next_key::<String>()? {
+            if values.contains_key(&key) {
+                return Err(serde::de::Error::custom(format!(
+                    "duplicate JSON object key `{key}`"
+                )));
+            }
+            let UniqueJsonValue(value) = object.next_value()?;
+            values.insert(key, value);
+        }
+        Ok(UniqueJsonValue(Value::Object(values)))
+    }
 }
 
 pub(crate) fn lookup_keys(document: &Document) -> BTreeSet<String> {

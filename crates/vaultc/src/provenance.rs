@@ -72,6 +72,12 @@ pub(crate) fn records_for_output(
                         source_id,
                         source_path,
                         ..
+                    }
+                    | OutputOperation::RewriteCanvas {
+                        operation_id,
+                        source_id,
+                        source_path,
+                        ..
                     } => {
                         let source_document =
                             approved.plan.workspace.documents.values().find(|document| {

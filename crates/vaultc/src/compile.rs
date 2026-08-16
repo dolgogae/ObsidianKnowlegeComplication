@@ -149,6 +149,13 @@ fn compile_into(
                 destination,
                 expected_hash,
                 ..
+            }
+            | OutputOperation::RewriteCanvas {
+                source_id,
+                source_path,
+                destination,
+                expected_hash,
+                ..
             } => (source_id, source_path, destination, expected_hash),
         };
         validate_output_logical_path(destination, policy)?;
@@ -170,6 +177,47 @@ fn compile_into(
             OutputOperation::Copy { .. } => bytes,
             OutputOperation::RewriteMarkdown { replacements, .. } => {
                 apply_replacements(bytes, replacements)?
+            }
+            OutputOperation::RewriteCanvas {
+                expected_output_hash,
+                rewrites,
+                ..
+            } => {
+                let canvas = approved
+                    .plan
+                    .workspace
+                    .canvases
+                    .values()
+                    .find(|canvas| {
+                        &canvas.source_file.source_id == source_id
+                            && canvas.source_file.logical_path == *source_path
+                    })
+                    .ok_or_else(|| {
+                        VaultcError::PlanStale(format!(
+                            "Canvas rewrite source `{source_id}/{source_path}` is absent from the sealed workspace"
+                        ))
+                    })?;
+                let (source_value, source_references) =
+                    crate::parse::parse_canvas_json(source_path, &bytes)?;
+                if source_value != canvas.value
+                    || source_references.len() != canvas.file_references.len()
+                    || source_references.iter().zip(&canvas.file_references).any(
+                        |(source, sealed)| {
+                            source.node_id != sealed.node_id || source.raw_path != sealed.raw_path
+                        },
+                    )
+                {
+                    return Err(VaultcError::PlanStale(format!(
+                        "Canvas source `{source_id}/{source_path}` does not match its sealed semantic value"
+                    )));
+                }
+                let output = crate::plan::render_rewritten_canvas(canvas, rewrites)?;
+                if ContentHash::from_bytes(&output) != *expected_output_hash {
+                    return Err(VaultcError::PlanStale(format!(
+                        "Canvas rewrite output hash is stale for `{destination}`"
+                    )));
+                }
+                output
             }
         };
         write_new_file(root, destination, &output)?;

@@ -25,8 +25,9 @@ implementation gaps are also summarized in
 - Freeze the complete Comrak/Unicode/normalization compatibility contract and
   golden vectors, including Unix raw filenames, invalid UTF-8, NFC/NFD, and
   every supported filesystem.
-- Complete Canvas reference resolution/rewrite and the Markdown/Canvas golden
-  corpus required by ALG-NRM-001.
+- Complete the remaining Markdown/Canvas golden corpus required by ALG-NRM-001,
+  including broader Unicode/escaping, self-reference, mixed-target ambiguity,
+  and supported-filesystem vectors.
 - Freeze full MinHash seed/candidate vectors and short-document behavior beyond
   the implemented threshold arithmetic test.
 - Decide the public SDK augmentation surface: add a plan-to-projection request
@@ -43,9 +44,10 @@ implementation gaps are also summarized in
 - Define the non-circular provenance boundary for self-referential
   `manifest.json`, `provenance.jsonl`, and `checksums.txt` administrative files,
   including which plan/config/toolchain record produces each one.
-- Decide how the independent verifier proves rewritten Markdown/Canvas bytes
-  against a sealed operation, and which trust anchor authenticates a resealed
-  but internally consistent unsigned artifact.
+- Decide how the independent verifier proves rewritten Markdown and generated
+  bytes against sealed operations, and which trust anchor authenticates a
+  resealed but internally consistent unsigned artifact. Canvas rewrites already
+  seal their expected output hash and are independently reconstructed.
 - Close filesystem race hardening: descriptor-relative/no-follow source opens
   and a portable atomic no-clobber directory publication primitive.
 - Complete archive accounting for compressed bytes, excluded/duplicate member
@@ -127,6 +129,18 @@ change.
   the exact block content hash and an omitted or exact block span. Arbitrary
   byte spans are rejected. `DocumentProjection.snapshot_id` makes that evidence
   constructible by a stateless provider and is revalidated during approval.
+- A documentation defect found during REQ-PAR-002 work named
+  `BaseArtifactId` in the canonical IR but omitted its stable formula.
+  ALG-SNP-001 now defines Document, Canvas, and Base file-level identities with
+  separate domains over the sealed `SnapshotId` and `SourceFileId`; the Base
+  formula is `H("vaultc:base:v1\0" || lp(raw(SnapshotId)) ||
+  lp(raw(SourceFileId)))`.
+- Canvas file references resolve through sealed source-local indexes to typed
+  Document, Asset, Canvas, or Base targets. Zero candidates preserve a
+  root-contained raw path with a diagnostic; multiple candidates create a
+  node-scoped required conflict and V1 can publish it only through an explicit
+  policy waiver. Rewritten Canvas seals an expected output hash and is
+  independently reconstructed; unchanged Canvas remains byte-identical.
 - The current `.vaultpack` is deterministic but unsigned. The lower-precedence
   project-context phrase that called it signed conflicted with the output
   specification; it was corrected in favor of the normative future signing

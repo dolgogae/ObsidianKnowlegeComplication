@@ -163,6 +163,7 @@ typed_id!(BlockId, "block");
 typed_id!(LinkId, "link");
 typed_id!(AssetId, "asset");
 typed_id!(CanvasId, "canvas");
+typed_id!(BaseArtifactId, "base");
 typed_id!(PlanId, "plan");
 typed_id!(OperationId, "op");
 typed_id!(EvidenceId, "evidence");

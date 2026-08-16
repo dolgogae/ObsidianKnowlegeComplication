@@ -64,7 +64,11 @@ Timestamps from the input filesystem MAY be preserved as informational metadata 
 
 ## Parsing and preservation
 
-Comrak is the planned CommonMark AST parser. A custom Obsidian span scanner supplements it for wikilinks, embeds, block references, and other constructs requiring byte-accurate rewrites. Parser upgrades are semantic changes and require golden-test review.
+The current implementation pins Comrak `0.48` for a normalized CommonMark
+structural projection and supplements it with a custom Obsidian-aware byte-span
+scanner for blocks, wikilinks, embeds, and ordinary Markdown links. Parser or
+Unicode-library upgrades are semantic changes and require frozen golden-vector
+review.
 
 Frontmatter is represented twice:
 
@@ -77,9 +81,21 @@ Mapping key order and formatting MUST NOT be destroyed when a file is copied unc
 
 Resolution produces zero, one, or many candidates and records the reason. It MUST account for explicit relative paths, Vault-root-like paths, filename stems, headings, block IDs, aliases, case behavior, and source-local namespace. Ambiguity is a conflict; the compiler must not guess based on host filesystem ordering.
 
+The `0.1.0` implementation applies that resolver to Markdown and attachment
+links. Canvas file nodes are decoded into `CanvasFileReference` values and the
+complete unknown-preserving JSON value is retained, but their
+`resolved_document` field is not populated and their paths are copied without
+rewrite. REQ-PAR-002 remains incomplete until Canvas uses the same resolution,
+conflict, rewrite, provenance, and verifier boundary.
+
 ## Schema evolution
 
-Every serialized IR document includes `schema_version`. Readers support explicitly listed older versions through pure migrations. Unknown newer major versions are rejected. Migration MUST preserve IDs and provenance unless the version notes define an intentional identity break through an ADR.
+Every serialized IR document includes `schema_version`. Readers must support
+explicitly listed older versions through pure migrations and reject unknown
+newer major versions. Migration MUST preserve IDs and provenance unless the
+version notes define an intentional identity break through an ADR. The current
+`0.1.0` reader accepts only schema version 1; no older-version migrations are
+implemented yet.
 
 ## Invariants
 

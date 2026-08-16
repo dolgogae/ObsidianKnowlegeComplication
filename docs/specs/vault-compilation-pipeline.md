@@ -8,6 +8,7 @@ decision_refs:
   - ADR-0003
   - ADR-0005
   - ADR-0008
+  - ADR-0009
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -23,7 +24,7 @@ source_refs:
 5. **Normalize:** compute comparison forms without replacing source bytes.
 6. **Resolve:** build source-local and cross-source link candidates.
 7. **Analyze:** group exact duplicates, generate near-duplicate candidates, detect conflicts.
-8. **Plan:** allocate output paths, rewrites, copies, generated metadata, diagnostics, and required decisions.
+8. **Plan:** allocate source-derived output paths, deterministic copy/rewrite operations, diagnostics, conflicts, and required decisions. Approved generated outputs enter only through the later approval overlay.
 9. **Augment optionally:** ask providers for evidence-bound proposals and capture a transcript.
 10. **Validate and approve:** reject invalid/stale proposals; record explicit decisions.
 11. **Compile:** reverify source hashes, stage output, materialize approved operations, write audit metadata and checksums.
@@ -34,21 +35,37 @@ Stages are resumable only when their input identity and semantic configuration h
 
 ## Source policies
 
-V1 excludes `.obsidian/**`, `.git/**`, known executable file classes, named secret files, and any external symlink traversal. Symlinks are not followed by default. A logical path containing an absolute root, drive prefix, NUL, `..` traversal, or normalization collision is rejected.
+V1 excludes `.obsidian/**`, `.git/**`, known executable file classes, named secret files, and any external symlink traversal. Symlinks are not followed by default. A logical path containing an absolute root, drive prefix, NUL, or `..` traversal is rejected.
+
+Duplicate logical paths within one source after NFC normalization are rejected.
+Across sources, exact, case-fold, and Unicode-normalization collisions must be
+typed and resolved only through the sealed deterministic layout rule; silent
+last-writer-wins is forbidden. The current implementation normalizes away the
+original NFD/NFC spelling before cross-source classification, so it can report
+some normalization collisions as `PATH_EXACT` and cannot preserve that raw
+spelling in provenance. This is an ALG-NRM-001 implementation gap.
 
 Archive extraction is virtual/streamed when possible. Limits MUST cover compressed bytes, expanded bytes, file count, per-file size, path length, nesting, and compression ratio. The planner does not need to execute or import uploaded plugin JavaScript.
+
+The current scanner retains every accepted entry's bytes in memory before
+sealing/parsing, does not separately cap the compressed source archive byte
+length or all visited members, and treats nested archives as opaque assets.
+Those are implementation gaps against the streaming and complete accounting
+contract, not alternate V1 behavior.
 
 ## Analysis policy
 
 - Exact duplicates follow ALG-DED-001.
 - Near duplicates follow ALG-DED-002 and only create review candidates.
 - Link, path, title, alias, and frontmatter collisions become typed conflicts.
-- Attachments are content-addressed by SHA-256 and deduplicated independently of note identity.
+- Attachments use the domain-separated
+  `ContentHash = SHA-256("vaultc:content:v1\0" || bytes)` and are deduplicated
+  independently of note identity. Artifact checksum entries use raw SHA-256.
 - `.base` files are copied to `views/` and receive an `OPAQUE_BASE_UNVALIDATED` diagnostic.
 
-## Plan structure
+## Draft plan structure
 
-A plan contains:
+A normative `DraftPlan` contains:
 
 - plan/schema/compiler versions;
 - complete ordered snapshot IDs and configuration hash;
@@ -56,19 +73,41 @@ A plan contains:
 - input-to-output path map and link rewrite map;
 - exact duplicate groups and canonical member selection;
 - near-duplicate candidates;
-- conflicts, required decisions, and their states;
-- provider proposals, validation states, and approval references;
+- conflicts, stable conflict content hashes, and required-decision states;
 - expected output hashes where computable;
 - diagnostics and resource estimates.
 
-Plans are immutable values. Any change yields a new `plan_id`; approvals bind to a specific plan/proposal content hash.
+Provider proposals are not inserted into `DraftPlan`. Validation records,
+approved proposals, the provider transcript, and conflict-decision overlays are
+carried by `ApprovedPlan`. Plans are immutable values: any plan payload change
+yields a new `plan_id`. Proposal approvals bind to the plan and proposal
+content hash; conflict decisions bind to the plan, conflict ID, and conflict
+content hash. V1 external conflict decisions are policy waivers only, as
+defined by ADR-0009.
+
+The current `0.1.0` `DraftPlan` seals schema/compiler version, plan/projection/
+inspection identities, policy, snapshots, canonical workspace, document and
+asset output maps, operations, duplicate reports, conflicts, and diagnostics.
+It does not yet store resource estimates or expected post-rewrite/generated
+output hashes. Independent semantic output reconstruction therefore remains a
+REQ-CMP/ALG-PRV gap.
 
 ## Failure semantics
 
 No partial output may become the requested destination. On failure, the staging directory may be retained only under an explicit debug option and MUST be clearly marked incomplete. The default behavior removes the exact known staging directory after safe validation; it never recursively deletes an unresolved path.
 
-Warnings may permit compilation if policy allows. Errors prevent approval or publication. Resource-limit violations are errors, not best-effort truncation.
+Warnings may permit compilation if policy allows. Errors prevent approval or
+publication. Hard ingestion and safety resource limits are errors.
+ALG-DED-002's bounded per-document candidate cap may truncate only
+near-duplicate candidate generation and MUST emit an explicit diagnostic; it
+is not an ingestion or compilation fallback.
 
 ## Determinism
 
-All traversal, candidate, diagnostic, manifest, JSON line, and archive member orderings are explicit. Locale, wall clock, random process seed, hostname, absolute input path, filesystem inode, and thread scheduling MUST NOT affect semantic results or bytes. Parallel processing may be used only with deterministic collection and reduction.
+All traversal, candidate, diagnostic, manifest, JSON line, and archive member
+orderings are explicit. Locale, wall clock, random process seed, hostname,
+absolute input path, filesystem inode, and thread scheduling MUST NOT affect
+semantic identities or emitted Compiled Vault/VaultPack bytes. Runtime source
+locators may appear only in non-semantic build control state and MUST be
+redacted from artifacts. Parallel processing may be used only with
+deterministic collection and reduction.

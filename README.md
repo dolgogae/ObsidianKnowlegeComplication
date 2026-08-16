@@ -8,6 +8,32 @@ Obsidian plugins are optional adapters.
 The implementation contract starts at [`AGENTS.md`](AGENTS.md) and
 [`docs/INDEX.md`](docs/INDEX.md).
 
+## What open-source project is this?
+
+Vault Compiler Framework is an MIT/Apache-2.0 open-source toolkit for safely
+combining knowledge from multiple Obsidian Vaults. It is a compiler rather than
+a note-sync service: source Vaults are treated as immutable, potentially hostile
+inputs; `vaultc` parses them into a canonical model, plans deduplication and link
+rewrites, requires explicit decisions where meaning is ambiguous, and writes a
+new independently verifiable Vault.
+
+The project is intended to be embedded in:
+
+- local developer tools and knowledge-management applications through the Rust
+  SDK;
+- reproducible automation and review workflows through the `vaultc` CLI;
+- provider-neutral AI workflows where an LLM may propose content but cannot
+  silently change the compilation plan;
+- future thin MCP, coding-agent, Obsidian, registry, and marketplace adapters
+  that consume the same compiler contract instead of becoming separate sources
+  of truth.
+
+This repository is not an AI model, a hosted cloud marketplace, or an Obsidian
+sync replacement. It is the deterministic compilation and trust layer those
+products can build on. The brain-inspired consolidation and retrieval ideas in
+the research documents are deliberately outside the default compiler until
+their algorithms and evaluation gates become stable.
+
 ## What the framework does
 
 The framework is the policy and integrity boundary between untrusted source

@@ -3,19 +3,20 @@ title: Current State
 status: normative-v1
 owners:
   - release-maintainer
-last_updated: 2026-08-16
+last_updated: 2026-08-17
 decision_refs:
   - ADR-0001
   - ADR-0003
   - ADR-0004
   - ADR-0009
+  - ADR-0010
 source_refs:
   - HIST-CURRENT-PLAN
 ---
 
 # Current State
 
-## Snapshot: 2026-08-16
+## Snapshot: 2026-08-17
 
 The repository now contains a working `0.1.0` Rust framework and CLI. The
 implemented vertical slice covers deterministic inspection through independent
@@ -28,8 +29,9 @@ Implemented production packages:
   exact and review-only near deduplication, conflict/path planning, source-aware
   Markdown rewrites with sealed output commitments and reverse verification,
   typed Canvas reference resolution and rewriting, immutable approvals, atomic
-  compilation, provenance, deterministic packing, independent verification,
-  and SQLite workspace state;
+  compilation, typed content-addressed provenance with a non-circular audit
+  envelope, deterministic packing, independent verification, and SQLite
+  workspace state;
 - `vaultc-protocol`: versioned provider capabilities, projections, evidence,
   proposals, and transcript records without a vendor SDK dependency;
 - `vaultc-cli`: `inspect`, `plan`, `augment`, `approve`, `compile`, `verify`,
@@ -58,14 +60,15 @@ All commands below passed on macOS arm64 with Rust 1.97.1:
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 75 tests and all doctests passed |
+| `cargo test --workspace --all-features --no-fail-fast` | 87 tests and all doctests passed |
 | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
 
-The 75 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 4
-generated-provenance tests, 3 pack integration tests, 8 pipeline tests, 5
-provider/approval tests, 18 security tests, 9 CLI unit tests, 6 CLI integration
-tests, and 2 protocol tests. They cover, among other cases:
+The 87 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 4
+generated-provenance tests, 5 pack integration tests, 8 pipeline tests, 5
+provider/approval tests, 18 security tests, 9 typed-provenance tests, 10 CLI
+unit tests, 6 CLI integration tests, and 2 protocol tests. They cover, among
+other cases:
 
 - source immutability, deterministic plan/output, absolute-source-location
   independence, and byte-identical VaultPacks on one supported host;
@@ -86,9 +89,17 @@ tests, and 2 protocol tests. They cover, among other cases:
   attack rejection, conflict waiver binding, and transcript audit closure;
 - file-level evidence with no span, exact block hash/span evidence, rejection of
   arbitrary/mismatched spans, and provider-visible snapshot identity binding;
+- typed source/operation/decision/proposal/approval/output/edge records,
+  literal RecordId vectors, declared/absent/opaque attribution, exact dedup and
+  generated closure, stored and virtual audit-envelope reconstruction,
+  bounded pagination/cursors, directory/pack explanation parity, and fully
+  resealed graph attacks;
 - ZIP/tar traversal and links, duplicate ZIP members, decompression ratio,
   malformed UTF-8/JSON, resource limits, exclusions, output no-clobber, and
   independently resealed artifact tampering;
+- canonical VaultPack outer-byte verification, rejection of alternate zstd
+  encodings or policy-mismatched levels, and streamed outer expansion-ratio
+  enforcement before materialization;
 - CLI/SDK plan parity and the full plan → approve → compile → pack → verify →
   explain lifecycle, including stable plan input/decision/internal exit families
   and fail-closed pre-output-hash plan rejection;
@@ -104,7 +115,7 @@ The exact requirement-to-test mapping is in
 |---|---|---|
 | QG-001 Functional | implemented on macOS arm64 | current automated suite is green; the complete Markdown/Canvas golden corpus and supported-platform matrix are not complete |
 | QG-002 Determinism | implemented on one platform | same-host bytes and absolute-location independence pass; Linux/Windows/toolchain comparison remains |
-| QG-003 Provenance | partial | content outputs have exact source/proposal linkage and audit comparison; the full ALG-PRV-001 typed graph, administrative-file closure, record/edge IDs, and attribution nodes are missing |
+| QG-003 Provenance | implemented and locally verified | typed stored graph, virtual audit envelope, RecordIds, decisions/approvals, frontmatter attribution, pagination, exact reconstruction, and adversarial reseal tests pass on macOS arm64; platform matrix remains |
 | QG-004 Safety | implemented corpus green | current hostile-input and control-file tests pass; fuzz/property campaigns remain |
 | QG-005 Compatibility | documented | no migration/version compatibility matrix is implemented yet |
 | QG-006 Performance | not verified | the 100,000-note/20 GB/20-minute/2 GB RSS benchmark has not run |
@@ -125,14 +136,16 @@ The exact requirement-to-test mapping is in
 - Input paths are stored after NFC normalization. The original NFD/NFC spelling
   is not retained, so some cross-source normalization collisions are typed as
   `PATH_EXACT` and raw-path provenance is incomplete.
-- Provenance covers implemented content operations and exact duplicate source
-  closure. Generated outputs bind the exact approved body, rendered bytes,
-  proposal-order EvidenceId values, provenance sources, and operation identity,
-  but provenance does not yet implement the full ALG-PRV-001 typed graph,
-  compiler-generated administrative files, record/edge IDs, decision/approval
-  nodes, or author/license attribution. V1 currently supports only spanless
-  file/body evidence or exact block-hash evidence with an omitted or exact
-  block span; arbitrary byte-span evidence is rejected.
+- Provenance now implements the ALG-PRV-001 typed stored graph for content and
+  pre-envelope audit outputs plus deterministic virtual records for provenance,
+  manifest, and checksums. Record identity, graph order, closure, decisions,
+  proposals, approvals, frontmatter author/license declarations, pagination,
+  and directory/pack explanation parity are verified locally. Attribution is
+  deliberately retained as the original declared typed value; SPDX inference,
+  license compatibility, manifest summaries, and a detached authenticity
+  signature remain future profiles. V1 supports only spanless file/body
+  evidence or exact block-hash evidence with an omitted or exact block span;
+  arbitrary byte-span evidence is rejected.
 - Some source and pack members are buffered under hard limits. The V1 20 GB
   workload and ≤2 GB RSS target cannot be claimed until streaming and the
   reference benchmark are verified.
@@ -148,9 +161,10 @@ The exact requirement-to-test mapping is in
   observed to exist, and publishes the pack file with no-clobber semantics, but
   the Compiled Vault and pack are not one combined filesystem transaction. A
   pack failure after Vault publication can leave the valid Compiled Vault.
-- Source opening is rechecked but not yet descriptor-relative/no-follow, pack
-  extraction lacks an outer compressed-to-expanded ratio, and portable
-  no-clobber directory publication is not proven race-free on every platform.
+- Source opening is rechecked but not yet descriptor-relative/no-follow, and
+  portable no-clobber directory publication is not proven race-free on every
+  platform. VaultPack extraction now bounds the outer file, declared and
+  streamed expansion ratio, member count, per-file size, and aggregate size.
 - Source archive compressed-byte size and the count of every visited member
   (including excluded/non-file entries) are not separately bounded. Nested
   archives are treated as opaque rather than recursively extracted.
@@ -174,17 +188,17 @@ The exact requirement-to-test mapping is in
 
 ## Next implementation slices
 
-1. Complete the full ALG-PRV-001 typed graph, including the non-circular audit
-   envelope boundary and attribution records.
-2. Add the public SDK augmentation request/record/replay surface and enforce
+1. Add the public SDK augmentation request/record/replay surface and enforce
    canonical transcripts for every approved AI proposal.
-3. Complete the remaining ALG-NRM-001 Markdown/Canvas golden corpus.
-4. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
+2. Complete the remaining ALG-NRM-001 Markdown/Canvas golden corpus and retain
+   original pre-normalization path spellings.
+3. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
    artifact determinism fixtures.
-5. Stream large blobs and run QG-006 at the full reference workload.
-6. Define schema migrations and run property/fuzz and fault-injection suites.
-7. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
+4. Harden source/archive accounting and public SDK no-clobber pack publication.
+5. Define schema migrations and run property/fuzz and fault-injection suites.
+6. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
    ADR before calling a pack signed or marketplace-ready.
+7. Stream large blobs and run QG-006 at the full reference workload.
 
 No MCP, plugin, marketplace, or neuroscience-inspired runtime behavior should
 enter the default compiler path while these stable V1 gates remain open.

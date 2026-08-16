@@ -3,11 +3,12 @@ title: Requirements Traceability Matrix
 status: normative-v1
 owners:
   - qa-security-engineer
-last_updated: 2026-08-16
+last_updated: 2026-08-17
 decision_refs:
   - ADR-0001
   - ADR-0004
   - ADR-0009
+  - ADR-0010
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -28,14 +29,14 @@ called out explicitly. Broader release gates remain in
 | REQ-PAR-003 `.base` opaque preservation | [`vault-compilation-pipeline.md`](specs/vault-compilation-pipeline.md), ADR-0008 | `vaultc::{parse,plan,compile}` | `compiled_layout_excludes_raw_sources_and_preserves_v1_artifacts` checks warning and byte preservation | verified on macOS arm64 |
 | REQ-DED-001 exact duplicate unification | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-DED-001 | `vaultc::{dedup,plan,provenance}` | `exact_duplicates_and_attachments_unify_with_complete_provenance` | verified on macOS arm64 |
 | REQ-DED-002 near duplicate review only | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-DED-002 | bounded MinHash/LSH in `vaultc::dedup`; review conflicts in `vaultc::plan` | `dedup::tests::threshold_boundary_matches_v1_vectors` | implemented; full candidate vectors and non-auto-merge integration pending |
-| REQ-CNF-001 deterministic conflict layout | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-CNF-001, ADR-0009 | `vaultc::{plan,approval}` including typed Canvas-reference conflict subjects | path-kind unit tests; `portable_path_collisions_are_stable_and_typed`; `ambiguous_canvas_reference_requires_waiver_and_preserves_raw_path`; `conflict_waivers_reject_unactionable_stale_and_duplicate_decisions`; CLI required-conflict test | implemented; full title/alias/frontmatter/link corpus and typed resolution actions pending |
-| REQ-PRV-001 output-to-source provenance | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-PRV-001 | typed EvidenceId calculation and required generated materializations in `vaultc::{identity,generated,approval}`; partial output records and exact reconstruction in `vaultc::{provenance,compile,verify}` | all 4 [`generated_provenance_contract.rs`](../crates/vaultc/tests/generated_provenance_contract.rs) cases; exact duplicate/asset provenance; exact file/block evidence policy; `verifier_rejects_a_provenance_subset_even_when_artifact_is_resealed`; pack explain parity | implemented partially; generated body/frontmatter/source-ID closure is locally verified, while the full typed graph, administrative-file closure, record/edge IDs, and author/license nodes remain pending |
+| REQ-CNF-001 deterministic conflict layout | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-CNF-001, ADR-0009, ADR-0010 | `vaultc::{plan,approval,provenance}` including typed Markdown-link and Canvas-reference conflict subjects | path-kind unit tests; `portable_path_collisions_are_stable_and_typed`; Canvas ambiguity lifecycle; `markdown_and_canvas_waivers_bind_distinct_typed_subjects`; conflict decision and CLI required-conflict tests | implemented; full title/alias/frontmatter/link corpus and typed resolution actions pending |
+| REQ-PRV-001 output-to-source provenance | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-PRV-001, ADR-0010 | `vaultc::{identity,generated,approval,provenance,compile,verify}` implements typed RecordIds, source/operation/decision/proposal/approval/output/edge records, exact content reconstruction, frontmatter attribution retention, the stored graph, virtual audit envelope, and bounded explanation pages | all 9 [`typed_provenance_contract.rs`](../crates/vaultc/tests/typed_provenance_contract.rs) cases; all 4 generated-provenance cases; exact dedup; fully resealed graph attacks; directory/pack/package pagination parity | implemented and locally verified on macOS arm64; cross-platform matrix, legal license interpretation, and detached authenticity remain out of scope |
 | REQ-AI-001 provider-neutral interfaces | [`ai-provider-and-augmentation.md`](specs/ai-provider-and-augmentation.md), ADR-0004 | traits/validation in `vaultc::provider`; schemas in `vaultc-protocol`; CLI `CommandProvider` | `capabilities_round_trip`; redacted subprocess round trip; bounded reader/cancellation tests | implemented; multi-provider conformance suite pending |
 | REQ-AI-002 explicit proposal approval | [`ai-provider-and-augmentation.md`](specs/ai-provider-and-augmentation.md), ADR-0004 | `vaultc::{provider,approval,compile}` | explicit approval, stale/forged proposal, post-approval mutation, generated YAML injection, exact file/block evidence policy, and snapshot-bound provider lifecycle tests | implemented; broader provider mismatch matrix pending |
 | REQ-AI-003 record/replay determinism | [`ai-provider-and-augmentation.md`](specs/ai-provider-and-augmentation.md), ADR-0004 | transcript capture/redaction/hydration in CLI and `vaultc::approval`; audit comparison in `vaultc::verify` | `cli_round_trips_a_redacted_command_provider_transcript`; `verifier_rejects_transcript_audit_mismatch_even_when_artifact_is_resealed` | implemented; transcript replay output-equality test pending |
 | REQ-CMP-001 atomic new-output compile | [`compiled-vault-and-vaultpack.md`](specs/compiled-vault-and-vaultpack.md), ALG-CNF-001, ADR-0003 | sibling staging/fsync/rename in `vaultc::compile`; sealed Copy/Markdown/Canvas output commitments in `vaultc::{plan,verify}`; CLI no-clobber pack publication | existing-destination, stale-source/no-publish, sealed-plan tamper, `verifier_rejects_resealed_copy_output_that_disagrees_with_plan`, Markdown rewrite reseal, and CLI lifecycle tests | implemented; crash/fault-injection interruption test pending |
-| REQ-CMP-002 deterministic VaultPack | [`compiled-vault-and-vaultpack.md`](specs/compiled-vault-and-vaultpack.md), ADR-0004 | deterministic tar/zstd in `vaultc::pack` | all three tests in [`pack_contract.rs`](../crates/vaultc/tests/pack_contract.rs) | verified on current host/toolchain; cross-version/platform contract pending |
-| REQ-SEC-001 hostile input isolation | [`security-and-trust-boundaries.md`](specs/security-and-trust-boundaries.md), ADR-0003 | `vaultc::{snapshot,parse,plan,provider,approval,compile,pack,verify}` and CLI process/control-file guards | 18 cases in [`security_contract.rs`](../crates/vaultc/tests/security_contract.rs), including fully resealed Copy/Markdown output and plan-recipe attacks; Canvas duplicate-key/node and escape cases; provider approval and CLI bounded-I/O/cancellation tests | implemented; fuzz/property campaigns and platform matrix pending |
+| REQ-CMP-002 deterministic VaultPack | [`compiled-vault-and-vaultpack.md`](specs/compiled-vault-and-vaultpack.md), ADR-0004, ADR-0010 | deterministic tar/zstd writer plus canonical outer-byte recreation/stream comparison in `vaultc::pack` | all 5 tests in [`pack_contract.rs`](../crates/vaultc/tests/pack_contract.rs), including alternate encoding, sealed compression level, expansion ratio, determinism, and source-location independence | verified on current host/toolchain; cross-version/platform contract pending |
+| REQ-SEC-001 hostile input isolation | [`security-and-trust-boundaries.md`](specs/security-and-trust-boundaries.md), ADR-0003 | `vaultc::{snapshot,parse,plan,provider,approval,compile,pack,verify}` and CLI process/control-file guards | 18 cases in [`security_contract.rs`](../crates/vaultc/tests/security_contract.rs); typed provenance schema/semantic reseal cases; Canvas duplicate-key/node and escape cases; provider approval/cancellation; VaultPack canonical and streamed expansion-ratio tests | implemented; fuzz/property campaigns and platform matrix pending |
 | REQ-SDK-001 inspect-to-explain workflow | [`public-sdk-and-cli.md`](specs/public-sdk-and-cli.md), ADR-0001 | `vaultc::VaultCompiler`, `vaultc-cli`, `vaultc-protocol`; exhaustive plan error-family mapping | `cli_plan_matches_sdk_and_full_artifact_lifecycle`; `approve_rejects_pre_hash_markdown_plan_as_decision_error`; CLI exit/conflict/provider tests | implemented partially; SDK has provider traits and validation but no façade `augment()`/projection builder |
 | REQ-MCP-001 thin MCP adapter | [`mcp-adapter.md`](specs/mcp-adapter.md), ADR-0002 | future `vaultc-mcp` | future MCP contract tests | documented |
 | REQ-OBS-001 generic review/install plugin | [`obsidian-plugin.md`](specs/obsidian-plugin.md), ADR-0002 | future generic plugin | future plugin E2E and permission tests | documented |
@@ -44,9 +45,9 @@ called out explicitly. Broader release gates remain in
 
 ## Current suite inventory
 
-- `vaultc`: 15 unit, 5 Canvas, 4 generated-provenance, 3 pack, 8 pipeline, 5
-  provider/approval, and 18 security tests;
-- `vaultc-cli`: 9 unit and 6 integration tests;
+- `vaultc`: 15 unit, 5 Canvas, 4 generated-provenance, 5 pack, 8 pipeline, 5
+  provider/approval, 18 security, and 9 typed-provenance tests;
+- `vaultc-cli`: 10 unit and 6 integration tests;
 - `vaultc-protocol`: 2 unit tests;
 - doctests: 0 examples, all harnesses pass.
 

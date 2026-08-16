@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - core-rust-engineer
   - release-maintainer
-last_updated: 2026-08-16
+last_updated: 2026-08-17
 decision_refs:
   - ADR-0003
   - ADR-0004
@@ -139,9 +139,9 @@ that part of the V1 format contract remains unimplemented.
 The current format is unsigned. Signatures will be detached or embedded only
 after a future versioned signing profile defines keys, algorithms, identity,
 revocation, and reproducible coverage. Until then, verification establishes
-internal checksum, sealed-audit, approval, and implemented provenance-linkage
-consistency, not publisher authenticity or full independent reconstruction of
-every output operation. Once that profile exists, signature verification MUST
+internal checksum, sealed-audit, approval, provenance-graph, and independently
+reconstructed output consistency, not publisher authenticity. Once that
+profile exists, signature verification MUST
 occur before installation, and signatures will not replace content-hash
 verification, permission display, license review, or provenance inspection.
 
@@ -173,5 +173,9 @@ links. Generated notes are reconstructed byte-for-byte from the approved
 proposal and its required materialization commitment, including canonical body
 and output hashes, destination, operation ID, and ordered EvidenceId values.
 V1 rejects arbitrary evidence spans and accepts only file/body evidence or
-exact block evidence. The verifier does not yet validate license/attribution,
-emit the full typed provenance graph, or verify publisher authenticity.
+exact block evidence. It independently reconstructs the complete typed stored
+graph, validates RecordIds, edge/cardinality/acyclic/reachability invariants,
+retains declared frontmatter author/license values, synthesizes the
+non-circular audit envelope from final bytes, and enforces bounded explanation
+pages and cursors. It does not infer license compatibility or verify publisher
+authenticity.

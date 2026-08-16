@@ -109,6 +109,7 @@ pub struct EvidenceRefWire {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentProjection {
+    pub snapshot_id: String,
     pub document: ObjectRef,
     pub logical_path: String,
     pub title: Option<String>,
@@ -235,5 +236,37 @@ mod tests {
             serde_json::from_slice(&encoded).expect("deserialize capabilities");
         assert_eq!(decoded, capabilities);
         assert!(decoded.supports(ProviderOperation::KnowledgeAugmentation));
+    }
+
+    #[test]
+    fn document_projection_requires_snapshot_binding() {
+        let projection = DocumentProjection {
+            snapshot_id: "snap_fixture".into(),
+            document: ObjectRef {
+                kind: ObjectKind::Document,
+                id: "doc_fixture".into(),
+                content_hash: "00".repeat(32),
+            },
+            logical_path: "Topic.md".into(),
+            title: Some("Topic".into()),
+            selected_blocks: Vec::new(),
+        };
+        let encoded = serde_json::to_value(&projection).expect("serialize document projection");
+        assert_eq!(encoded["snapshot_id"], "snap_fixture");
+        assert_eq!(
+            serde_json::from_value::<DocumentProjection>(encoded.clone())
+                .expect("deserialize document projection"),
+            projection
+        );
+
+        let mut missing_snapshot = encoded;
+        missing_snapshot
+            .as_object_mut()
+            .expect("projection object")
+            .remove("snapshot_id");
+        assert!(
+            serde_json::from_value::<DocumentProjection>(missing_snapshot).is_err(),
+            "snapshot binding is a required V1 field"
+        );
     }
 }

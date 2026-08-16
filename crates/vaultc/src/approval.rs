@@ -433,7 +433,8 @@ fn hydrate_redacted_request(
                 "augmentation transcript references an unknown document".into(),
             )
         })?;
-        if projection.document.kind != vaultc_protocol::ObjectKind::Document
+        if projection.snapshot_id != document.source_file.snapshot_id.to_string()
+            || projection.document.kind != vaultc_protocol::ObjectKind::Document
             || projection.document.content_hash != document.body_hash.hex()
             || projection.logical_path != document.source_file.logical_path
             || projection.title != document.title

@@ -299,34 +299,35 @@ fn validate_evidence(plan: &DraftPlan, evidence: &EvidenceRefWire, reasons: &mut
     if document.source_file.snapshot_id != snapshot_id {
         reasons.push("evidence snapshot does not own the referenced document".into());
     }
-    let mut block_span = None;
-    if let Some(block) = &evidence.block_id {
-        match block.parse::<BlockId>() {
-            Ok(block_id) => match document
-                .blocks
-                .iter()
-                .find(|item| item.block_id == block_id)
-            {
-                Some(block) if block.content_hash == content_hash => {
-                    block_span = Some((block.span.byte_start, block.span.byte_end));
-                }
-                Some(_) => reasons.push("evidence block content hash is stale".into()),
-                None => reasons.push("evidence block is not in the document".into()),
-            },
-            Err(_) => reasons.push("evidence block ID is malformed".into()),
+    let Some(block_id) = evidence.block_id.as_deref() else {
+        if document.source_file.content_hash != content_hash && document.body_hash != content_hash {
+            reasons.push("evidence document content hash is stale".into());
         }
-    } else if document.source_file.content_hash != content_hash
-        && document.body_hash != content_hash
-    {
-        reasons.push("evidence document content hash is stale".into());
+        if evidence.byte_start.is_some() || evidence.byte_end.is_some() {
+            reasons.push("file-level evidence must not include a byte span".into());
+        }
+        return;
+    };
+    let Ok(block_id) = block_id.parse::<BlockId>() else {
+        reasons.push("evidence block ID is malformed".into());
+        return;
+    };
+    let Some(block) = document
+        .blocks
+        .iter()
+        .find(|item| item.block_id == block_id)
+    else {
+        reasons.push("evidence block is not in the document".into());
+        return;
+    };
+    if block.content_hash != content_hash {
+        reasons.push("evidence block content hash is stale".into());
     }
-    match (block_span, evidence.byte_start, evidence.byte_end) {
-        (Some((expected_start, expected_end)), Some(start), Some(end))
-            if start == expected_start && end == expected_end => {}
-        (Some(_) | None, None, None) => {}
-        (Some(_), _, _) => reasons.push("evidence span does not match the referenced block".into()),
-        (None, Some(start), Some(end)) if start <= end && end <= document.source_file.byte_len => {}
-        (None, _, _) => reasons.push("evidence byte span is incomplete or out of bounds".into()),
+    match (evidence.byte_start, evidence.byte_end) {
+        (None, None) => {}
+        (Some(start), Some(end))
+            if start == block.span.byte_start && end == block.span.byte_end => {}
+        _ => reasons.push("evidence span does not match the referenced block".into()),
     }
 }
 

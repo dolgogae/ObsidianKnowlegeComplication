@@ -36,8 +36,6 @@ implementation gaps are also summarized in
 - Define typed conflict actions for selected link targets, path mappings, and
   other real `user_resolved` operations. Until then, ADR-0009 permits only an
   explicit policy waiver overlay.
-- Define exact evidence semantics for arbitrary document byte spans, including
-  whether the evidence hash covers the span bytes, block, body, or source file.
 - Complete ALG-PRV-001 typed `source/operation/decision/proposal/approval/output/edge`
   records, canonical record/evidence IDs, administrative-file closure, and
   author/license attribution. The current flat output ledger is only a partial
@@ -125,6 +123,10 @@ change.
   Migration/resume/encryption remain open.
 - Conflict approvals are immutable plan/content-hash-bound overlays and V1
   accepts only `waived_by_policy` (ADR-0009).
+- V1 evidence is either file/body-level with no block/span, or block-level with
+  the exact block content hash and an omitted or exact block span. Arbitrary
+  byte spans are rejected. `DocumentProjection.snapshot_id` makes that evidence
+  constructible by a stateless provider and is revalidated during approval.
 - The current `.vaultpack` is deterministic but unsigned. The lower-precedence
   project-context phrase that called it signed conflicted with the output
   specification; it was corrected in favor of the normative future signing

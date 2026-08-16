@@ -110,6 +110,12 @@ workspace `projection_hash`, allowed proposal kinds, selected document
 projections, and output limits. The CLI requires explicit `--document-id`
 selection or `--all-documents`; it never defaults to sending the whole plan.
 
+Each `DocumentProjection` carries the owning sealed `snapshot_id`, a document
+object reference and content hash, logical path, title, and selected blocks.
+Each projected block carries its block ID, content hash, and text. This is
+sufficient for a stateless provider to construct either spanless file/body
+evidence or block evidence without access to a private plan file.
+
 The current projection granularity sends every parsed block of each selected
 document. Block-level disclosure selection is future work, so policy and UI
 must not claim a finer minimum-disclosure guarantee. Remote providers are
@@ -144,8 +150,11 @@ Deterministic proposal validation covers:
 - provider identity and uncertainty range;
 - generated title/body bounds, `.md` extension, and safe generated path;
 - referenced conflict existence;
-- evidence identity parsing, snapshot/document ownership, block identity and
-  content hash, exact block span when supplied, document hash, and span bounds;
+- evidence identity parsing and snapshot/document ownership;
+- file/body evidence only when `block_id`, `byte_start`, and `byte_end` are all
+  absent and the hash matches the source file or normalized body;
+- block evidence only when the block ID/content hash match and the span is
+  either fully absent or exactly equals that block's sealed byte span;
 - non-empty evidence for generated notes.
 
 Provider text is DATA. It cannot invoke tools, initiate HTTP, execute commands,
@@ -173,7 +182,8 @@ payload. There is no timing-metadata field in V1.
 For the stored augmentation request, block text is replaced by
 `"[redacted]"`, while `canonical_payload_hash` commits to the original sent
 projection. Approval rehydrates the request from the sealed plan and validates
-the commitment, request/response sequence, provider identity, and proposals.
+the commitment, document-to-snapshot identity, request/response sequence,
+provider identity, and proposals.
 The Compiled Vault stores the approved transcript audit file, and the
 independent verifier requires exact semantic equality with `ApprovedPlan`.
 

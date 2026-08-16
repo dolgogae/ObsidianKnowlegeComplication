@@ -9,6 +9,7 @@ decision_refs:
   - ADR-0002
   - ADR-0003
   - ADR-0004
+  - ADR-0009
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -16,7 +17,7 @@ source_refs:
 
 # Vault Compiler Framework
 
-The project compiles multiple Obsidian Vault snapshots into a new, deterministic, auditable Vault. It is a knowledge compiler rather than a folder merger: Markdown, Canvas, attachments, links, and metadata are parsed into a canonical intermediate representation (IR), conflicts and duplication are planned explicitly, optional AI proposes evidence-bound enrichments, and an approved plan is materialized as a compiled Vault or signed `.vaultpack`.
+The project compiles multiple Obsidian Vault snapshots into a new, deterministic, auditable Vault. It is a knowledge compiler rather than a folder merger: Markdown, Canvas, attachments, links, and metadata are parsed into a canonical intermediate representation (IR), conflicts and duplication are planned explicitly, optional AI proposes evidence-bound enrichments, and an approved plan is materialized as a Compiled Vault or deterministic `.vaultpack`. Signing belongs to a future versioned profile and is not part of the current V1 implementation.
 
 ## Product boundary
 

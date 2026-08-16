@@ -15,6 +15,20 @@ source_refs:
 
 # Roadmap
 
+## Progress marker: 2026-08-16
+
+- Phase 0 is complete.
+- Phases 1 and 2 have an implemented `0.1.0` vertical slice with local macOS
+  arm64 test evidence, but their full cross-platform, parser, provenance,
+  compatibility, safety, and performance exit criteria remain open.
+- Phase 3 has deterministic unsigned VaultPack creation/verification only. The
+  signing profile, MCP adapter, and Obsidian plugin have not started.
+- Phases 4–6 remain documentation/research direction only.
+
+This marker is a navigation aid; [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
+and [`../TRACEABILITY.md`](../TRACEABILITY.md) are authoritative for current
+implementation and verification status.
+
 ## Phase 0 — documentation baseline
 
 Freeze product boundary, stable algorithms, provider-neutral contracts, security invariants, ADRs, role guides, and recoverable history. Exit: a cold-start coding agent can begin implementation from Markdown alone.

@@ -39,13 +39,13 @@ External MCP engines -> adapters -> derived candidates only
 
 Dependencies point inward. The compiler core MUST NOT import Obsidian, MCP, hosted LLM, web-framework, or vendor SDK concepts.
 
-## Planned Rust workspace
+## Rust workspace
 
-| Package | Visibility | Responsibility |
+| Package | State | Responsibility |
 |---|---|---|
-| `vaultc` | public library | identifiers, IR, snapshotting, parsing, normalization, deduplication, planning, approval, compilation, verification |
-| `vaultc-protocol` | public library | versioned serializable request/response, provider capabilities, proposal and transcript schemas |
-| `vaultc-cli` | binary `vaultc` | filesystem orchestration, human/JSON output, subprocess provider execution |
+| `vaultc` | implemented public library | identifiers, IR, snapshotting, parsing/normalization, deduplication, planning, approval, compilation, packing, provenance, verification, workspace persistence |
+| `vaultc-protocol` | implemented public library | versioned serializable request/response, provider capabilities, proposal/evidence, and transcript schemas |
+| `vaultc-cli` | implemented binary `vaultc` | filesystem/control-file orchestration, human/JSON output, supervised subprocess provider execution |
 | `vaultc-mcp` | future adapter | MCP tools that call public library operations |
 | `vaultc-memory` | future experimental | calibrated memory/retrieval models isolated from file compilation |
 
@@ -53,17 +53,20 @@ Circular dependencies are forbidden. `vaultc` may depend on protocol data types 
 
 ## Module boundaries
 
-- `source`: open directory/archive safely, apply exclusions, enumerate bytes.
+- `source`: validate typed directory/archive descriptors and source IDs.
+- `snapshot`: open sources safely, apply exclusions/limits, enumerate bytes, and seal snapshots.
 - `identity`: domain-separated hashes and stable IDs.
-- `parse`: Markdown/Canvas/frontmatter decoding with source spans.
-- `normalize`: comparison-only canonical forms; never overwrite original bytes.
-- `ir`: versioned canonical records and schema migration.
+- `canonical`: deterministic JSON and content-hash serialization.
+- `parse`: Markdown/Canvas/frontmatter decoding, source spans, and comparison-only normalization that never overwrites source bytes.
+- `ir`: versioned canonical records; schema migration is future work.
 - `dedup`: exact groups and near-duplicate candidates.
-- `planner`: output namespace, rewrites, conflicts, diagnostics, operations.
-- `proposal`: validate provider proposals and bind them to plan/input hashes.
+- `plan`: output namespace, rewrites, conflicts, diagnostics, sealed operations, and integrity revalidation.
+- `provider`: provider-neutral traits plus capability/evidence/proposal validation.
 - `approval`: record explicit decisions and invalidation rules.
 - `compile`: stage, materialize, checksum, and atomically publish.
-- `verify`: independently verify manifest, paths, hashes, links, and provenance closure.
+- `pack`: deterministic VaultPack creation and safe extraction for verification.
+- `provenance`: emit and explain exact output-to-source derivations.
+- `verify`: independently verify manifest, paths, hashes, sealed audit linkage, approvals, and provenance closure.
 - `workspace`: bounded SQLite-backed intermediate state.
 
 ## State machine
@@ -74,7 +77,7 @@ Sources
   -> CanonicalWorkspace
   -> DraftPlan
   -> [AugmentationTranscript + Proposals]
-  -> ValidatedPlan
+  -> ValidatedProposals
   -> ApprovedPlan
   -> StagedOutput
   -> CompiledVault
@@ -94,9 +97,23 @@ Operations MUST reject inputs from the wrong state. Any change to source hashes,
 
 ## Persistence
 
-The library supports an abstract workspace. V1 provides in-memory operation for small fixtures and SQLite for bounded production workloads. The CLI enables bundled SQLite by default. SQLite is a build workspace, not a registry or long-term canonical service database.
+The current library performs inspection/planning in memory and may persist an
+inspection index to bundled SQLite. The CLI enables that SQLite workspace by
+default. SQLite uses WAL, foreign keys, `FULL` synchronous mode, deterministic
+transaction ordering, schema `user_version = 1`, and private Unix permissions.
+It is a build workspace, not a registry or long-term canonical service
+database.
 
-Large blobs SHOULD be streamed from sources and MUST NOT be duplicated in memory. Database writes SHOULD be batched in deterministic primary-key order.
+The current SQLite layer cannot reload/resume an inspection and is reset on
+each persisted inspection. Migration, cleanup, encryption, and resumability are
+open V1 work. Calling it a bounded production streaming workspace before those
+features and QG-006 evidence exist is forbidden.
+
+Large blobs SHOULD be streamed from sources and MUST NOT be duplicated in
+memory. The `0.1.0` scanner currently accumulates bounded source bytes in memory
+before parsing and therefore does not yet meet this target at the 20 GB
+reference workload. Database writes SHOULD be batched in deterministic
+primary-key order.
 
 ## Errors and diagnostics
 

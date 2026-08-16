@@ -8,6 +8,7 @@ decision_refs:
   - ADR-0001
   - ADR-0002
   - ADR-0003
+  - ADR-0009
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN

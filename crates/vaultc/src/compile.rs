@@ -135,9 +135,10 @@ fn compile_into(
 ) -> Result<CompiledArtifact> {
     let mut written = BTreeSet::new();
     for operation in &approved.plan.operations {
-        let (source_id, source_path, destination, expected_hash) = match operation {
+        let (source_id, snapshot_id, source_path, destination, expected_hash) = match operation {
             OutputOperation::Copy {
                 source_id,
+                snapshot_id,
                 source_path,
                 destination,
                 expected_hash,
@@ -145,6 +146,7 @@ fn compile_into(
             }
             | OutputOperation::RewriteMarkdown {
                 source_id,
+                snapshot_id,
                 source_path,
                 destination,
                 expected_hash,
@@ -152,11 +154,18 @@ fn compile_into(
             }
             | OutputOperation::RewriteCanvas {
                 source_id,
+                snapshot_id,
                 source_path,
                 destination,
                 expected_hash,
                 ..
-            } => (source_id, source_path, destination, expected_hash),
+            } => (
+                source_id,
+                snapshot_id,
+                source_path,
+                destination,
+                expected_hash,
+            ),
         };
         validate_output_logical_path(destination, policy)?;
         if !written.insert(destination.clone()) {
@@ -175,8 +184,44 @@ fn compile_into(
         }
         let output = match operation {
             OutputOperation::Copy { .. } => bytes,
-            OutputOperation::RewriteMarkdown { replacements, .. } => {
-                apply_replacements(bytes, replacements)?
+            OutputOperation::RewriteMarkdown {
+                expected_output_hash,
+                replacements,
+                ..
+            } => {
+                let document = approved
+                    .plan
+                    .workspace
+                    .documents
+                    .values()
+                    .find(|document| {
+                        &document.source_file.source_id == source_id
+                            && document.source_file.snapshot_id == *snapshot_id
+                            && document.source_file.logical_path == *source_path
+                    })
+                    .ok_or_else(|| {
+                        VaultcError::PlanStale(format!(
+                            "Markdown rewrite source `{source_id}/{source_path}` is absent from the sealed workspace"
+                        ))
+                    })?;
+                let planned = crate::plan::planned_markdown_replacements(
+                    document,
+                    &approved.plan.output_paths,
+                    &approved.plan.asset_output_paths,
+                )?;
+                if &planned != replacements {
+                    return Err(VaultcError::PlanStale(format!(
+                        "Markdown rewrite recipe is stale for `{destination}`"
+                    )));
+                }
+                validate_markdown_source_links(document, &bytes)?;
+                let output = apply_replacements(bytes, replacements)?;
+                if ContentHash::from_bytes(&output) != *expected_output_hash {
+                    return Err(VaultcError::PlanStale(format!(
+                        "Markdown rewrite output hash is stale for `{destination}`"
+                    )));
+                }
+                output
             }
             OutputOperation::RewriteCanvas {
                 expected_output_hash,
@@ -364,6 +409,32 @@ pub(crate) fn artifact_identity(
         "vaultc:artifact:v1\0",
         &(plan_id, files, approved_proposal_hashes),
     )
+}
+
+fn validate_markdown_source_links(document: &crate::ir::Document, source: &[u8]) -> Result<()> {
+    let source_len = u64::try_from(source.len())
+        .map_err(|_| VaultcError::ResourceLimit("Markdown source length overflow".into()))?;
+    if source_len != document.source_file.byte_len
+        || ContentHash::from_bytes(source) != document.source_file.content_hash
+    {
+        return Err(VaultcError::IdentityMismatch(format!(
+            "Markdown source `{}/{}` does not match its sealed document",
+            document.source_file.source_id, document.source_file.logical_path
+        )));
+    }
+    for link in &document.links {
+        let start = usize::try_from(link.span.byte_start)
+            .map_err(|_| VaultcError::PlanStale("Markdown link start overflow".into()))?;
+        let end = usize::try_from(link.span.byte_end)
+            .map_err(|_| VaultcError::PlanStale("Markdown link end overflow".into()))?;
+        if source.get(start..end) != Some(link.raw_target.as_bytes()) {
+            return Err(VaultcError::PlanStale(format!(
+                "Markdown link {} source slice does not match its sealed raw target",
+                link.link_id
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn apply_replacements(

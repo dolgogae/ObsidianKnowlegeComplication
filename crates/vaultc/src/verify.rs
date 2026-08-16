@@ -185,6 +185,8 @@ pub(crate) fn verify_directory(root: &Path) -> Result<VerificationReport> {
     }
     crate::approval::validate_approved_plan(&approved, &approved.plan.policy)
         .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
+    validate_operation_output_hashes(root, &approved, &actual_paths)?;
+    validate_markdown_outputs(root, &approved)?;
     validate_canvas_outputs(root, &approved, &actual_paths)?;
     let snapshot_ids: Vec<_> = approved
         .plan
@@ -317,9 +319,237 @@ fn validate_audit_files(root: &Path, approved: &crate::approval::ApprovedPlan) -
     Ok(())
 }
 
+fn validate_operation_output_hashes(
+    root: &Path,
+    approved: &crate::approval::ApprovedPlan,
+    artifact_paths: &BTreeSet<String>,
+) -> Result<()> {
+    for operation in &approved.plan.operations {
+        let (destination, expected_output_hash) = match operation {
+            crate::plan::OutputOperation::Copy {
+                destination,
+                expected_hash,
+                ..
+            } => (destination, expected_hash),
+            crate::plan::OutputOperation::RewriteMarkdown {
+                destination,
+                expected_output_hash,
+                ..
+            }
+            | crate::plan::OutputOperation::RewriteCanvas {
+                destination,
+                expected_output_hash,
+                ..
+            } => (destination, expected_output_hash),
+        };
+        if !artifact_paths.contains(destination) {
+            return Err(VaultcError::VerificationFailed(format!(
+                "sealed output operation `{destination}` is missing from the checksummed artifact"
+            )));
+        }
+        let path = root.join(destination);
+        let actual = fs::read(&path).map_err(|error| VaultcError::io(&path, error))?;
+        if ContentHash::from_bytes(&actual) != *expected_output_hash {
+            return Err(VaultcError::VerificationFailed(format!(
+                "output hash does not match the sealed operation for `{destination}`"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_markdown_outputs(root: &Path, approved: &crate::approval::ApprovedPlan) -> Result<()> {
+    for operation in &approved.plan.operations {
+        let crate::plan::OutputOperation::RewriteMarkdown {
+            source_id,
+            snapshot_id,
+            source_path,
+            destination,
+            expected_hash,
+            replacements,
+            ..
+        } = operation
+        else {
+            continue;
+        };
+        let document = approved
+            .plan
+            .workspace
+            .documents
+            .values()
+            .find(|document| {
+                &document.source_file.source_id == source_id
+                    && document.source_file.snapshot_id == *snapshot_id
+                    && document.source_file.logical_path == *source_path
+            })
+            .ok_or_else(|| {
+                VaultcError::VerificationFailed(format!(
+                    "Markdown operation source `{source_id}/{source_path}` is absent from the sealed workspace"
+                ))
+            })?;
+        if document.source_file.content_hash != *expected_hash {
+            return Err(VaultcError::VerificationFailed(format!(
+                "Markdown operation source hash is stale for `{destination}`"
+            )));
+        }
+        let planned = crate::plan::planned_markdown_replacements(
+            document,
+            &approved.plan.output_paths,
+            &approved.plan.asset_output_paths,
+        )
+        .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
+        if &planned != replacements {
+            return Err(VaultcError::VerificationFailed(format!(
+                "Markdown rewrite recipe does not match sealed link resolution for `{destination}`"
+            )));
+        }
+        let path = root.join(destination);
+        let actual = fs::read(&path).map_err(|error| VaultcError::io(&path, error))?;
+        reconstruct_markdown_source(document, &actual, replacements)?;
+        validate_rewritten_markdown_links(
+            document,
+            destination,
+            &actual,
+            replacements,
+            &approved.plan.policy,
+        )?;
+    }
+    Ok(())
+}
+
+fn reconstruct_markdown_source(
+    document: &crate::ir::Document,
+    output: &[u8],
+    replacements: &[crate::plan::RewriteReplacement],
+) -> Result<()> {
+    let source_len = usize::try_from(document.source_file.byte_len).map_err(|_| {
+        VaultcError::VerificationFailed("sealed Markdown source length overflows usize".into())
+    })?;
+    let mut reconstructed = Vec::with_capacity(source_len);
+    let mut source_cursor = 0_usize;
+    let mut output_cursor = 0_usize;
+    for replacement in replacements {
+        let start = usize::try_from(replacement.span.byte_start).map_err(|_| {
+            VaultcError::VerificationFailed("Markdown replacement start overflows usize".into())
+        })?;
+        let end = usize::try_from(replacement.span.byte_end).map_err(|_| {
+            VaultcError::VerificationFailed("Markdown replacement end overflows usize".into())
+        })?;
+        if start < source_cursor || start >= end || end > source_len {
+            return Err(VaultcError::VerificationFailed(
+                "Markdown replacement spans overlap or are out of bounds".into(),
+            ));
+        }
+        let link = document
+            .links
+            .iter()
+            .find(|link| link.span == replacement.span)
+            .ok_or_else(|| {
+                VaultcError::VerificationFailed(
+                    "Markdown replacement is not bound to a sealed link".into(),
+                )
+            })?;
+        if end - start != link.raw_target.len() {
+            return Err(VaultcError::VerificationFailed(format!(
+                "Markdown link {} raw target length does not match its source span",
+                link.link_id
+            )));
+        }
+        let unchanged_len = start - source_cursor;
+        let unchanged_end = output_cursor.checked_add(unchanged_len).ok_or_else(|| {
+            VaultcError::VerificationFailed("Markdown output offset overflow".into())
+        })?;
+        let replacement_end = unchanged_end
+            .checked_add(replacement.replacement.len())
+            .ok_or_else(|| {
+                VaultcError::VerificationFailed("Markdown output offset overflow".into())
+            })?;
+        if output.get(unchanged_end..replacement_end) != Some(replacement.replacement.as_bytes()) {
+            return Err(VaultcError::VerificationFailed(format!(
+                "Markdown output does not contain its sealed replacement for link {}",
+                link.link_id
+            )));
+        }
+        let unchanged = output.get(output_cursor..unchanged_end).ok_or_else(|| {
+            VaultcError::VerificationFailed("Markdown output is truncated".into())
+        })?;
+        reconstructed.extend_from_slice(unchanged);
+        reconstructed.extend_from_slice(link.raw_target.as_bytes());
+        source_cursor = end;
+        output_cursor = replacement_end;
+    }
+    let remaining = source_len.checked_sub(source_cursor).ok_or_else(|| {
+        VaultcError::VerificationFailed("Markdown source offset underflow".into())
+    })?;
+    if output.len().checked_sub(output_cursor) != Some(remaining) {
+        return Err(VaultcError::VerificationFailed(
+            "Markdown output length is inconsistent with its sealed replacements".into(),
+        ));
+    }
+    reconstructed.extend_from_slice(&output[output_cursor..]);
+    if reconstructed.len() != source_len
+        || ContentHash::from_bytes(&reconstructed) != document.source_file.content_hash
+        || std::str::from_utf8(&reconstructed).is_err()
+    {
+        return Err(VaultcError::VerificationFailed(format!(
+            "Markdown output cannot reconstruct sealed source `{}/{}`",
+            document.source_file.source_id, document.source_file.logical_path
+        )));
+    }
+    Ok(())
+}
+
+fn validate_rewritten_markdown_links(
+    document: &crate::ir::Document,
+    destination: &str,
+    output: &[u8],
+    replacements: &[crate::plan::RewriteReplacement],
+    policy: &CompilerPolicy,
+) -> Result<()> {
+    let mut output_file = document.source_file.clone();
+    destination.clone_into(&mut output_file.logical_path);
+    output_file.byte_len = u64::try_from(output.len()).map_err(|_| {
+        VaultcError::VerificationFailed("rewritten Markdown length overflows u64".into())
+    })?;
+    output_file.content_hash = ContentHash::from_bytes(output);
+    output_file.file_id = crate::identity::SourceFileId::from_file(
+        destination,
+        crate::ir::FileKind::Markdown.media_family(),
+        output_file.content_hash,
+    );
+    let mut diagnostics = Vec::new();
+    let reparsed = crate::parse::parse_markdown(output_file, output, policy, &mut diagnostics)
+        .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;
+    if reparsed.links.len() != document.links.len() {
+        return Err(VaultcError::VerificationFailed(format!(
+            "rewritten Markdown `{destination}` changed the number of parsed links"
+        )));
+    }
+    for (original, reparsed) in document.links.iter().zip(&reparsed.links) {
+        let expected_target = replacements
+            .iter()
+            .find(|replacement| replacement.span == original.span)
+            .map_or(original.raw_target.as_str(), |replacement| {
+                replacement.replacement.as_str()
+            });
+        if reparsed.raw_target != expected_target
+            || reparsed.syntax != original.syntax
+            || reparsed.heading != original.heading
+            || reparsed.block_id != original.block_id
+            || reparsed.display != original.display
+            || reparsed.embed != original.embed
+        {
+            return Err(VaultcError::VerificationFailed(format!(
+                "rewritten Markdown `{destination}` changed unintended link semantics"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[allow(
     clippy::too_many_lines,
-    reason = "copy and rewrite checks share one exhaustive Canvas operation/output closure invariant"
+    reason = "copy and rewrite checks share one exhaustive Canvas semantic closure invariant"
 )]
 fn validate_canvas_outputs(
     root: &Path,
@@ -327,53 +557,43 @@ fn validate_canvas_outputs(
     artifact_paths: &BTreeSet<String>,
 ) -> Result<()> {
     for operation in &approved.plan.operations {
-        let (
-            source_id,
-            snapshot_id,
-            source_path,
-            destination,
-            expected_source_hash,
-            rewrites,
-            expected_output_hash,
-        ) = match operation {
-            crate::plan::OutputOperation::Copy {
-                source_id,
-                snapshot_id,
-                source_path,
-                destination,
-                expected_hash,
-                kind: crate::ir::FileKind::Canvas,
-                ..
-            } => (
-                source_id,
-                snapshot_id,
-                source_path,
-                destination,
-                expected_hash,
-                None,
-                *expected_hash,
-            ),
-            crate::plan::OutputOperation::RewriteCanvas {
-                source_id,
-                snapshot_id,
-                source_path,
-                destination,
-                expected_hash,
-                expected_output_hash,
-                rewrites,
-                ..
-            } => (
-                source_id,
-                snapshot_id,
-                source_path,
-                destination,
-                expected_hash,
-                Some(rewrites.as_slice()),
-                *expected_output_hash,
-            ),
-            crate::plan::OutputOperation::Copy { .. }
-            | crate::plan::OutputOperation::RewriteMarkdown { .. } => continue,
-        };
+        let (source_id, snapshot_id, source_path, destination, expected_source_hash, rewrites) =
+            match operation {
+                crate::plan::OutputOperation::Copy {
+                    source_id,
+                    snapshot_id,
+                    source_path,
+                    destination,
+                    expected_hash,
+                    kind: crate::ir::FileKind::Canvas,
+                    ..
+                } => (
+                    source_id,
+                    snapshot_id,
+                    source_path,
+                    destination,
+                    expected_hash,
+                    None,
+                ),
+                crate::plan::OutputOperation::RewriteCanvas {
+                    source_id,
+                    snapshot_id,
+                    source_path,
+                    destination,
+                    expected_hash,
+                    rewrites,
+                    ..
+                } => (
+                    source_id,
+                    snapshot_id,
+                    source_path,
+                    destination,
+                    expected_hash,
+                    Some(rewrites.as_slice()),
+                ),
+                crate::plan::OutputOperation::Copy { .. }
+                | crate::plan::OutputOperation::RewriteMarkdown { .. } => continue,
+            };
         let canvas = approved
             .plan
             .workspace
@@ -425,11 +645,6 @@ fn validate_canvas_outputs(
         }
         let path = root.join(destination);
         let actual = fs::read(&path).map_err(|error| VaultcError::io(&path, error))?;
-        if ContentHash::from_bytes(&actual) != expected_output_hash {
-            return Err(VaultcError::VerificationFailed(format!(
-                "Canvas output hash does not match the sealed operation for `{destination}`"
-            )));
-        }
         if let Some(rewrites) = rewrites {
             let expected = crate::plan::render_rewritten_canvas(canvas, rewrites)
                 .map_err(|error| VaultcError::VerificationFailed(error.to_string()))?;

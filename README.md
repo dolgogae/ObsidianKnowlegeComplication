@@ -22,7 +22,8 @@ Vaults and a publishable result. It:
   identities, evidence, and approvals;
 - materializes only a sealed `ApprovedPlan` into a new destination;
 - creates deterministic `.vaultpack` archives and independently verifies their
-  checksums, plan linkage, audit files, and provenance.
+  checksums, plan linkage, source-derived output commitments, audit files, and
+  provenance.
 
 The current `.vaultpack` format is deterministic but unsigned. Signing, MCP,
 the Obsidian installer, the registry, and brain-inspired retrieval algorithms

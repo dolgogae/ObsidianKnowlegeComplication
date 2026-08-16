@@ -94,6 +94,12 @@ struct AuxiliaryPathAllocation {
     conflicts: Vec<Conflict>,
 }
 
+struct PendingMarkdownRewrite {
+    document_id: DocumentId,
+    destination: String,
+    replacements: Vec<RewriteReplacement>,
+}
+
 impl DraftPlan {
     pub fn source(&self, source_id: &SourceId) -> Option<&SourceSpec> {
         self.snapshots
@@ -222,6 +228,7 @@ pub enum OutputOperation {
         source_path: String,
         destination: String,
         expected_hash: ContentHash,
+        expected_output_hash: ContentHash,
         replacements: Vec<RewriteReplacement>,
     },
     RewriteCanvas {
@@ -1078,11 +1085,17 @@ fn validate_plan_paths_and_operations(plan: &DraftPlan) -> Result<()> {
                                 "Markdown copy source `{source_path}` is absent from the canonical workspace"
                             ))
                         })?;
+                    let planned = planned_markdown_replacements(
+                        document,
+                        &plan.output_paths,
+                        &plan.asset_output_paths,
+                    )?;
                     if plan.output_paths.get(&document.document_id) != Some(destination)
                         || !covered_document_outputs.insert(destination.clone())
+                        || !planned.is_empty()
                     {
                         return Err(VaultcError::PlanStale(format!(
-                            "Markdown copy operation for `{source_path}` does not match its sealed output map"
+                            "Markdown copy operation for `{source_path}` does not match its sealed resolution"
                         )));
                     }
                 } else if *kind == FileKind::Asset {
@@ -1154,6 +1167,7 @@ fn validate_plan_paths_and_operations(plan: &DraftPlan) -> Result<()> {
             OutputOperation::RewriteMarkdown {
                 operation_id: _,
                 destination,
+                expected_output_hash,
                 replacements,
                 ..
             } => {
@@ -1172,32 +1186,26 @@ fn validate_plan_paths_and_operations(plan: &DraftPlan) -> Result<()> {
                             "Markdown rewrite source `{source_path}` is absent from the canonical workspace"
                         ))
                     })?;
+                let planned = planned_markdown_replacements(
+                    document,
+                    &plan.output_paths,
+                    &plan.asset_output_paths,
+                )?;
                 if plan.output_paths.get(&document.document_id) != Some(destination)
                     || !covered_document_outputs.insert(destination.clone())
+                    || planned.is_empty()
+                    || &planned != replacements
                 {
                     return Err(VaultcError::PlanStale(format!(
-                        "Markdown rewrite operation for `{source_path}` does not match its sealed output map"
+                        "Markdown rewrite operation for `{source_path}` does not match its sealed resolution"
                     )));
                 }
-                let mut previous_end = 0_u64;
-                for replacement in replacements {
-                    if replacement.span.byte_start < previous_end
-                        || replacement.span.byte_start > replacement.span.byte_end
-                        || replacement.span.byte_end > source.byte_len
-                    {
-                        return Err(VaultcError::PlanStale(format!(
-                            "rewrite operation for `{source_path}` has overlapping or invalid spans"
-                        )));
-                    }
-                    previous_end = replacement.span.byte_end;
-                }
-                operation_id(&(
-                    "rewrite_markdown",
-                    source_id,
-                    source_path,
+                markdown_rewrite_operation_id(
+                    source,
                     destination,
+                    *expected_output_hash,
                     replacements,
-                ))?
+                )?
             }
             OutputOperation::RewriteCanvas {
                 destination,
@@ -1349,10 +1357,14 @@ pub fn build_plan(inspection: &Inspection, policy: &CompilerPolicy) -> Result<Dr
     let (operations, operation_conflicts) = build_operations(
         &workspace,
         &representative_map,
-        &output_paths,
-        &asset_output_paths,
-        &canvas_output_paths,
-        &base_output_paths,
+        OutputPathMaps {
+            documents: &output_paths,
+            assets: &asset_output_paths,
+            canvases: &canvas_output_paths,
+            bases: &base_output_paths,
+        },
+        &inspection.snapshots,
+        policy,
     )?;
     conflicts.extend(operation_conflicts);
     conflicts.sort_by(|left, right| left.conflict_id.cmp(&right.conflict_id));
@@ -2157,79 +2169,57 @@ fn resolve_document_candidates(
 fn build_operations(
     workspace: &CanonicalWorkspace,
     representative_map: &BTreeMap<DocumentId, DocumentId>,
-    output_paths: &BTreeMap<DocumentId, String>,
-    asset_output_paths: &BTreeMap<AssetId, String>,
-    canvas_output_paths: &BTreeMap<CanvasId, String>,
-    base_output_paths: &BTreeMap<BaseArtifactId, String>,
+    output_paths: OutputPathMaps<'_>,
+    snapshots: &[VaultSnapshot],
+    policy: &CompilerPolicy,
 ) -> Result<(Vec<OutputOperation>, Vec<Conflict>)> {
     let representatives: BTreeSet<_> = representative_map.values().copied().collect();
     let mut operations = Vec::new();
+    let mut pending_markdown_rewrites = Vec::new();
     for document_id in representatives {
         let document = &workspace.documents[&document_id];
-        let destination = output_paths[&document_id].clone();
-        let mut replacements = Vec::new();
-        for link in &document.links {
-            let target_output = match &link.resolution {
-                LinkResolution::Resolved {
-                    document_id: target,
-                } if link.path.is_none() && *target == document_id => None,
-                LinkResolution::Resolved { document_id } => output_paths.get(document_id),
-                LinkResolution::Asset { asset_id } => asset_output_paths.get(asset_id),
-                _ => None,
-            };
-            if let Some(target_output) = target_output {
-                let relative = relative_output_target(&destination, target_output);
-                let replacement = render_link_target(link, &relative);
-                if replacement != link.raw_target {
-                    replacements.push(RewriteReplacement {
-                        span: link.span.clone(),
-                        replacement,
-                    });
-                }
-            }
-        }
-        replacements.sort_by_key(|replacement| replacement.span.byte_start);
-        let operation = if replacements.is_empty() {
-            copy_operation(&document.source_file, destination, FileKind::Markdown)?
-        } else {
-            let operation_id = operation_id(&(
-                "rewrite_markdown",
-                &document.source_file.source_id,
-                &document.source_file.logical_path,
-                &destination,
-                &replacements,
-            ))?;
-            OutputOperation::RewriteMarkdown {
-                operation_id,
-                source_id: document.source_file.source_id.clone(),
-                snapshot_id: document.source_file.snapshot_id,
-                source_path: document.source_file.logical_path.clone(),
+        let destination = output_paths.documents[&document_id].clone();
+        let replacements =
+            planned_markdown_replacements(document, output_paths.documents, output_paths.assets)?;
+        if replacements.is_empty() {
+            operations.push(copy_operation(
+                &document.source_file,
                 destination,
-                expected_hash: document.source_file.content_hash,
+                FileKind::Markdown,
+            )?);
+        } else {
+            pending_markdown_rewrites.push(PendingMarkdownRewrite {
+                document_id,
+                destination,
                 replacements,
-            }
-        };
-        operations.push(operation);
+            });
+        }
     }
+    operations.extend(materialize_markdown_rewrites(
+        workspace,
+        snapshots,
+        policy,
+        pending_markdown_rewrites,
+    )?);
     for (asset_id, asset) in &workspace.assets {
         let source = asset.canonical_source().ok_or_else(|| {
             VaultcError::Internal(format!("asset {asset_id} has no source occurrences"))
         })?;
         operations.push(copy_operation(
             source,
-            asset_output_paths[asset_id].clone(),
+            output_paths.assets[asset_id].clone(),
             FileKind::Asset,
         )?);
     }
     for (canvas_id, canvas) in &workspace.canvases {
-        let destination = canvas_output_paths[canvas_id].clone();
+        let destination = output_paths.canvases[canvas_id].clone();
         let rewrites = planned_canvas_rewrites(
             canvas,
             &destination,
-            output_paths,
-            asset_output_paths,
-            canvas_output_paths,
-            base_output_paths,
+            output_paths.documents,
+            output_paths.assets,
+            output_paths.canvases,
+            output_paths.bases,
         )?;
         if rewrites.is_empty() {
             operations.push(copy_operation(
@@ -2274,7 +2264,7 @@ fn build_operations(
     for base in bases {
         operations.push(copy_operation(
             &base.source_file,
-            base_output_paths[&base.base_artifact_id].clone(),
+            output_paths.bases[&base.base_artifact_id].clone(),
             FileKind::Base,
         )?);
     }
@@ -2294,6 +2284,321 @@ fn build_operations(
         }
     }
     Ok((operations, Vec::new()))
+}
+
+pub(crate) fn planned_markdown_replacements(
+    document: &Document,
+    output_paths: &BTreeMap<DocumentId, String>,
+    asset_output_paths: &BTreeMap<AssetId, String>,
+) -> Result<Vec<RewriteReplacement>> {
+    let destination = output_paths.get(&document.document_id).ok_or_else(|| {
+        VaultcError::PlanStale(format!(
+            "document {} has no sealed output path",
+            document.document_id
+        ))
+    })?;
+    let mut replacements = Vec::new();
+    for link in &document.links {
+        let target_output = match &link.resolution {
+            LinkResolution::Pending => {
+                return Err(VaultcError::PlanStale(format!(
+                    "document {} contains a pending link resolution",
+                    document.document_id
+                )));
+            }
+            LinkResolution::Resolved {
+                document_id: target,
+            } if link.path.is_none() && *target == document.document_id => None,
+            LinkResolution::Resolved { document_id } => {
+                Some(output_paths.get(document_id).ok_or_else(|| {
+                    VaultcError::PlanStale(format!(
+                        "document {} link target {document_id} has no sealed output path",
+                        document.document_id
+                    ))
+                })?)
+            }
+            LinkResolution::Asset { asset_id } => {
+                Some(asset_output_paths.get(asset_id).ok_or_else(|| {
+                    VaultcError::PlanStale(format!(
+                        "document {} asset target {asset_id} has no sealed output path",
+                        document.document_id
+                    ))
+                })?)
+            }
+            LinkResolution::Unresolved | LinkResolution::Ambiguous { .. } => None,
+        };
+        if let Some(target_output) = target_output {
+            let relative = relative_output_target(destination, target_output);
+            let replacement = render_link_target(link, &relative);
+            if replacement != link.raw_target {
+                replacements.push(RewriteReplacement {
+                    span: link.span.clone(),
+                    replacement,
+                });
+            }
+        }
+    }
+    replacements.sort_by_key(|replacement| replacement.span.byte_start);
+    validate_markdown_replacement_structure(document.source_file.byte_len, &replacements)?;
+    Ok(replacements)
+}
+
+fn validate_markdown_replacement_structure(
+    source_len: u64,
+    replacements: &[RewriteReplacement],
+) -> Result<()> {
+    let mut previous_end = 0_u64;
+    for replacement in replacements {
+        if replacement.span.byte_start < previous_end
+            || replacement.span.byte_start >= replacement.span.byte_end
+            || replacement.span.byte_end > source_len
+        {
+            return Err(VaultcError::PlanStale(
+                "Markdown rewrite spans overlap or are out of bounds".into(),
+            ));
+        }
+        previous_end = replacement.span.byte_end;
+    }
+    Ok(())
+}
+
+fn materialize_markdown_rewrites(
+    workspace: &CanonicalWorkspace,
+    snapshots: &[VaultSnapshot],
+    policy: &CompilerPolicy,
+    pending: Vec<PendingMarkdownRewrite>,
+) -> Result<Vec<OutputOperation>> {
+    let mut by_source: BTreeMap<SourceId, Vec<PendingMarkdownRewrite>> = BTreeMap::new();
+    for rewrite in pending {
+        let document = workspace
+            .documents
+            .get(&rewrite.document_id)
+            .ok_or_else(|| {
+                VaultcError::PlanStale(format!(
+                    "pending Markdown rewrite references unknown document {}",
+                    rewrite.document_id
+                ))
+            })?;
+        by_source
+            .entry(document.source_file.source_id.clone())
+            .or_default()
+            .push(rewrite);
+    }
+
+    let mut operations = Vec::new();
+    for (source_id, rewrites) in by_source {
+        let snapshot = snapshots
+            .iter()
+            .find(|snapshot| snapshot.source_id == source_id)
+            .ok_or_else(|| {
+                VaultcError::PlanStale(format!(
+                    "Markdown rewrite source `{source_id}` has no sealed snapshot"
+                ))
+            })?;
+        let needed_paths: BTreeSet<_> = rewrites
+            .iter()
+            .map(|rewrite| {
+                workspace.documents[&rewrite.document_id]
+                    .source_file
+                    .logical_path
+                    .clone()
+            })
+            .collect();
+        let mut reread_diagnostics = Vec::new();
+        let mut source_bytes = BTreeMap::new();
+        for entry in
+            crate::snapshot::collect_entries(&snapshot.source, policy, &mut reread_diagnostics)?
+        {
+            if needed_paths.contains(&entry.logical_path)
+                && (entry.kind != FileKind::Markdown
+                    || source_bytes
+                        .insert(entry.logical_path.clone(), entry.bytes)
+                        .is_some())
+            {
+                return Err(VaultcError::PlanStale(format!(
+                    "Markdown rewrite source `{source_id}/{}` is not unique Markdown",
+                    entry.logical_path
+                )));
+            }
+        }
+
+        for rewrite in rewrites {
+            let document = &workspace.documents[&rewrite.document_id];
+            if document.source_file.snapshot_id != snapshot.snapshot_id {
+                return Err(VaultcError::PlanStale(format!(
+                    "Markdown rewrite source `{source_id}/{}` is bound to the wrong snapshot",
+                    document.source_file.logical_path
+                )));
+            }
+            let bytes = source_bytes
+                .remove(&document.source_file.logical_path)
+                .ok_or_else(|| {
+                    VaultcError::IdentityMismatch(format!(
+                        "Markdown rewrite source `{source_id}/{}` is missing",
+                        document.source_file.logical_path
+                    ))
+                })?;
+            let output = render_rewritten_markdown(
+                document,
+                &rewrite.destination,
+                &bytes,
+                &rewrite.replacements,
+                policy,
+            )?;
+            let expected_output_hash = ContentHash::from_bytes(&output);
+            let operation_id = markdown_rewrite_operation_id(
+                &document.source_file,
+                &rewrite.destination,
+                expected_output_hash,
+                &rewrite.replacements,
+            )?;
+            operations.push(OutputOperation::RewriteMarkdown {
+                operation_id,
+                source_id: source_id.clone(),
+                snapshot_id: document.source_file.snapshot_id,
+                source_path: document.source_file.logical_path.clone(),
+                destination: rewrite.destination,
+                expected_hash: document.source_file.content_hash,
+                expected_output_hash,
+                replacements: rewrite.replacements,
+            });
+        }
+    }
+    Ok(operations)
+}
+
+fn render_rewritten_markdown(
+    document: &Document,
+    destination: &str,
+    source: &[u8],
+    replacements: &[RewriteReplacement],
+    policy: &CompilerPolicy,
+) -> Result<Vec<u8>> {
+    let source_len = u64::try_from(source.len())
+        .map_err(|_| VaultcError::ResourceLimit("Markdown source length overflow".into()))?;
+    if source_len != document.source_file.byte_len
+        || ContentHash::from_bytes(source) != document.source_file.content_hash
+    {
+        return Err(VaultcError::IdentityMismatch(format!(
+            "Markdown source `{}/{}` changed after inspection",
+            document.source_file.source_id, document.source_file.logical_path
+        )));
+    }
+    std::str::from_utf8(source).map_err(|error| VaultcError::MalformedInput {
+        path: document.source_file.logical_path.clone(),
+        reason: format!("Markdown must be UTF-8: {error}"),
+    })?;
+    validate_markdown_replacement_structure(document.source_file.byte_len, replacements)?;
+
+    for link in &document.links {
+        let start = usize::try_from(link.span.byte_start)
+            .map_err(|_| VaultcError::PlanStale("Markdown link start overflow".into()))?;
+        let end = usize::try_from(link.span.byte_end)
+            .map_err(|_| VaultcError::PlanStale("Markdown link end overflow".into()))?;
+        if source.get(start..end) != Some(link.raw_target.as_bytes()) {
+            return Err(VaultcError::PlanStale(format!(
+                "Markdown link {} source slice does not match its sealed raw target",
+                link.link_id
+            )));
+        }
+    }
+
+    let mut output = Vec::with_capacity(source.len());
+    let mut cursor = 0_usize;
+    for replacement in replacements {
+        let start = usize::try_from(replacement.span.byte_start)
+            .map_err(|_| VaultcError::PlanStale("Markdown rewrite start overflow".into()))?;
+        let end = usize::try_from(replacement.span.byte_end)
+            .map_err(|_| VaultcError::PlanStale("Markdown rewrite end overflow".into()))?;
+        let link = document
+            .links
+            .iter()
+            .find(|link| link.span == replacement.span)
+            .ok_or_else(|| {
+                VaultcError::PlanStale("Markdown rewrite span is not bound to a sealed link".into())
+            })?;
+        if replacement.replacement == link.raw_target {
+            return Err(VaultcError::PlanStale(
+                "Markdown rewrite contains a no-op replacement".into(),
+            ));
+        }
+        output.extend_from_slice(&source[cursor..start]);
+        output.extend_from_slice(replacement.replacement.as_bytes());
+        cursor = end;
+    }
+    output.extend_from_slice(&source[cursor..]);
+    std::str::from_utf8(&output).map_err(|error| {
+        VaultcError::PlanStale(format!("rewritten Markdown is not UTF-8: {error}"))
+    })?;
+    validate_rewritten_markdown_links(document, destination, &output, replacements, policy)?;
+    Ok(output)
+}
+
+fn validate_rewritten_markdown_links(
+    document: &Document,
+    destination: &str,
+    output: &[u8],
+    replacements: &[RewriteReplacement],
+    policy: &CompilerPolicy,
+) -> Result<()> {
+    let mut output_file = document.source_file.clone();
+    destination.clone_into(&mut output_file.logical_path);
+    output_file.byte_len = u64::try_from(output.len())
+        .map_err(|_| VaultcError::ResourceLimit("rewritten Markdown length overflow".into()))?;
+    output_file.content_hash = ContentHash::from_bytes(output);
+    output_file.file_id = crate::identity::SourceFileId::from_file(
+        destination,
+        FileKind::Markdown.media_family(),
+        output_file.content_hash,
+    );
+    let mut diagnostics = Vec::new();
+    let reparsed = crate::parse::parse_markdown(output_file, output, policy, &mut diagnostics)
+        .map_err(|error| VaultcError::PlanStale(error.to_string()))?;
+    if reparsed.links.len() != document.links.len() {
+        return Err(VaultcError::PlanStale(format!(
+            "rewritten Markdown {} changed the number of parsed links",
+            document.document_id
+        )));
+    }
+    for (original, reparsed) in document.links.iter().zip(&reparsed.links) {
+        let expected_target = replacements
+            .iter()
+            .find(|replacement| replacement.span == original.span)
+            .map_or(original.raw_target.as_str(), |replacement| {
+                replacement.replacement.as_str()
+            });
+        if reparsed.raw_target != expected_target
+            || reparsed.syntax != original.syntax
+            || reparsed.heading != original.heading
+            || reparsed.block_id != original.block_id
+            || reparsed.display != original.display
+            || reparsed.embed != original.embed
+        {
+            return Err(VaultcError::PlanStale(format!(
+                "rewritten Markdown {} changed unintended link semantics",
+                document.document_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn markdown_rewrite_operation_id(
+    source: &crate::ir::SourceFile,
+    destination: &str,
+    expected_output_hash: ContentHash,
+    replacements: &[RewriteReplacement],
+) -> Result<OperationId> {
+    operation_id(&(
+        "rewrite_markdown",
+        &source.source_id,
+        source.snapshot_id,
+        &source.logical_path,
+        destination,
+        source.content_hash,
+        expected_output_hash,
+        replacements,
+    ))
 }
 
 fn planned_canvas_rewrites(

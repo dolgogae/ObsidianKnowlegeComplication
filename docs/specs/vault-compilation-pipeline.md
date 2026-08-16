@@ -88,11 +88,13 @@ defined by ADR-0009.
 The current `0.1.0` `DraftPlan` seals schema/compiler version, plan/projection/
 inspection identities, policy, snapshots, canonical workspace, Document,
 Asset, Canvas, and Base output maps, operations, duplicate reports, conflicts,
-and diagnostics. A Canvas rewrite operation seals its ordered node rewrites and
-expected output hash, allowing independent reconstruction from the retained
-Canvas value. Resource estimates and expected post-rewrite/generated hashes
-for Markdown and generated notes are still missing, so independent semantic
-output reconstruction remains incomplete outside Canvas.
+and diagnostics. Canvas and Markdown rewrite operations seal their ordered
+rewrites and expected output hashes. Markdown planning reopens each affected
+source once, validates sealed source slices, applies the recipe, reparses the
+result, and discards the bytes after hashing. The artifact verifier reverses
+the recipe against output bytes to reconstruct a source candidate and compare
+its sealed source hash without embedding raw source copies. Resource estimates
+and expected generated-note body/source hashes are still missing.
 
 ## Failure semantics
 

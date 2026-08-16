@@ -139,6 +139,10 @@ payloads, non-canonical records, stale approvals, provider-supplied record IDs,
 license/author erasure, and disclosure of secrets in rationale/log fields.
 Paths in provenance are data and never opened without safe resolution.
 
+The stored JSONL safety ceilings are 16 MiB per record line, 2,000,000
+records, and 512 MiB aggregate including each final LF. Exceeding any ceiling
+is a resource-limit failure before graph semantics are trusted.
+
 `.vaultc/provenance.jsonl`, `.vaultc/manifest.json`, and
 `.vaultc/checksums.txt` MUST NOT claim stored records for themselves. Their
 records are marked virtual and synthesized from final bytes. A `.vaultpack`

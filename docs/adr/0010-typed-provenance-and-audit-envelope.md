@@ -112,6 +112,12 @@ typed `record_id`, and a required tagged `kind`. JSON uses this envelope:
 Unknown fields, missing fields, duplicate JSON object keys, non-canonical JSON,
 blank lines, CRLF, an absent final LF, and over-limit records fail closed.
 
+Stored JSONL limits are fixed at 16 MiB per canonical record line, 2,000,000
+records, and 512 MiB for the complete ledger bytes. A verifier checks the
+regular file's byte length before allocation and enforces count/aggregate
+limits again while decoding; a final-LF separator byte is part of the
+aggregate. These are safety ceilings, not target file sizes.
+
 ```text
 RecordId(r) = SHA-256("vaultc:provenance:v1\0"
                      || canonical_json({schema_version, kind}))

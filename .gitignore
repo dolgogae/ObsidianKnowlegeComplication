@@ -1,0 +1,7 @@
+/target/
+/.vaultc-work/
+/.DS_Store
+*.vaultpack
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

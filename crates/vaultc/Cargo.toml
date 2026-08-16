@@ -1,0 +1,39 @@
+[package]
+name = "vaultc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = ["archives", "sqlite"]
+archives = ["dep:tar", "dep:zip", "dep:zstd"]
+sqlite = ["dep:rusqlite"]
+
+[dependencies]
+comrak.workspace = true
+data-encoding.workspace = true
+hex.workspace = true
+ignore.workspace = true
+rayon.workspace = true
+rusqlite = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+tar = { workspace = true, optional = true }
+tempfile.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+tracing.workspace = true
+unicode-normalization.workspace = true
+unicode-segmentation.workspace = true
+vaultc-protocol = { path = "../vaultc-protocol" }
+zip = { workspace = true, optional = true }
+zstd = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

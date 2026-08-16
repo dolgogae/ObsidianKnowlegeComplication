@@ -78,3 +78,16 @@ Append-only. Normative details live in specifications and accepted ADRs.
   provenance graph, platform/performance/compatibility/fuzz gates,
   race-hardened no-clobber publication, signatures, SBOM/release automation,
   MCP, plugin, registry, and experimental memory algorithms remain open.
+
+## 2026-08-16 — Evidence span and projection binding
+
+- Closed an evidence ambiguity by permitting only spanless file/body evidence
+  or exact block-hash evidence with an omitted or exact sealed block span.
+  Arbitrary document byte ranges now fail closed.
+- Added the owning `snapshot_id` to protocol V1 `DocumentProjection`, allowing
+  a stateless provider to construct an evidence reference from disclosed data.
+  Approval and CLI replay revalidate the snapshot/document binding.
+- Added regression coverage for six file/block evidence cases, required
+  projection-field decoding, a real generated-note NDJSON lifecycle through
+  explain, stale augmentation rejection, and tampered approved-transcript
+  rejection. The local suite increased from 59 to 61 tests.

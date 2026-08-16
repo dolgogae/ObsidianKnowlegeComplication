@@ -29,9 +29,9 @@ called out explicitly. Broader release gates remain in
 | REQ-DED-001 exact duplicate unification | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-DED-001 | `vaultc::{dedup,plan,provenance}` | `exact_duplicates_and_attachments_unify_with_complete_provenance` | verified on macOS arm64 |
 | REQ-DED-002 near duplicate review only | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-DED-002 | bounded MinHash/LSH in `vaultc::dedup`; review conflicts in `vaultc::plan` | `dedup::tests::threshold_boundary_matches_v1_vectors` | implemented; full candidate vectors and non-auto-merge integration pending |
 | REQ-CNF-001 deterministic conflict layout | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-CNF-001, ADR-0009 | `vaultc::{plan,approval}` | path-kind unit tests; `portable_path_collisions_are_stable_and_typed`; `conflict_waivers_reject_unactionable_stale_and_duplicate_decisions`; CLI required-conflict test | implemented; full title/alias/frontmatter/link corpus and typed resolution actions pending |
-| REQ-PRV-001 output-to-source provenance | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-PRV-001 | partial output records in `vaultc::{provenance,compile,verify}` | exact duplicate/asset and generated-note provenance tests; `verifier_rejects_a_provenance_subset_even_when_artifact_is_resealed`; pack explain lifecycle | implemented partially; full typed graph, administrative-file closure, record/edge IDs, exact arbitrary-span rehash, and author/license nodes pending |
+| REQ-PRV-001 output-to-source provenance | [`provenance-and-conflicts.md`](specs/provenance-and-conflicts.md), ALG-PRV-001 | partial output records in `vaultc::{provenance,compile,verify}` | exact duplicate/asset and generated-note provenance tests; exact file/block evidence policy; `verifier_rejects_a_provenance_subset_even_when_artifact_is_resealed`; pack explain lifecycle | implemented partially; full typed graph, administrative-file closure, record/edge IDs, and author/license nodes pending |
 | REQ-AI-001 provider-neutral interfaces | [`ai-provider-and-augmentation.md`](specs/ai-provider-and-augmentation.md), ADR-0004 | traits/validation in `vaultc::provider`; schemas in `vaultc-protocol`; CLI `CommandProvider` | `capabilities_round_trip`; redacted subprocess round trip; bounded reader/cancellation tests | implemented; multi-provider conformance suite pending |
-| REQ-AI-002 explicit proposal approval | [`ai-provider-and-augmentation.md`](specs/ai-provider-and-augmentation.md), ADR-0004 | `vaultc::{provider,approval,compile}` | explicit approval, stale/forged proposal, post-approval mutation, and generated YAML injection tests in [`provider_approval_contract.rs`](../crates/vaultc/tests/provider_approval_contract.rs) | implemented; full evidence/provider mismatch matrix pending |
+| REQ-AI-002 explicit proposal approval | [`ai-provider-and-augmentation.md`](specs/ai-provider-and-augmentation.md), ADR-0004 | `vaultc::{provider,approval,compile}` | explicit approval, stale/forged proposal, post-approval mutation, generated YAML injection, exact file/block evidence policy, and snapshot-bound provider lifecycle tests | implemented; broader provider mismatch matrix pending |
 | REQ-AI-003 record/replay determinism | [`ai-provider-and-augmentation.md`](specs/ai-provider-and-augmentation.md), ADR-0004 | transcript capture/redaction/hydration in CLI and `vaultc::approval`; audit comparison in `vaultc::verify` | `cli_round_trips_a_redacted_command_provider_transcript`; `verifier_rejects_transcript_audit_mismatch_even_when_artifact_is_resealed` | implemented; transcript replay output-equality test pending |
 | REQ-CMP-001 atomic new-output compile | [`compiled-vault-and-vaultpack.md`](specs/compiled-vault-and-vaultpack.md), ALG-CNF-001, ADR-0003 | sibling staging/fsync/rename in `vaultc::compile`; CLI no-clobber pack publication | existing-destination, stale-source/no-publish, sealed-plan tamper, and CLI lifecycle tests | implemented; crash/fault-injection interruption test pending |
 | REQ-CMP-002 deterministic VaultPack | [`compiled-vault-and-vaultpack.md`](specs/compiled-vault-and-vaultpack.md), ADR-0004 | deterministic tar/zstd in `vaultc::pack` | all three tests in [`pack_contract.rs`](../crates/vaultc/tests/pack_contract.rs) | verified on current host/toolchain; cross-version/platform contract pending |
@@ -44,10 +44,10 @@ called out explicitly. Broader release gates remain in
 
 ## Current suite inventory
 
-- `vaultc`: 15 unit, 3 pack, 8 pipeline, 4 provider/approval, and 15
+- `vaultc`: 15 unit, 3 pack, 8 pipeline, 5 provider/approval, and 15
   security tests;
 - `vaultc-cli`: 8 unit and 5 integration tests;
-- `vaultc-protocol`: 1 unit test;
+- `vaultc-protocol`: 2 unit tests;
 - doctests: 0 examples, all harnesses pass.
 
 See [`testing-and-quality-gates.md`](specs/testing-and-quality-gates.md) for

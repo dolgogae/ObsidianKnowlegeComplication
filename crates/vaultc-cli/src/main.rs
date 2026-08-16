@@ -638,6 +638,7 @@ fn build_augmentation_request(
         .values()
         .filter(|document| all_documents || requested.contains(&document.document_id.to_string()))
         .map(|document| DocumentProjection {
+            snapshot_id: document.source_file.snapshot_id.to_string(),
             document: ObjectRef {
                 kind: ObjectKind::Document,
                 id: document.document_id.to_string(),
@@ -936,6 +937,10 @@ fn hydrate_redacted_request(
                 "augmentation transcript references an unknown document",
             ));
         };
+        validate_projected_snapshot(
+            projected_document,
+            &document.source_file.snapshot_id.to_string(),
+        )?;
         let blocks = projected_document
             .get_mut("selected_blocks")
             .and_then(serde_json::Value::as_array_mut)
@@ -995,6 +1000,24 @@ fn hydrate_redacted_request(
         ));
     }
     Ok(hydrated)
+}
+
+fn validate_projected_snapshot(
+    projected_document: &serde_json::Value,
+    expected_snapshot_id: &str,
+) -> CliResult<()> {
+    if projected_document
+        .get("snapshot_id")
+        .and_then(serde_json::Value::as_str)
+        == Some(expected_snapshot_id)
+    {
+        Ok(())
+    } else {
+        Err(CliFailure::new(
+            EXIT_PROVIDER,
+            "augmentation transcript document snapshot binding is stale",
+        ))
+    }
 }
 
 fn validate_approval_decisions(

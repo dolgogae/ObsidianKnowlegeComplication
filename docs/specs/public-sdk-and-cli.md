@@ -109,8 +109,10 @@ recognized. Source IDs must be unique and contain only ASCII alphanumerics,
 need decisions. `augment` requires an explicit disclosure selection: one or
 more `--document-id` flags or `--all-documents`. Each selected document's
 current projection includes all parsed blocks; selective block projection is
-not implemented. Remote capability declarations require both a policy that
-allows remote providers and the per-command `--allow-remote-provider` consent.
+not implemented. Each projection includes the sealed owning snapshot ID plus
+document/block IDs and hashes so a stateless provider can return valid evidence.
+Remote capability declarations require both a policy that allows remote
+providers and the per-command `--allow-remote-provider` consent.
 
 The provider program is launched directly, never through a shell. Standard
 output is NDJSON protocol-only. The CLI applies line/message/total-output and

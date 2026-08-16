@@ -50,6 +50,128 @@ fn basic_plan() -> (vaultc::VaultCompiler, DraftPlan) {
     (compiler, plan)
 }
 
+fn validate_evidence_case(
+    compiler: &vaultc::VaultCompiler,
+    plan: &DraftPlan,
+    proposal_id: &str,
+    evidence: EvidenceRefWire,
+) -> vaultc::ProposalValidation {
+    let mut proposal = valid_proposal(plan);
+    proposal.proposal_id = proposal_id.into();
+    proposal.evidence = vec![evidence];
+    compiler
+        .validate_proposals(plan, vec![proposal])
+        .expect("validate evidence case")
+        .validations
+        .into_iter()
+        .next()
+        .expect("one proposal validation")
+}
+
+#[test]
+fn evidence_span_hash_must_match_exact_block_or_file_level_policy() {
+    let (compiler, plan) = basic_plan();
+    let document = plan
+        .workspace
+        .documents
+        .values()
+        .next()
+        .expect("fixture document");
+    let block = document.blocks.first().expect("fixture document block");
+    assert!(
+        block.span.byte_start < block.span.byte_end,
+        "fixture block must permit a distinct mismatched span"
+    );
+
+    let file_level = EvidenceRefWire {
+        snapshot_id: document.source_file.snapshot_id.to_string(),
+        document_id: document.document_id.to_string(),
+        block_id: None,
+        byte_start: None,
+        byte_end: None,
+        content_hash: document.source_file.content_hash.hex(),
+    };
+    assert!(
+        validate_evidence_case(&compiler, &plan, "evidence-file-level", file_level.clone(),).valid,
+        "exact file-level hash with no span is valid"
+    );
+
+    let arbitrary_file_span = EvidenceRefWire {
+        byte_start: Some(0),
+        byte_end: Some(1),
+        ..file_level
+    };
+    let validation = validate_evidence_case(
+        &compiler,
+        &plan,
+        "evidence-arbitrary-file-span",
+        arbitrary_file_span,
+    );
+    assert!(
+        !validation.valid,
+        "file-level evidence cannot claim arbitrary bytes without an exact block identity"
+    );
+
+    let exact_block = EvidenceRefWire {
+        snapshot_id: document.source_file.snapshot_id.to_string(),
+        document_id: document.document_id.to_string(),
+        block_id: Some(block.block_id.to_string()),
+        byte_start: Some(block.span.byte_start),
+        byte_end: Some(block.span.byte_end),
+        content_hash: block.content_hash.hex(),
+    };
+    assert!(
+        validate_evidence_case(
+            &compiler,
+            &plan,
+            "evidence-exact-block-span",
+            exact_block.clone(),
+        )
+        .valid,
+        "exact block hash and exact block span are valid"
+    );
+
+    let block_without_span = EvidenceRefWire {
+        byte_start: None,
+        byte_end: None,
+        ..exact_block.clone()
+    };
+    assert!(
+        validate_evidence_case(
+            &compiler,
+            &plan,
+            "evidence-exact-block-no-span",
+            block_without_span,
+        )
+        .valid,
+        "exact block hash may omit its redundant span"
+    );
+
+    let stale_block_hash = EvidenceRefWire {
+        content_hash: ContentHash::from_bytes(b"stale block evidence").hex(),
+        ..exact_block.clone()
+    };
+    let validation = validate_evidence_case(
+        &compiler,
+        &plan,
+        "evidence-stale-block-hash",
+        stale_block_hash,
+    );
+    assert!(!validation.valid, "stale block content hash must fail");
+
+    let mismatched_block_span = EvidenceRefWire {
+        byte_start: Some(block.span.byte_start + 1),
+        ..exact_block
+    };
+    let validation = validate_evidence_case(
+        &compiler,
+        &plan,
+        "evidence-mismatched-block-span",
+        mismatched_block_span,
+    );
+    assert!(!validation.valid, "mismatched block span must fail");
+}
+
 #[test]
 fn valid_proposal_requires_explicit_matching_approval() {
     let (compiler, plan) = basic_plan();

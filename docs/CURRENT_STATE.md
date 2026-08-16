@@ -54,13 +54,13 @@ All commands below passed on macOS arm64 with Rust 1.97.1:
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 59 tests and all doctests passed |
+| `cargo test --workspace --all-features --no-fail-fast` | 61 tests and all doctests passed |
 | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
 
-The 59 tests comprise 15 `vaultc` unit tests, 3 pack integration tests, 8
-pipeline tests, 4 provider/approval tests, 15 security tests, 8 CLI unit tests,
-5 CLI integration tests, and 1 protocol test. They cover, among other cases:
+The 61 tests comprise 15 `vaultc` unit tests, 3 pack integration tests, 8
+pipeline tests, 5 provider/approval tests, 15 security tests, 8 CLI unit tests,
+5 CLI integration tests, and 2 protocol tests. They cover, among other cases:
 
 - source immutability, deterministic plan/output, absolute-source-location
   independence, and byte-identical VaultPacks on one supported host;
@@ -68,6 +68,8 @@ pipeline tests, 4 provider/approval tests, 15 security tests, 8 CLI unit tests,
   collisions, stale sources, and tampered sealed plans;
 - explicit proposal approvals, evidence binding, generated-frontmatter
   injection resistance, conflict waiver binding, and transcript audit closure;
+- file-level evidence with no span, exact block hash/span evidence, rejection of
+  arbitrary/mismatched spans, and provider-visible snapshot identity binding;
 - ZIP/tar traversal and links, duplicate ZIP members, decompression ratio,
   malformed UTF-8/JSON, resource limits, exclusions, output no-clobber, and
   independently resealed artifact tampering;
@@ -106,8 +108,9 @@ The exact requirement-to-test mapping is in
 - Provenance covers implemented content operations and exact duplicate source
   closure, but not the full ALG-PRV-001 typed graph, compiler-generated
   administrative files, record/edge IDs, decision/approval nodes, or
-  author/license attribution. Arbitrary non-block evidence spans are currently
-  bounds-checked rather than rehashed as exact span bytes.
+  author/license attribution. V1 currently supports only spanless file/body
+  evidence or exact block-hash evidence with an omitted or exact block span;
+  arbitrary byte-span evidence is rejected.
 - Some source and pack members are buffered under hard limits. The V1 20 GB
   workload and ≤2 GB RSS target cannot be claimed until streaming and the
   reference benchmark are verified.

@@ -80,6 +80,42 @@ fn assert_process_reaped(pid: &str, timeout: Duration) {
     }
 }
 
+#[cfg(unix)]
+fn augmentation_payload_hash(payload: &serde_json::Value, plan: &DraftPlan) -> String {
+    let mut hydrated = payload.clone();
+    let documents = hydrated["documents"]
+        .as_array_mut()
+        .expect("augmentation documents");
+    for projection in documents {
+        let document_id = projection["document"]["id"]
+            .as_str()
+            .expect("projected document ID");
+        let document = plan
+            .workspace
+            .documents
+            .values()
+            .find(|document| document.document_id.to_string() == document_id)
+            .expect("projected document exists in plan");
+        for projected_block in projection["selected_blocks"]
+            .as_array_mut()
+            .expect("projected blocks")
+        {
+            let block_id = projected_block["block"]["id"]
+                .as_str()
+                .expect("projected block ID");
+            let block = document
+                .blocks
+                .iter()
+                .find(|block| block.block_id.to_string() == block_id)
+                .expect("projected block exists in plan");
+            projected_block["text"] = serde_json::Value::String(block.comparison_text.clone());
+        }
+    }
+    vaultc::canonical::canonical_hash("vaultc:provider-transcript-payload:v1\0", &hydrated)
+        .expect("hash hydrated augmentation request")
+        .hex()
+}
+
 #[test]
 fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     let temporary = tempfile::tempdir().expect("temporary CLI workspace");
@@ -280,6 +316,7 @@ fn cli_reports_unresolved_required_conflicts_as_decision_exit() {
 
 #[cfg(unix)]
 #[test]
+#[allow(clippy::too_many_lines)]
 fn cli_round_trips_a_redacted_command_provider_transcript() {
     let temporary = tempfile::tempdir().expect("temporary provider workspace");
     let source = fixture("basic_vault");
@@ -289,16 +326,38 @@ fn cli_round_trips_a_redacted_command_provider_transcript() {
         &run(&["plan", &source_argument, "--out", as_utf8(&plan_path)]),
         0,
     );
+    let plan: DraftPlan =
+        serde_json::from_slice(&fs::read(&plan_path).expect("read provider plan"))
+            .expect("decode provider plan");
+    let document = plan
+        .workspace
+        .documents
+        .values()
+        .next()
+        .expect("provider fixture document");
+    let snapshot_id = document.source_file.snapshot_id.to_string();
+    let document_id = document.document_id.to_string();
+    let document_hash = document.body_hash.hex();
+    let block = document.blocks.first().expect("provider fixture block");
+    let block_id = block.block_id.to_string();
+    let block_hash = block.content_hash.hex();
+    let plan_id = plan.plan_id.to_string();
+    let projection_hash = plan.projection_hash.hex();
 
     let provider = temporary.path().join("provider.sh");
     fs::write(
         &provider,
-        r#"#!/bin/sh
+        r##"#!/bin/sh
 IFS= read -r capabilities_request || exit 20
-printf '%s\n' '{"protocol_version":1,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"fixture","model":"empty","version":"1"},"protocol_versions":[1],"operations":["knowledge_augmentation"],"max_input_bytes":10485760,"max_output_bytes":10485760,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"local"}}}'
+printf '%s\n' '{"protocol_version":1,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"fixture","model":"snapshot-bound","version":"1"},"protocol_versions":[1],"operations":["knowledge_augmentation"],"max_input_bytes":10485760,"max_output_bytes":10485760,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"local"}}}'
 IFS= read -r augmentation_request || exit 21
-printf '%s\n' '{"protocol_version":1,"request_id":"augmentation-1","message_type":"augmentation_response","payload":{"proposals":[]}}'
-"#,
+case "$augmentation_request" in *\"snapshot_id\":\"$1\"*) ;; *) exit 22 ;; esac
+case "$augmentation_request" in *\"id\":\"$2\"*) ;; *) exit 23 ;; esac
+case "$augmentation_request" in *\"content_hash\":\"$3\"*) ;; *) exit 24 ;; esac
+case "$augmentation_request" in *\"id\":\"$6\"*) ;; *) exit 25 ;; esac
+case "$augmentation_request" in *\"content_hash\":\"$7\"*) ;; *) exit 26 ;; esac
+printf '%s\n' "{\"protocol_version\":1,\"request_id\":\"augmentation-1\",\"message_type\":\"augmentation_response\",\"payload\":{\"proposals\":[{\"schema_version\":1,\"proposal_id\":\"snapshot-bound-1\",\"plan_id\":\"$4\",\"projection_hash\":\"$5\",\"provider\":{\"provider\":\"fixture\",\"model\":\"snapshot-bound\",\"version\":\"1\"},\"kind\":{\"type\":\"create_generated_note\",\"title\":\"Snapshot bound\",\"markdown_body\":\"# Snapshot bound\\n\",\"suggested_path\":\"snapshot-bound.md\"},\"evidence\":[{\"snapshot_id\":\"$1\",\"document_id\":\"$2\",\"block_id\":null,\"byte_start\":null,\"byte_end\":null,\"content_hash\":\"$3\"},{\"snapshot_id\":\"$1\",\"document_id\":\"$2\",\"block_id\":\"$6\",\"byte_start\":null,\"byte_end\":null,\"content_hash\":\"$7\"}],\"uncertainty\":null,\"rationale\":\"snapshot projection contract\"}]}}"
+"##,
     )
     .expect("write provider fixture");
 
@@ -310,6 +369,20 @@ printf '%s\n' '{"protocol_version":1,"request_id":"augmentation-1","message_type
         "/bin/sh",
         "--provider-arg",
         as_utf8(&provider),
+        "--provider-arg",
+        &snapshot_id,
+        "--provider-arg",
+        &document_id,
+        "--provider-arg",
+        &document_hash,
+        "--provider-arg",
+        &plan_id,
+        "--provider-arg",
+        &projection_hash,
+        "--provider-arg",
+        &block_id,
+        "--provider-arg",
+        &block_hash,
         "--all-documents",
         "--out",
         as_utf8(&augmentation),
@@ -319,22 +392,83 @@ printf '%s\n' '{"protocol_version":1,"request_id":"augmentation-1","message_type
         fs::read_to_string(&augmentation).expect("read augmentation transcript");
     assert!(augmentation_text.contains("[redacted]"));
     assert!(!augmentation_text.contains("Welcome to the fixture"));
+    assert!(augmentation_text.contains(&snapshot_id));
 
-    let plan: DraftPlan =
-        serde_json::from_slice(&fs::read(&plan_path).expect("read provider plan"))
-            .expect("decode provider plan");
+    let augmentation_records: Vec<serde_json::Value> = augmentation_text
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("decode augmentation record"))
+        .collect();
+    let validation = augmentation_records
+        .iter()
+        .find(|record| record["type"] == "proposal")
+        .and_then(|record| record.get("validation"))
+        .expect("proposal validation record");
+    assert_eq!(validation["valid"], true);
+    assert_eq!(
+        validation["proposal"]["evidence"][0]["snapshot_id"],
+        snapshot_id
+    );
+    assert_eq!(validation["proposal"]["evidence"][1]["block_id"], block_id);
+    let proposal_content_hash = validation["content_hash"]
+        .as_str()
+        .expect("proposal content hash");
     let decisions = temporary.path().join("decisions.json");
     fs::write(
         &decisions,
         serde_json::to_vec_pretty(&serde_json::json!({
             "schema_version": 1,
             "plan_id": plan.plan_id.to_string(),
-            "decisions": [],
+            "decisions": [{
+                "plan_id": plan.plan_id.to_string(),
+                "proposal_id": "snapshot-bound-1",
+                "proposal_content_hash": proposal_content_hash,
+                "approved": true,
+                "approver": "cli-integration-test",
+                "policy_version": "test-v1"
+            }],
             "conflicts": []
         }))
         .expect("encode provider decisions"),
     )
     .expect("write provider decisions");
+
+    let mut stale_augmentation_records = augmentation_records.clone();
+    let stale_request = stale_augmentation_records
+        .iter_mut()
+        .find(|record| {
+            record["type"] == "transcript"
+                && record["record"]["message_type"] == "augmentation_request"
+        })
+        .expect("augmentation request record");
+    stale_request["record"]["payload"]["documents"][0]["snapshot_id"] =
+        serde_json::Value::String(format!("snap_{}", "0".repeat(64)));
+    stale_request["record"]["canonical_payload_hash"] = serde_json::Value::String(
+        augmentation_payload_hash(&stale_request["record"]["payload"], &plan),
+    );
+    let stale_augmentation = temporary.path().join("stale-augmentation.jsonl");
+    let mut stale_jsonl = stale_augmentation_records
+        .iter()
+        .map(|record| serde_json::to_string(record).expect("encode stale augmentation record"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    stale_jsonl.push('\n');
+    fs::write(&stale_augmentation, stale_jsonl).expect("write stale augmentation");
+    let stale_approved = temporary.path().join("stale-approved.json");
+    assert_exit(
+        &run(&[
+            "approve",
+            as_utf8(&plan_path),
+            "--decisions",
+            as_utf8(&decisions),
+            "--proposals",
+            as_utf8(&stale_augmentation),
+            "--out",
+            as_utf8(&stale_approved),
+        ]),
+        EXIT_PROVIDER,
+    );
+    assert!(!stale_approved.exists());
+
     let approved = temporary.path().join("approved.json");
     assert_exit(
         &run(&[
@@ -348,6 +482,76 @@ printf '%s\n' '{"protocol_version":1,"request_id":"augmentation-1","message_type
             as_utf8(&approved),
         ]),
         0,
+    );
+
+    let mut tampered: serde_json::Value =
+        serde_json::from_slice(&fs::read(&approved).expect("read approved provider plan"))
+            .expect("decode approved provider plan");
+    let request_record = tampered["transcript"]
+        .as_array_mut()
+        .expect("approved transcript")
+        .iter_mut()
+        .find(|record| record["message_type"] == "augmentation_request")
+        .expect("augmentation request transcript");
+    request_record["payload"]["documents"][0]["snapshot_id"] =
+        serde_json::Value::String(format!("snap_{}", "0".repeat(64)));
+    request_record["canonical_payload_hash"] =
+        serde_json::Value::String(augmentation_payload_hash(&request_record["payload"], &plan));
+    let tampered_approved = temporary.path().join("tampered-approved.json");
+    fs::write(
+        &tampered_approved,
+        serde_json::to_vec_pretty(&tampered).expect("encode tampered approved plan"),
+    )
+    .expect("write tampered approved plan");
+    let rejected_output = temporary.path().join("rejected-snapshot-binding");
+    assert_exit(
+        &run(&[
+            "compile",
+            as_utf8(&tampered_approved),
+            "--output",
+            as_utf8(&rejected_output),
+        ]),
+        EXIT_OUTPUT,
+    );
+    assert!(!rejected_output.exists());
+
+    let compiled = temporary.path().join("snapshot-bound-vault");
+    assert_exit(
+        &run(&[
+            "compile",
+            as_utf8(&approved),
+            "--output",
+            as_utf8(&compiled),
+        ]),
+        0,
+    );
+    assert_exit(&run(&["verify", as_utf8(&compiled)]), 0);
+    let generated_path = "knowledge/_generated/snapshot-bound.md";
+    let explanation = run(&[
+        "explain",
+        as_utf8(&compiled),
+        generated_path,
+        "--format",
+        "json",
+    ]);
+    assert_exit(&explanation, 0);
+    let explanation: serde_json::Value =
+        serde_json::from_slice(&explanation.stdout).expect("decode provenance explanation");
+    assert_eq!(
+        explanation["records"][0]["evidence"][0]["snapshot_id"],
+        snapshot_id
+    );
+    assert_eq!(
+        explanation["records"][0]["evidence"][0]["byte_start"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        explanation["records"][0]["evidence"][1]["block_id"],
+        block_id
+    );
+    assert_eq!(
+        explanation["records"][0]["evidence"][1]["byte_start"],
+        serde_json::Value::Null
     );
 }
 

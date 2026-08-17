@@ -10,6 +10,7 @@ decision_refs:
   - ADR-0006
   - ADR-0009
   - ADR-0010
+  - ADR-0012
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -46,6 +47,12 @@ by verification and explanation. This is not missing provenance and MUST NOT
 be replaced by a forged self-referential stored edge. A VaultPack package
 subject is also virtual and separately requested. Stored and virtual records
 share the same identity formula and public record schema.
+
+Each Vault-file and evidence Source record includes the exact accepted UTF-8
+`original_source_path`, its NFC `source_path`, and the required `utf8` path-
+encoding tag. These values are part of the canonical record payload and
+RecordId. The semantic SourceFileId/SnapshotId formulas continue to use only
+the normalized logical path, as defined by ALG-SNP-001 and ADR-0012.
 
 Parsed Markdown frontmatter author/license declarations are retained without
 legal inference. Recognized keys are ASCII-case-insensitive `author`,
@@ -85,9 +92,9 @@ an untyped decision.
 | `CONTENT_NEAR_DUPLICATE` | high candidate similarity | review only |
 
 A link with zero candidates is preserved and emits an unresolved-link
-diagnostic; it is not a `LINK_AMBIGUITY` conflict. The current path-normalizer
-can collapse NFD/NFC spelling before conflict classification, so full
-`UNICODE_NORMALIZATION` typing/original-spelling provenance remains incomplete.
+diagnostic; it is not a `LINK_AMBIGUITY` conflict. Canonically equivalent but
+distinct original path spellings are classified as `UNICODE_NORMALIZATION`;
+the normalized output remains unique and provenance retains both spellings.
 
 Future, unimplemented conflict families include `CLAIM_CONTRADICTION` (retain
 context/time-scoped claims with evidence) and `LICENSE_INCOMPATIBLE` (hard

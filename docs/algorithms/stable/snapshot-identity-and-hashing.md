@@ -7,6 +7,7 @@ last_updated: 2026-08-16
 decision_refs:
   - ADR-0003
   - ADR-0004
+  - ADR-0012
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -51,7 +52,8 @@ substitute identity.
 | `H` | SHA-256 function | bytes → 32 bytes | SHA-256 |
 | `bytes` | exact source-file bytes | 0..configured file limit bytes | none |
 | `lp(x)` | canonical length-prefixed byte string | unsigned length + UTF-8/bytes | ULEB128 length |
-| `path` | safe normalized logical path | relative UTF-8 path | ALG-NRM-001 |
+| `path` | safe NFC normalized logical path | relative UTF-8 path | ALG-NRM-001 |
+| `original_path` | exact accepted pre-NFC component spelling | relative UTF-8 `/` path | ADR-0012 |
 | `kind` | classified input kind/media family | versioned ASCII enum | detected |
 | `SourceId` | stable user/domain source identity | non-empty UTF-8, policy-limited | required |
 | `SourceFileId` | immutable normalized-path/kind/content identity | 256-bit ID | required |
@@ -65,7 +67,8 @@ substitute identity.
 ```text
 manifest = []
 for entry in safe_enumerate(source):
-    path = normalize_logical_path(entry.path)
+    original_path = validate_and_join_utf8_components(entry.raw_path)
+    path = normalize_logical_path(original_path)
     content_hash = sha256(domain_content || entry.bytes_stream)
     file_id = sha256(domain_file || lp(path) || lp(entry.kind) || content_hash)
     manifest.append(path, entry.kind, entry.size, content_hash, file_id)
@@ -74,6 +77,11 @@ snapshot_id = sha256(domain_snapshot || lp(source_id) || lp(policy_id)
                      || encode_each(manifest.path, manifest.file_id))
 seal manifest; return snapshot_id, manifest
 ```
+
+`original_path` is carried in the sealed manifest/IR and later Plan and
+provenance records, but it is deliberately not an input to `SourceFileId` or
+`SnapshotId`. Compilation still compares it during the source reread; a
+post-plan spelling change is stale even when these lower semantic IDs match.
 
 Hashing MUST stream bytes, check byte count, and re-stat/reopen according to platform race policy. A changed file during inspection invalidates the snapshot attempt.
 

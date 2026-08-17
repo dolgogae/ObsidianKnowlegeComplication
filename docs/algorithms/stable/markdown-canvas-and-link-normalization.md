@@ -6,6 +6,7 @@ owners:
 last_updated: 2026-08-16
 decision_refs:
   - ADR-0008
+  - ADR-0012
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -32,6 +33,11 @@ N_fm(d)   = canonical_typed_map(parse_frontmatter(d))
 
 `N_body` is a versioned structural projection: it removes parser-position metadata and syntax differences explicitly declared insignificant, but preserves semantic text, heading/block structure, code/math bytes, link target/display distinction, and embed kind. It MUST NOT use locale-dependent case conversion.
 
+The scanner retains `O_path(p)`, the exact valid-UTF-8 component spelling
+joined with `/` before NFC. V1 requires `N_path(O_path(p))` to equal the sealed
+logical path. `O_path` is audit data and is never substituted for `N_path` in
+the ALG-SNP-001 semantic identity formulas.
+
 ## Symbols
 
 | Symbol | Meaning | Type/range/unit | Default |
@@ -45,12 +51,13 @@ N_fm(d)   = canonical_typed_map(parse_frontmatter(d))
 | `N_path` | portable logical path | UTF-8 slash path | segment NFC |
 | `N_body` | canonical AST projection | canonical bytes | schema v1 |
 | `N_fm` | normalized frontmatter map | canonical bytes | schema v1 |
+| `O_path` | accepted pre-NFC component spelling | UTF-8 slash path | required |
 
 ## Link parsing and rewriting
 
 A wikilink/embed is parsed into `(raw_target, path?, heading?, block_id?, display?, embed)`. Resolution order is explicit path in source namespace, normalized path, filename stem/title/alias candidates, then heading/block validation. Zero or multiple final candidates are unresolved/ambiguous; the compiler does not choose by discovery order.
 
-Rewriting replaces only target spans recorded by the scanner. It preserves surrounding source bytes, display text, embed marker, heading/block suffix, and escaping. The new relative target is calculated from the allocated output path using `/` separators and URL/Obsidian escaping rules appropriate to the link syntax.
+Rewriting replaces only target spans recorded by the scanner. It preserves surrounding source bytes, display text, embed marker, heading/block suffix, and escaping. The new relative target is calculated from the allocated output path using `/` separators. Markdown-format targets use the frozen V1 percent encoder; wikilink-format targets retain Obsidian delimiters and do not invent escapes for otherwise non-representable filenames.
 
 Canvas parsing types known fields (`nodes`, `edges`, file nodes and IDs) while preserving unknown JSON fields. Referenced files use the same resolver and output path map. Serialization uses deterministic key policy only for generated/rewritten Canvas; unchanged files may be copied byte-for-byte.
 Canvas `file` rewrites store the destination-relative semantic path with `/`
@@ -58,6 +65,18 @@ separators. They do not apply URL percent encoding or Markdown/wikilink
 escaping; the canonical JSON serializer alone escapes the JSON string. A raw
 unresolved or waived path may be retained only when lexical resolution from
 the allocated Canvas destination remains inside the Compiled Vault root.
+
+Canvas lookup normalizes a derived key only. It never NFC-rewrites the stored
+raw JSON `file` value. A leading UTF-8 BOM is excluded from Markdown semantic
+comparison only at byte offset zero; its bytes and its effect on all source
+span offsets are preserved. A BOM after frontmatter is content. CRLF/lone-CR
+normalization likewise applies only to comparison forms. Copy and rewrite keep
+every byte outside sealed spans.
+
+Unresolved or waived local Markdown and Canvas targets are preserved only when
+platform-independent lexical resolution proves that the target stays inside
+both the source Vault and allocated Compiled Vault roots. Parent traversal,
+absolute paths, URI-like drive prefixes, and UNC-like forms fail closed.
 
 ## Pseudocode
 
@@ -90,8 +109,10 @@ Source `notes/A.md` contains `See [[../Topic#Intro|start]].` and the planner map
 
 | Case | Input | Expected comparison/resolution behavior |
 |---|---|---|
-| line endings | `a\r\nb\r` | `N_text = "a\nb\n"` |
-| Unicode | `e` + combining acute | NFC equals `é` |
+| line endings | `a\r\nb\r` | `N_text = "a\nb\n"`; untouched bytes remain original |
+| Unicode path | `Cafe` + combining acute | logical path NFC equals `Café`; original spelling remains distinct |
+| leading BOM | `EF BB BF` + Markdown | excluded from semantics, retained in source bytes and span offsets |
+| full case fold | `Straße` / `STRASSE` | equal lookup/portable key; original strings unchanged |
 | wikilink in code | `` `[[A]]` `` | no link token |
 | embed | `![[A.png#x]]` | embed=true, path=`A.png`, suffix=`#x` |
 | ambiguous title | two `Topic.md` candidates | typed ambiguity conflict |

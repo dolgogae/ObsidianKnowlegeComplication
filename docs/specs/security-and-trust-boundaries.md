@@ -10,6 +10,7 @@ decision_refs:
   - ADR-0006
   - ADR-0009
   - ADR-0010
+  - ADR-0012
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-ONPREM-STACK
@@ -30,6 +31,9 @@ Primary threats include path traversal, symlink escapes, archive bombs, parser d
 - Reject unsafe path syntax and every collision that cannot be resolved by the sealed deterministic layout rule. Detect exact, case-fold, and Unicode-normalization collisions before materialization; never use last-writer-wins.
 - Do not follow source symlinks by default; reject links escaping a declared root.
 - Enforce file count, size, expanded size, nesting, and compression-ratio limits before/during extraction.
+- Decode no path lossily. V1 validates ZIP central-directory filename bytes as
+  strict UTF-8 before library CP437/replacement decoding, parses archive names
+  without host separator semantics, and rejects unsupported raw encodings.
 - Exclude `.obsidian/plugins/**`, `.git/**`, executables, sockets, devices, and named secret classes.
 - Use no-follow/open-relative primitives where platform APIs permit; recheck destination containment.
 

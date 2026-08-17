@@ -11,6 +11,7 @@ decision_refs:
   - ADR-0006
   - ADR-0009
   - ADR-0010
+  - ADR-0012
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -56,7 +57,7 @@ filesystem.
 
 All output paths use `/` in manifests, Unicode normalization defined by ALG-NRM-001, no leading slash, no drive/UNC prefix, no `.` or `..` segment, no control/NUL characters, and platform-portable component rules. Path comparison detects both exact and configured case-fold collisions before materialization.
 
-Conflict suffixes are stable and derived from a short, collision-checked identity fragment, never traversal-prone user text. Sanitization produces a diagnostic and retains the original logical path in provenance.
+Conflict suffixes are stable and derived from a short, collision-checked identity fragment, never traversal-prone user text. Sanitization produces a diagnostic. Provenance retains both the exact accepted UTF-8 source spelling and its NFC logical path; output paths use the NFC form.
 
 ## Generated note frontmatter
 

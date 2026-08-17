@@ -581,6 +581,7 @@ fn validate_rewritten_markdown_links(
     policy: &CompilerPolicy,
 ) -> Result<()> {
     let mut output_file = document.source_file.clone();
+    destination.clone_into(&mut output_file.original_path);
     destination.clone_into(&mut output_file.logical_path);
     output_file.byte_len = u64::try_from(output.len()).map_err(|_| {
         VaultcError::VerificationFailed("rewritten Markdown length overflows u64".into())

@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File};
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Component, Path};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ignore::WalkBuilder;
@@ -13,12 +14,44 @@ use crate::config::CompilerPolicy;
 use crate::diagnostic::{Diagnostic, DiagnosticCode};
 use crate::error::{Result, VaultcError};
 use crate::identity::{ContentHash, SnapshotId, SourceFileId};
-use crate::ir::{CanonicalWorkspace, FileKind, SourceFile};
+use crate::ir::{CanonicalWorkspace, FileKind, SourceFile, SourcePathEncoding};
 use crate::plan::Inspection;
 use crate::source::{SourceId, SourceSpec};
 
 pub(crate) const SOURCE_POLICY_ID: &str = "vaultc-source-v1";
 const INITIAL_READ_CAPACITY: u64 = 16 * 1024 * 1024;
+#[cfg(feature = "archives")]
+const ARCHIVE_EXPANSION_LIMIT_ERROR: &str = "vaultc archive expansion limit exceeded";
+
+#[cfg(feature = "archives")]
+struct ExpansionBoundedReader<R> {
+    inner: R,
+    remaining: u64,
+    exceeded: Arc<AtomicBool>,
+}
+
+#[cfg(feature = "archives")]
+impl<R: Read> Read for ExpansionBoundedReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let allowance = usize::try_from(
+            self.remaining
+                .saturating_add(1)
+                .min(u64::try_from(buffer.len()).unwrap_or(u64::MAX)),
+        )
+        .unwrap_or(buffer.len());
+        let read = self.inner.read(&mut buffer[..allowance])?;
+        let read = u64::try_from(read).unwrap_or(u64::MAX);
+        if read > self.remaining {
+            self.exceeded.store(true, Ordering::Relaxed);
+            return Err(io::Error::other(ARCHIVE_EXPANSION_LIMIT_ERROR));
+        }
+        self.remaining -= read;
+        usize::try_from(read).map_err(|_| io::Error::other("archive read length overflow"))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultSnapshot {
@@ -31,14 +64,18 @@ pub struct VaultSnapshot {
 
 #[derive(Debug)]
 pub(crate) struct RawEntry {
+    pub original_path: String,
     pub logical_path: String,
+    pub path_encoding: SourcePathEncoding,
     pub kind: FileKind,
     pub bytes: Vec<u8>,
 }
 
 #[derive(Debug)]
 struct PendingFile {
+    original_path: String,
     logical_path: String,
+    path_encoding: SourcePathEncoding,
     kind: FileKind,
     byte_len: u64,
     content_hash: ContentHash,
@@ -153,7 +190,9 @@ fn seal_and_parse(
         let file_id =
             SourceFileId::from_file(&entry.logical_path, entry.kind.media_family(), content_hash);
         pending.push(PendingFile {
+            original_path: entry.original_path.clone(),
             logical_path: entry.logical_path.clone(),
+            path_encoding: entry.path_encoding,
             kind: entry.kind.clone(),
             byte_len: entry.bytes.len() as u64,
             content_hash,
@@ -175,7 +214,9 @@ fn seal_and_parse(
             source_id: source.source_id().clone(),
             snapshot_id,
             file_id: file.file_id,
+            original_path: file.original_path,
             logical_path: file.logical_path,
+            path_encoding: file.path_encoding,
             kind: file.kind,
             byte_len: file.byte_len,
             content_hash: file.content_hash,
@@ -219,16 +260,24 @@ pub(crate) fn collect_entries(
 
 pub(crate) fn read_source_entry(
     source: &SourceSpec,
-    logical_path: &str,
+    expected_file: &SourceFile,
     policy: &CompilerPolicy,
 ) -> Result<Vec<u8>> {
     let mut diagnostics = Vec::new();
     let entries = collect_entries(source, policy, &mut diagnostics)?;
-    entries
+    let entry = entries
         .into_iter()
-        .find(|entry| entry.logical_path == logical_path)
-        .map(|entry| entry.bytes)
-        .ok_or_else(|| VaultcError::IdentityMismatch(logical_path.into()))
+        .find(|entry| entry.logical_path == expected_file.logical_path)
+        .ok_or_else(|| VaultcError::IdentityMismatch(expected_file.logical_path.clone()))?;
+    if entry.original_path != expected_file.original_path
+        || entry.path_encoding != expected_file.path_encoding
+    {
+        return Err(VaultcError::IdentityMismatch(format!(
+            "source path spelling changed for `{}`",
+            expected_file.logical_path
+        )));
+    }
+    Ok(entry.bytes)
 }
 
 #[allow(
@@ -256,6 +305,7 @@ fn collect_directory(
     let filter_pruned = Arc::clone(&pruned_directories);
     let filter_excludes = excludes.clone();
     let filter_root = root.to_path_buf();
+    let filter_policy = policy.clone();
     builder.filter_entry(move |entry| {
         if entry.path() == filter_root || !entry.file_type().is_some_and(|kind| kind.is_dir()) {
             return true;
@@ -263,20 +313,18 @@ fn collect_directory(
         let Some(relative) = entry.path().strip_prefix(&filter_root).ok() else {
             return true;
         };
-        let Some(relative) = relative.to_str() else {
+        let Ok(path_pair) = decode_directory_path(relative, &filter_policy) else {
+            // Do not let pruning hide an invalid path. The main traversal reports it.
             return true;
         };
-        let logical: String = relative
-            .replace(std::path::MAIN_SEPARATOR, "/")
-            .nfc()
-            .collect();
-        let should_prune = is_excluded(&logical, false, true, &filter_excludes);
+        let should_prune = is_excluded(&path_pair.logical_path, false, true, &filter_excludes);
         if should_prune && let Ok(mut paths) = filter_pruned.lock() {
-            paths.push(logical);
+            paths.push(path_pair.logical_path);
         }
         !should_prune
     });
     let mut entries = Vec::new();
+    let mut seen_paths = BTreeSet::new();
     let mut total_bytes = 0_u64;
     for result in builder.build() {
         let entry = result.map_err(|error| VaultcError::MalformedInput {
@@ -296,16 +344,17 @@ fn collect_directory(
                 path: entry.path().display().to_string(),
                 reason: "entry escaped source root".into(),
             })?;
-        let logical = normalize_logical_path(relative, policy)?;
+        let path_pair = decode_directory_path(relative, policy)?;
+        reject_seen_path(&mut seen_paths, &path_pair.logical_path)?;
         if is_excluded(
-            &logical,
+            &path_pair.logical_path,
             file_type.is_symlink(),
             file_type.is_dir(),
             &excludes,
         ) {
             diagnostics.push(
                 Diagnostic::warning(DiagnosticCode::ExcludedPath, "path excluded by V1 policy")
-                    .for_path(logical),
+                    .for_path(path_pair.logical_path),
             );
             continue;
         }
@@ -315,14 +364,14 @@ fn collect_directory(
         if file_type.is_symlink() {
             diagnostics.push(
                 Diagnostic::warning(DiagnosticCode::ExcludedPath, "symlink not followed")
-                    .for_path(logical),
+                    .for_path(path_pair.logical_path),
             );
             continue;
         }
         if !file_type.is_file() {
             diagnostics.push(
                 Diagnostic::warning(DiagnosticCode::ExcludedPath, "special file excluded")
-                    .for_path(logical),
+                    .for_path(path_pair.logical_path),
             );
             continue;
         }
@@ -343,14 +392,16 @@ fn collect_directory(
                 entry.path().display()
             )));
         }
-        validate_structured_size(&logical, &bytes, policy)?;
+        validate_structured_size(&path_pair.logical_path, &bytes, policy)?;
         let next_files = entries.len().saturating_add(1);
         let next_bytes = total_bytes.saturating_add(bytes.len() as u64);
         enforce_file_limits(next_files, next_bytes, policy)?;
         total_bytes = next_bytes;
         entries.push(RawEntry {
-            kind: FileKind::classify(&logical),
-            logical_path: logical,
+            kind: FileKind::classify(&path_pair.logical_path),
+            original_path: path_pair.original_path,
+            logical_path: path_pair.logical_path,
+            path_encoding: SourcePathEncoding::Utf8,
             bytes,
         });
     }
@@ -378,18 +429,25 @@ fn collect_zip(
         .metadata()
         .map_err(|error| VaultcError::io(path, error))?
         .len();
-    let declared_entries = declared_zip_entry_count(&mut file, compressed_len, path)?;
+    if compressed_len > policy.limits.max_file_bytes {
+        return Err(VaultcError::ResourceLimit(format!(
+            "ZIP container `{}` exceeds per-file limit",
+            path.display()
+        )));
+    }
+    let central_entries = scan_zip_central_entries(&mut file, compressed_len, path, policy)?;
     file.seek(SeekFrom::Start(0))
         .map_err(|error| VaultcError::io(path, error))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|error| VaultcError::MalformedInput {
         path: path.display().to_string(),
         reason: error.to_string(),
     })?;
-    if archive.len() as u64 != declared_entries {
+    if archive.len() != central_entries.len() {
         return Err(VaultcError::UnsafePath {
             path: path.display().to_string(),
             reason: format!(
-                "ZIP central directory declares {declared_entries} entries but the reader exposes {}; duplicate or shadowed members are forbidden",
+                "ZIP central directory declares {} entries but the reader exposes {}; duplicate or shadowed members are forbidden",
+                central_entries.len(),
                 archive.len()
             ),
         });
@@ -404,36 +462,37 @@ fn collect_zip(
                 path: path.display().to_string(),
                 reason: error.to_string(),
             })?;
-        if item.is_dir() {
+        let central_entry = central_entries.get(index).ok_or_else(|| {
+            VaultcError::Internal("ZIP central-entry index was not sealed".into())
+        })?;
+        if item.central_header_start() != central_entry.header_offset {
+            return Err(VaultcError::MalformedInput {
+                path: path.display().to_string(),
+                reason: "ZIP reader order disagrees with the scanned central directory".into(),
+            });
+        }
+        let unix_mode = item.unix_mode();
+        if central_entry.is_directory {
             continue;
         }
-        if item
-            .unix_mode()
-            .is_some_and(|mode| mode & 0o170_000 == 0o120_000)
-        {
+        if unix_mode.is_some_and(|mode| mode & 0o170_000 == 0o120_000) {
             diagnostics.push(
                 Diagnostic::warning(DiagnosticCode::ExcludedPath, "archive symlink excluded")
-                    .for_path(item.name()),
+                    .for_path(central_entry.path.logical_path.clone()),
             );
             continue;
         }
-        let enclosed = item
-            .enclosed_name()
-            .ok_or_else(|| VaultcError::UnsafePath {
-                path: item.name().into(),
-                reason: "ZIP member is absolute or traverses parents".into(),
-            })?;
-        let logical = normalize_logical_path(&enclosed, policy)?;
-        if is_excluded(&logical, false, false, &excludes) {
+        if is_excluded(&central_entry.path.logical_path, false, false, &excludes) {
             diagnostics.push(
                 Diagnostic::warning(DiagnosticCode::ExcludedPath, "path excluded by V1 policy")
-                    .for_path(logical),
+                    .for_path(central_entry.path.logical_path.clone()),
             );
             continue;
         }
         if item.size() > policy.limits.max_file_bytes {
             return Err(VaultcError::ResourceLimit(format!(
-                "ZIP member `{logical}` exceeds per-file limit"
+                "ZIP member `{}` exceeds per-file limit",
+                central_entry.path.logical_path
             )));
         }
         expanded = expanded.saturating_add(item.size());
@@ -445,12 +504,14 @@ fn collect_zip(
             declared_size,
             policy.limits.max_file_bytes,
             path,
-            &logical,
+            &central_entry.path.logical_path,
         )?;
-        validate_structured_size(&logical, &bytes, policy)?;
+        validate_structured_size(&central_entry.path.logical_path, &bytes, policy)?;
         entries.push(RawEntry {
-            kind: FileKind::classify(&logical),
-            logical_path: logical,
+            kind: FileKind::classify(&central_entry.path.logical_path),
+            original_path: central_entry.path.original_path.clone(),
+            logical_path: central_entry.path.logical_path.clone(),
+            path_encoding: SourcePathEncoding::Utf8,
             bytes,
         });
     }
@@ -459,7 +520,137 @@ fn collect_zip(
 }
 
 #[cfg(feature = "archives")]
-fn declared_zip_entry_count(file: &mut File, length: u64, path: &Path) -> Result<u64> {
+#[derive(Debug)]
+struct ZipCentralDirectory {
+    entries: u64,
+    offset: u64,
+    size: u64,
+}
+
+#[cfg(feature = "archives")]
+#[derive(Debug)]
+struct ZipCentralEntry {
+    path: SourcePathPair,
+    is_directory: bool,
+    header_offset: u64,
+}
+
+#[cfg(feature = "archives")]
+fn scan_zip_central_entries(
+    file: &mut File,
+    length: u64,
+    path: &Path,
+    policy: &CompilerPolicy,
+) -> Result<Vec<ZipCentralEntry>> {
+    let directory = read_zip_central_directory(file, length, path)?;
+    if directory.entries > policy.limits.max_files {
+        return Err(VaultcError::ResourceLimit(format!(
+            "ZIP declared member count {} exceeds configured maximum {}",
+            directory.entries, policy.limits.max_files
+        )));
+    }
+    let end = directory
+        .offset
+        .checked_add(directory.size)
+        .filter(|end| *end <= length)
+        .ok_or_else(|| VaultcError::MalformedInput {
+            path: path.display().to_string(),
+            reason: "ZIP central-directory range is outside the container".into(),
+        })?;
+    file.seek(SeekFrom::Start(directory.offset))
+        .map_err(|error| VaultcError::io(path, error))?;
+    let capacity = usize::try_from(directory.entries).map_err(|_| {
+        VaultcError::ResourceLimit("ZIP declared member count does not fit this platform".into())
+    })?;
+    let mut entries = Vec::with_capacity(capacity);
+    let mut seen_paths = BTreeSet::new();
+    let mut cursor = directory.offset;
+    for _ in 0..directory.entries {
+        let header_offset = cursor;
+        if cursor.checked_add(46).is_none_or(|next| next > end) {
+            return Err(VaultcError::MalformedInput {
+                path: path.display().to_string(),
+                reason: "truncated ZIP central-directory header".into(),
+            });
+        }
+        let mut header = [0_u8; 46];
+        file.read_exact(&mut header)
+            .map_err(|error| VaultcError::io(path, error))?;
+        if !header.starts_with(b"PK\x01\x02") {
+            return Err(VaultcError::MalformedInput {
+                path: path.display().to_string(),
+                reason: "invalid ZIP central-directory header signature".into(),
+            });
+        }
+        let name_length = u64::from(read_u16_le(&header, 28).unwrap_or(0));
+        let extra_length = u64::from(read_u16_le(&header, 30).unwrap_or(0));
+        let comment_length = u64::from(read_u16_le(&header, 32).unwrap_or(0));
+        let variable_length = name_length
+            .checked_add(extra_length)
+            .and_then(|value| value.checked_add(comment_length))
+            .ok_or_else(|| VaultcError::MalformedInput {
+                path: path.display().to_string(),
+                reason: "ZIP central-directory field lengths overflow".into(),
+            })?;
+        cursor = cursor
+            .checked_add(46)
+            .and_then(|value| value.checked_add(variable_length))
+            .filter(|next| *next <= end)
+            .ok_or_else(|| VaultcError::MalformedInput {
+                path: path.display().to_string(),
+                reason: "ZIP central-directory member exceeds declared range".into(),
+            })?;
+        let name_capacity = usize::try_from(name_length).map_err(|_| {
+            VaultcError::ResourceLimit("ZIP filename length does not fit this platform".into())
+        })?;
+        let mut raw_name = vec![0_u8; name_capacity];
+        file.read_exact(&mut raw_name)
+            .map_err(|error| VaultcError::io(path, error))?;
+        let raw_name_text =
+            std::str::from_utf8(&raw_name).map_err(|error| VaultcError::MalformedInput {
+                path: path.display().to_string(),
+                reason: format!("ZIP central-directory filename is not UTF-8: {error}"),
+            })?;
+        let made_by = header[5];
+        let unix_mode = if made_by == 3 {
+            read_u32_le(&header, 38).map(|attributes| attributes >> 16)
+        } else {
+            None
+        };
+        let is_directory =
+            raw_name.ends_with(b"/") || unix_mode.is_some_and(|mode| mode & 0o170_000 == 0o040_000);
+        let path_pair = decode_archive_path(raw_name_text, is_directory, policy)?;
+        reject_seen_path(&mut seen_paths, &path_pair.logical_path)?;
+        let skip = i64::try_from(extra_length.saturating_add(comment_length)).map_err(|_| {
+            VaultcError::ResourceLimit("ZIP metadata length does not fit this platform".into())
+        })?;
+        file.seek(SeekFrom::Current(skip))
+            .map_err(|error| VaultcError::io(path, error))?;
+        entries.push(ZipCentralEntry {
+            path: path_pair,
+            is_directory,
+            header_offset,
+        });
+    }
+    if cursor != end {
+        return Err(VaultcError::MalformedInput {
+            path: path.display().to_string(),
+            reason: "ZIP central-directory size does not match its member headers".into(),
+        });
+    }
+    Ok(entries)
+}
+
+#[cfg(feature = "archives")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "EOCD and ZIP64 parsing are one fail-closed central-directory boundary"
+)]
+fn read_zip_central_directory(
+    file: &mut File,
+    length: u64,
+    path: &Path,
+) -> Result<ZipCentralDirectory> {
     const EOCD_MINIMUM: usize = 22;
     const EOCD_SEARCH: u64 = EOCD_MINIMUM as u64 + u16::MAX as u64;
     if length < EOCD_MINIMUM as u64 {
@@ -497,8 +688,14 @@ fn declared_zip_entry_count(file: &mut File, length: u64, path: &Path) -> Result
             reason: "multi-disk ZIP archives are unsupported".into(),
         });
     }
-    if total_entries != u16::MAX {
-        return Ok(u64::from(total_entries));
+    let directory_size = read_u32_le(&tail, eocd + 12).unwrap_or(u32::MAX);
+    let directory_offset = read_u32_le(&tail, eocd + 16).unwrap_or(u32::MAX);
+    if total_entries != u16::MAX && directory_size != u32::MAX && directory_offset != u32::MAX {
+        return Ok(ZipCentralDirectory {
+            entries: u64::from(total_entries),
+            offset: u64::from(directory_offset),
+            size: u64::from(directory_size),
+        });
     }
 
     if eocd < 20 || !tail[eocd - 20..].starts_with(b"PK\x06\x07") {
@@ -523,7 +720,7 @@ fn declared_zip_entry_count(file: &mut File, length: u64, path: &Path) -> Result
     }
     file.seek(SeekFrom::Start(zip64_offset))
         .map_err(|error| VaultcError::io(path, error))?;
-    let mut zip64 = [0_u8; 40];
+    let mut zip64 = [0_u8; 56];
     file.read_exact(&mut zip64)
         .map_err(|error| VaultcError::io(path, error))?;
     if !zip64.starts_with(b"PK\x06\x06") {
@@ -545,7 +742,21 @@ fn declared_zip_entry_count(file: &mut File, length: u64, path: &Path) -> Result
             reason: "multi-disk ZIP64 archives are unsupported".into(),
         });
     }
-    Ok(zip64_total_entries)
+    let zip64_directory_size =
+        read_u64_le(&zip64, 40).ok_or_else(|| VaultcError::MalformedInput {
+            path: path.display().to_string(),
+            reason: "truncated ZIP64 central-directory size".into(),
+        })?;
+    let zip64_directory_offset =
+        read_u64_le(&zip64, 48).ok_or_else(|| VaultcError::MalformedInput {
+            path: path.display().to_string(),
+            reason: "truncated ZIP64 central-directory offset".into(),
+        })?;
+    Ok(ZipCentralDirectory {
+        entries: zip64_total_entries,
+        offset: zip64_directory_offset,
+        size: zip64_directory_size,
+    })
 }
 
 fn read_u16_le(bytes: &[u8], offset: usize) -> Option<u16> {
@@ -584,73 +795,150 @@ fn collect_tar_zst(
     let compressed_len = fs::metadata(path)
         .map_err(|error| VaultcError::io(path, error))?
         .len();
+    if compressed_len > policy.limits.max_file_bytes {
+        return Err(VaultcError::ResourceLimit(format!(
+            "tar.zst container `{}` exceeds per-file limit",
+            path.display()
+        )));
+    }
     let file = File::open(path).map_err(|error| VaultcError::io(path, error))?;
     let decoder = zstd::Decoder::new(file).map_err(|error| VaultcError::io(path, error))?;
-    let mut archive = tar::Archive::new(decoder);
+    let expansion_limit = compressed_len
+        .max(1)
+        .saturating_mul(policy.limits.max_archive_expansion_ratio);
+    let expansion_exceeded = Arc::new(AtomicBool::new(false));
+    let bounded = ExpansionBoundedReader {
+        inner: decoder,
+        remaining: expansion_limit,
+        exceeded: Arc::clone(&expansion_exceeded),
+    };
+    let mut archive = tar::Archive::new(bounded);
     let mut entries = Vec::new();
     let mut expanded = 0_u64;
+    let mut visited = 0_usize;
+    let mut seen_paths = BTreeSet::new();
     let excludes = build_excludes(policy)?;
     for item in archive
         .entries()
-        .map_err(|error| VaultcError::io(path, error))?
+        .map_err(|error| map_tar_io_error(path, &expansion_exceeded, error))?
     {
-        let mut item = item.map_err(|error| VaultcError::io(path, error))?;
+        let mut item = item.map_err(|error| map_tar_io_error(path, &expansion_exceeded, error))?;
+        visited = visited
+            .checked_add(1)
+            .ok_or_else(|| VaultcError::ResourceLimit("tar member count overflow".into()))?;
         let entry_type = item.header().entry_type();
+        let raw_path = strict_tar_path_bytes(&mut item, path, &expansion_exceeded)?;
+        let raw_path_text =
+            std::str::from_utf8(&raw_path).map_err(|error| VaultcError::MalformedInput {
+                path: path.display().to_string(),
+                reason: format!("tar member path is not UTF-8: {error}"),
+            })?;
+        let path_pair = decode_archive_path(raw_path_text, entry_type.is_dir(), policy)?;
+        reject_seen_path(&mut seen_paths, &path_pair.logical_path)?;
+        let size = item.size();
+        expanded = expanded.saturating_add(size);
+        enforce_archive_limits(compressed_len, expanded, visited, policy)?;
         if !entry_type.is_file() {
-            let display = item.path().map_or_else(
-                |_| "<invalid tar path>".into(),
-                |value| value.display().to_string(),
-            );
             if entry_type.is_symlink() || entry_type.is_hard_link() {
                 diagnostics.push(
                     Diagnostic::warning(DiagnosticCode::ExcludedPath, "archive link excluded")
-                        .for_path(display),
+                        .for_path(path_pair.logical_path),
                 );
             }
             continue;
         }
-        let member_path = item.path().map_err(|error| VaultcError::MalformedInput {
-            path: path.display().to_string(),
-            reason: error.to_string(),
-        })?;
-        let logical = normalize_logical_path(&member_path, policy)?;
-        if is_excluded(&logical, false, false, &excludes) {
+        if is_excluded(&path_pair.logical_path, false, false, &excludes) {
             diagnostics.push(
                 Diagnostic::warning(DiagnosticCode::ExcludedPath, "path excluded by V1 policy")
-                    .for_path(logical),
+                    .for_path(path_pair.logical_path),
             );
             continue;
         }
-        let size = item
-            .header()
-            .size()
-            .map_err(|error| VaultcError::MalformedInput {
-                path: path.display().to_string(),
-                reason: error.to_string(),
-            })?;
         if size > policy.limits.max_file_bytes {
             return Err(VaultcError::ResourceLimit(format!(
-                "tar member `{logical}` exceeds per-file limit"
+                "tar member `{}` exceeds per-file limit",
+                path_pair.logical_path
             )));
         }
-        expanded = expanded.saturating_add(size);
-        enforce_archive_limits(compressed_len, expanded, entries.len() + 1, policy)?;
         let bytes = read_exact_limited(
             &mut item,
             size,
             policy.limits.max_file_bytes,
             path,
-            &logical,
-        )?;
-        validate_structured_size(&logical, &bytes, policy)?;
+            &path_pair.logical_path,
+        );
+        let bytes = match bytes {
+            Ok(bytes) => bytes,
+            Err(_) if expansion_exceeded.load(Ordering::Relaxed) => {
+                return Err(VaultcError::ResourceLimit(
+                    "tar.zst expansion ratio exceeds configured maximum".into(),
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        validate_structured_size(&path_pair.logical_path, &bytes, policy)?;
         entries.push(RawEntry {
-            kind: FileKind::classify(&logical),
-            logical_path: logical,
+            kind: FileKind::classify(&path_pair.logical_path),
+            original_path: path_pair.original_path,
+            logical_path: path_pair.logical_path,
+            path_encoding: SourcePathEncoding::Utf8,
             bytes,
         });
     }
+    let mut bounded = archive.into_inner();
+    io::copy(&mut bounded, &mut io::sink())
+        .map_err(|error| map_tar_io_error(path, &expansion_exceeded, error))?;
     reject_duplicate_paths(&entries)?;
     Ok(entries)
+}
+
+#[cfg(feature = "archives")]
+fn map_tar_io_error(path: &Path, exceeded: &AtomicBool, error: io::Error) -> VaultcError {
+    if exceeded.load(Ordering::Relaxed) || error.to_string().contains(ARCHIVE_EXPANSION_LIMIT_ERROR)
+    {
+        VaultcError::ResourceLimit("tar.zst expansion ratio exceeds configured maximum".into())
+    } else {
+        VaultcError::io(path, error)
+    }
+}
+
+#[cfg(feature = "archives")]
+fn strict_tar_path_bytes<R: Read>(
+    item: &mut tar::Entry<'_, R>,
+    source_path: &Path,
+    expansion_exceeded: &AtomicBool,
+) -> Result<Vec<u8>> {
+    let mut pax_path = None;
+    if let Some(extensions) = item
+        .pax_extensions()
+        .map_err(|error| map_tar_io_error(source_path, expansion_exceeded, error))?
+    {
+        for extension in extensions {
+            let extension = extension.map_err(|error| VaultcError::MalformedInput {
+                path: source_path.display().to_string(),
+                reason: format!("malformed PAX extension: {error}"),
+            })?;
+            if extension.key_bytes() == b"path"
+                && pax_path.replace(extension.value_bytes().to_vec()).is_some()
+            {
+                return Err(VaultcError::MalformedInput {
+                    path: source_path.display().to_string(),
+                    reason: "duplicate PAX path field".into(),
+                });
+            }
+        }
+    }
+    let effective_path = item.path_bytes().into_owned();
+    if pax_path
+        .as_deref()
+        .is_some_and(|declared| declared != effective_path)
+    {
+        return Err(VaultcError::MalformedInput {
+            path: source_path.display().to_string(),
+            reason: "ambiguous GNU/PAX tar path carriers disagree".into(),
+        });
+    }
+    Ok(effective_path)
 }
 
 #[cfg(not(feature = "archives"))]
@@ -662,8 +950,14 @@ fn collect_tar_zst(
     Err(VaultcError::UnsupportedSource(path.to_path_buf()))
 }
 
-fn normalize_logical_path(path: &Path, policy: &CompilerPolicy) -> Result<String> {
-    let mut segments = Vec::new();
+#[derive(Debug)]
+struct SourcePathPair {
+    original_path: String,
+    logical_path: String,
+}
+
+fn decode_directory_path(path: &Path, policy: &CompilerPolicy) -> Result<SourcePathPair> {
+    let mut components = Vec::new();
     for component in path.components() {
         match component {
             Component::Normal(value) => {
@@ -671,9 +965,7 @@ fn normalize_logical_path(path: &Path, policy: &CompilerPolicy) -> Result<String
                     path: path.display().to_string(),
                     reason: "non-UTF-8 path is forbidden".into(),
                 })?;
-                let normalized: String = value.nfc().collect();
-                validate_component(&normalized, policy)?;
-                segments.push(normalized);
+                components.push(value.to_owned());
             }
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
@@ -684,31 +976,111 @@ fn normalize_logical_path(path: &Path, policy: &CompilerPolicy) -> Result<String
             }
         }
     }
-    if segments.is_empty() {
+    build_source_path_pair(components, &path.display().to_string(), policy)
+}
+
+fn decode_archive_path(
+    raw_path: &str,
+    is_directory: bool,
+    policy: &CompilerPolicy,
+) -> Result<SourcePathPair> {
+    if raw_path.starts_with('/') || raw_path.contains('\\') || raw_path.contains('\0') {
         return Err(VaultcError::UnsafePath {
-            path: path.display().to_string(),
-            reason: "empty logical path".into(),
+            path: raw_path.into(),
+            reason: "archive path must be a relative slash path".into(),
         });
     }
-    let logical = segments.join("/");
-    if logical.len() > policy.limits.max_path_bytes {
+    let without_directory_marker = if is_directory {
+        raw_path.strip_suffix('/').unwrap_or(raw_path)
+    } else {
+        raw_path
+    };
+    let mut components = Vec::new();
+    for component in without_directory_marker.split('/') {
+        match component {
+            "." => {}
+            "" => {
+                return Err(VaultcError::UnsafePath {
+                    path: raw_path.into(),
+                    reason: "archive path contains an empty component".into(),
+                });
+            }
+            ".." => {
+                return Err(VaultcError::UnsafePath {
+                    path: raw_path.into(),
+                    reason: "archive path traverses a parent".into(),
+                });
+            }
+            value => components.push(value.to_owned()),
+        }
+    }
+    build_source_path_pair(components, raw_path, policy)
+}
+
+fn build_source_path_pair(
+    components: Vec<String>,
+    display_path: &str,
+    policy: &CompilerPolicy,
+) -> Result<SourcePathPair> {
+    if components.is_empty() {
         return Err(VaultcError::UnsafePath {
-            path: logical,
+            path: display_path.into(),
+            reason: "empty source path".into(),
+        });
+    }
+    let mut original_components = Vec::with_capacity(components.len());
+    let mut logical_components = Vec::with_capacity(components.len());
+    for component in components {
+        validate_component(&component, policy)?;
+        let normalized: String = component.nfc().collect();
+        validate_component(&normalized, policy)?;
+        original_components.push(component);
+        logical_components.push(normalized);
+    }
+    let original_path = original_components.join("/");
+    let logical_path = logical_components.join("/");
+    validate_path_length(&original_path, policy)?;
+    validate_path_length(&logical_path, policy)?;
+    Ok(SourcePathPair {
+        original_path,
+        logical_path,
+    })
+}
+
+fn validate_path_length(path: &str, policy: &CompilerPolicy) -> Result<()> {
+    if path.len() > policy.limits.max_path_bytes {
+        return Err(VaultcError::UnsafePath {
+            path: path.into(),
             reason: format!("path exceeds {} bytes", policy.limits.max_path_bytes),
         });
     }
-    Ok(logical)
+    Ok(())
+}
+
+pub(crate) fn validate_source_path_pair(
+    original_path: &str,
+    logical_path: &str,
+    path_encoding: SourcePathEncoding,
+    policy: &CompilerPolicy,
+) -> Result<()> {
+    if !matches!(path_encoding, SourcePathEncoding::Utf8) {
+        return Err(VaultcError::UnsafePath {
+            path: original_path.into(),
+            reason: "unsupported source path encoding".into(),
+        });
+    }
+    let decoded = decode_archive_path(original_path, false, policy)?;
+    if decoded.original_path != original_path || decoded.logical_path != logical_path {
+        return Err(VaultcError::IdentityMismatch(format!(
+            "source path pair is inconsistent: `{original_path}` / `{logical_path}`"
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_output_logical_path(path: &str, policy: &CompilerPolicy) -> Result<()> {
-    if path.starts_with('/') || path.contains('\\') || path.contains('\0') {
-        return Err(VaultcError::UnsafePath {
-            path: path.into(),
-            reason: "output path must be a relative slash path".into(),
-        });
-    }
-    let normalized = normalize_logical_path(Path::new(path), policy)?;
-    if normalized != path {
+    let decoded = decode_archive_path(path, false, policy)?;
+    if decoded.original_path != path || decoded.logical_path != path {
         return Err(VaultcError::UnsafePath {
             path: path.into(),
             reason: "output path is not in canonical NFC form".into(),
@@ -997,12 +1369,17 @@ fn enforce_expansion_ratio(compressed: u64, expanded: u64, policy: &CompilerPoli
 fn reject_duplicate_paths(entries: &[RawEntry]) -> Result<()> {
     let mut seen = BTreeSet::new();
     for entry in entries {
-        if !seen.insert(entry.logical_path.clone()) {
-            return Err(VaultcError::UnsafePath {
-                path: entry.logical_path.clone(),
-                reason: "duplicate archive member".into(),
-            });
-        }
+        reject_seen_path(&mut seen, &entry.logical_path)?;
+    }
+    Ok(())
+}
+
+fn reject_seen_path(seen: &mut BTreeSet<String>, logical_path: &str) -> Result<()> {
+    if !seen.insert(logical_path.to_owned()) {
+        return Err(VaultcError::UnsafePath {
+            path: logical_path.into(),
+            reason: "duplicate source path after NFC normalization".into(),
+        });
     }
     Ok(())
 }

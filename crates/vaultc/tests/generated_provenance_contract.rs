@@ -8,6 +8,7 @@ use serde::Serialize;
 use vaultc::approval::ProposalMaterialization;
 use vaultc::compile::ArtifactManifest;
 use vaultc::identity::{BlockId, ContentHash, DocumentId, EvidenceId, OperationId, SnapshotId};
+use vaultc::ir::SourcePathEncoding;
 use vaultc::provenance::{
     EdgePosition, EdgeRecord, EdgeRelation, OperationRecord, OutputRole, OutputStorage,
     ProvenanceRecord, ProvenanceRecordKind, ProvenanceSubject, SourceRecord,
@@ -31,6 +32,21 @@ fn evidence_for(document: &vaultc::ir::Document) -> EvidenceRefWire {
     }
 }
 
+fn block_evidence_for(document: &vaultc::ir::Document) -> EvidenceRefWire {
+    let block = document
+        .blocks
+        .first()
+        .expect("generated provenance fixture document has a block");
+    EvidenceRefWire {
+        snapshot_id: document.source_file.snapshot_id.to_string(),
+        document_id: document.document_id.to_string(),
+        block_id: Some(block.block_id.to_string()),
+        byte_start: Some(block.span.byte_start),
+        byte_end: Some(block.span.byte_end),
+        content_hash: block.content_hash.hex(),
+    }
+}
+
 fn generated_proposal(plan: &DraftPlan) -> KnowledgeProposal {
     let mut documents: Vec<_> = plan.workspace.documents.values().collect();
     documents.sort_by(|left, right| {
@@ -43,7 +59,7 @@ fn generated_proposal(plan: &DraftPlan) -> KnowledgeProposal {
         documents.len() >= 2,
         "fixture provides two evidence documents"
     );
-    let mut evidence: Vec<_> = documents.into_iter().take(2).map(evidence_for).collect();
+    let mut evidence = vec![evidence_for(documents[0]), block_evidence_for(documents[1])];
     evidence.sort_by_key(independent_evidence_id);
     evidence.reverse();
     assert!(
@@ -309,6 +325,17 @@ fn assert_generated_provenance(
     proposal: &KnowledgeProposal,
     generated_bytes: &[u8],
 ) {
+    assert!(
+        proposal
+            .evidence
+            .iter()
+            .any(|evidence| evidence.block_id.is_none())
+            && proposal
+                .evidence
+                .iter()
+                .any(|evidence| evidence.block_id.is_some()),
+        "fixture covers both file-level and exact block evidence provenance"
+    );
     let approved_proposal = approved
         .approved_proposals
         .iter()
@@ -441,7 +468,13 @@ fn assert_generated_provenance(
         assert_eq!(source.snapshot_id, document.source_file.snapshot_id);
         assert_eq!(source.document_id, document.document_id);
         assert_eq!(source.source_file_id, document.source_file.file_id);
+        assert_eq!(
+            source.original_source_path,
+            document.source_file.original_path
+        );
         assert_eq!(source.source_path, document.source_file.logical_path);
+        assert_eq!(source.path_encoding, SourcePathEncoding::Utf8);
+        assert_eq!(source.path_encoding, document.source_file.path_encoding);
         assert_eq!(
             source.source_content_hash,
             document.source_file.content_hash

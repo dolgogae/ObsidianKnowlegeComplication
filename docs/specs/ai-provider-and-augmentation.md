@@ -89,10 +89,12 @@ assert_eq!(
 
 `DocumentSelection` is either a non-empty unique explicit `DocumentId` list or
 `All`. `RecordedAugmentation` owns the versioned header, exact transcript, and
-deterministic validation records. A lower-level
-`record_augmentation_exchange` lets a transport adapter feed an already
-negotiated typed request/capability/response exchange through the same recorder
-without taking ownership of validation or approval policy.
+deterministic validation records. A lower-level transport first calls
+`authorize_augmentation_exchange` after capability negotiation but before
+source projection disclosure. The returned opaque, non-serializable
+authorization is then consumed by `record_augmentation_exchange` with the
+response. This gives non-Rust and non-trait transports the same consent,
+validation, and recording boundary without taking ownership of policy.
 
 V1 `ProviderCapabilities` contains provider identity, supported protocol
 versions and operations, maximum input/output bytes, structured-output,
@@ -114,8 +116,11 @@ error. The CLI exchange is exactly:
 
 The provider must negotiate protocol V1, `knowledge_augmentation`, and
 structured output. The CLI verifies declared input/output limits and proposal
-provider identity. Extra protocol messages, a malformed line, refusal, crash,
-non-success exit, or failure to close after the response is an error.
+provider identity. It invokes the core pre-disclosure authorization after the
+capability response and before sending `augmentation_request`. Extra protocol
+messages, a malformed line, duplicate or unknown fields at any JSON depth,
+refusal, crash, non-success exit, or failure to close after the response is an
+error.
 
 `CommandProvider` launches an explicitly configured executable directly, never
 through a shell. It uses a sanitized environment, optional working directory,
@@ -152,9 +157,13 @@ only that live disclosure and is not serialized as a reusable permission.
 
 The in-process façade checks cancellation before capability negotiation,
 before projection disclosure, after the provider returns, and before returning
-a recording. Trait implementations must cooperate with `CancellationToken`;
-the core cannot forcibly stop arbitrary provider code. The subprocess adapter
-retains its stronger deadline and process-tree termination behavior.
+a recording. `KnowledgeAugmentor::capabilities()` is local, bounded,
+side-effect-free metadata and MUST NOT perform network or blocking negotiation.
+`propose` implementations must cooperate with `CancellationToken`; the core
+cannot forcibly stop arbitrary provider code. Transports with live capability
+negotiation use their own deadline/cancellation and MUST obtain the opaque core
+authorization before sending source text. The subprocess adapter retains its
+stronger deadline and process-tree termination behavior.
 
 ## Proposal model
 
@@ -234,7 +243,10 @@ Every JSONL line is compact recursively key-sorted JSON followed by LF, and the
 file ends in LF. Blank/CRLF/unterminated/non-canonical lines, unknown or
 duplicate fields, record reordering, and over-limit input are rejected. V1
 hard limits are 64 MiB per line, 1 GiB per file, and the sealed maximum proposal
-count plus five fixed records.
+count plus five fixed records. The decoder validates typed nested payloads and
+header/provider/plan/projection self-consistency before exposing a recording;
+replay adds sealed-plan hydration and fresh validation. A live recorder MUST
+also prove that the canonical encoding fits those bounds before returning.
 The Compiled Vault stores the approved transcript audit file, and the
 independent verifier requires exact semantic equality with `ApprovedPlan`.
 

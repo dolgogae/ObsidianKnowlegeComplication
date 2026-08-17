@@ -97,14 +97,16 @@ wrong-kind endpoints, cycles, unrelated valid source substitution, ordered
 evidence changes, attribution removal, stale decisions/approvals, legacy flat
 records, graph schema changes, and cursor replay across subject/artifact.
 
-### Required regressions not yet implemented
+### Required regression status
 
-- `augmentation_request_builder_is_deterministic_and_snapshot_bound`;
-- `approval_rejects_nonempty_validations_without_transcript`;
-- `offline_replay_is_provider_free_and_byte_identical`;
-- `remote_provider_requires_policy_and_runtime_consent`;
-- `recorded_augmentation_rejects_noncanonical_jsonl`;
-- `cli_replay_matches_sdk_and_never_invokes_a_provider`;
+The SDK/CLI augmentation suite now implements projection determinism, exact
+four-record live recording, empty-transcript rejection, fresh approval
+validation, policy-and-consent preflight, provider-free byte-identical replay,
+canonical JSONL, nested unknown/duplicate-field rejection, header binding,
+SDK/CLI parity, cancellation, stale/cross-plan attacks, and replay no-clobber.
+
+The following required regressions remain:
+
 - `cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path`;
 - `archive_declared_member_count_and_compressed_bytes_are_bounded`;
 - `sdk_pack_failure_does_not_leave_partial_destination`;

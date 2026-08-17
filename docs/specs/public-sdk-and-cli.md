@@ -53,9 +53,11 @@ fn compile_vaults() -> vaultc::Result<()> {
 For augmentation, a Rust application implements `KnowledgeAugmentor::propose`
 or constructs `vaultc-protocol` messages. `build_augmentation_request` creates
 the exact sealed projection; `augment` records an in-process provider;
-`record_augmentation_exchange` gives transports the same recording boundary;
-and `replay_augmentation` performs provider-free offline revalidation. The
-result converts to `ValidatedProposals` for `approve` or
+an external transport calls `authorize_augmentation_exchange` after capability
+negotiation and before disclosure, then consumes that opaque authorization in
+`record_augmentation_exchange`; and `replay_augmentation` performs
+provider-free offline revalidation. The result converts to
+`ValidatedProposals` for `approve` or
 `approve_with_conflicts`. No path permits a provider to mutate or approve the
 plan.
 
@@ -65,7 +67,7 @@ plan.
 |---|---|---|---|---|
 | inspect | `VaultCompiler::inspect` | `SourceSpec` values + policy | sealed `Inspection` | no; optional SQLite workspace is updated transactionally |
 | plan | `VaultCompiler::plan` | `&Inspection` | immutable `DraftPlan` | no |
-| augment | `VaultCompiler::{build_augmentation_request,augment,record_augmentation_exchange}`; CLI `augment` | sealed plan + explicit selection + provider capabilities | canonical `RecordedAugmentation` | no |
+| augment | `VaultCompiler::{build_augmentation_request,augment,authorize_augmentation_exchange,record_augmentation_exchange}`; CLI `augment` | sealed plan + explicit selection + provider capabilities + live consent | canonical `RecordedAugmentation` | no |
 | replay | `VaultCompiler::replay_augmentation`; CLI `replay` | sealed plan + canonical recording | provider-free revalidated recording | no |
 | validate | `VaultCompiler::validate_proposals` | `&DraftPlan` + proposals | deterministic `ValidatedProposals` | no |
 | approve | `approve`, `approve_with_conflicts`, `approve_without_augmentation` | owned `DraftPlan` + validation/decision logs | `ApprovedPlan` | no |
@@ -133,6 +135,10 @@ not implemented. Each projection includes the sealed owning snapshot ID plus
 document/block IDs and hashes so a stateless provider can return valid evidence.
 Remote capability declarations require both a policy that allows remote
 providers and the per-command `--allow-remote-provider` consent.
+The subprocess capability response is parsed strictly and passed through the
+core authorization before any augmentation projection is written to the child.
+The resulting authorization is an in-memory one-exchange token, not a stored
+permission.
 
 `replay` accepts only canonical schema-1 augmentation JSONL and never invokes a
 provider, process, network, MCP server, or output compiler. It rehydrates the

@@ -190,3 +190,30 @@ Append-only. Normative details live in specifications and accepted ADRs.
   contract tests, and CLI pagination/package coverage. The macOS arm64 local
   suite increased from 75 to 87 tests and passes workspace tests, all-target
   warning-free Clippy, rustfmt, and diff checks.
+
+## 2026-08-17 — SDK augmentation recording and offline replay
+
+- Accepted ADR-0011 and made `vaultc::augmentation` the single semantic owner
+  for sealed projection construction, live provider authorization, canonical
+  recording, redaction hydration, deterministic validation, and offline replay.
+- Added an opaque, non-serializable pre-disclosure authorization. External
+  transports negotiate capabilities without source content, obtain this token
+  under the sealed remote policy and per-call consent, and consume it when
+  recording the response. The CLI no longer maintains a second authorization
+  or transcript implementation.
+- Required exactly four provider transcript records for every recorded exchange
+  and rejected non-empty validations without that transcript. Approval now
+  reruns proposal validation and compares proposal, content hash, verdict, and
+  reasons before producing an `ApprovedPlan`.
+- Added strict schema-1 augmentation JSONL with canonical lines, typed nested
+  payload checks, header/provider/plan/projection binding, redacted-request
+  reconstruction, line/file/proposal limits, and provider-free byte-identical
+  replay. Immutable recording state is shared across replay clones to avoid a
+  second full decoded graph allocation.
+- Added CLI `replay`, strict recursive NDJSON duplicate/unknown-field rejection,
+  pre-request remote authorization, no-clobber publication, and stable exit
+  families. The canonical SDK and CLI recording bytes are identical.
+- Added 14 SDK augmentation/replay tests and 3 CLI replay tests and migrated all
+  proposal-bearing fixtures to canonical transcripts. The macOS arm64 suite
+  increased from 87 to 105 tests and passes workspace tests, all-target
+  warning-free Clippy, rustfmt, and diff checks.

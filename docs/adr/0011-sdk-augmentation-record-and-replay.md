@@ -63,6 +63,8 @@ enum RemoteProviderConsent {
 }
 
 struct RecordedAugmentation { /* versioned header, transcript, validations */ }
+
+struct AuthorizedAugmentationExchange { /* opaque, non-serializable */ }
 ```
 
 `VaultCompiler` exposes:
@@ -71,7 +73,9 @@ struct RecordedAugmentation { /* versioned header, transcript, validations */ }
 build_augmentation_request(plan, selection) -> AugmentationRequest
 augment(plan, selection, augmentor, cancellation, consent)
     -> RecordedAugmentation
-record_augmentation_exchange(plan, request, capabilities, response, consent)
+authorize_augmentation_exchange(plan, request, capabilities, consent)
+    -> AuthorizedAugmentationExchange
+record_augmentation_exchange(plan, authorization, response)
     -> RecordedAugmentation
 replay_augmentation(plan, recording) -> RecordedAugmentation
 ```
@@ -106,6 +110,20 @@ permission and cannot be replayed as authority. Local providers do not require
 `Granted`. Offline replay has no consent argument because it performs no
 provider, network, MCP, or filesystem-output call, but it still checks that a
 recorded remote provider was permitted by the sealed policy at recording time.
+
+An external transport MUST negotiate capabilities without source content, call
+`authorize_augmentation_exchange`, and receive its opaque authorization before
+sending the augmentation request. The token binds the exact plan, projection,
+request, provider capability set, sealed policy, and live consent boundary. It
+is consumed by `record_augmentation_exchange` after the response and is neither
+serializable nor reusable as durable authority. A post-response recorder call
+alone is not a valid consent check.
+
+`KnowledgeAugmentor::capabilities()` is strictly local, bounded, side-effect-free
+metadata; it MUST NOT perform network or blocking provider negotiation. An
+adapter whose capability exchange can block uses its own cancellation/deadline
+mechanism and the external-transport preflight above. This keeps the existing
+trait infallible while making the cancellation boundary explicit.
 
 `CancellationToken` is part of the public SDK. The façade checks it before
 capability negotiation, before disclosing a projection, immediately after the
@@ -167,6 +185,14 @@ interleaved records, duplicate proposal IDs, and over-limit input fail closed.
 V1 retains the existing CLI hard ceilings of 64 MiB per JSONL line and 1 GiB
 per augmentation control file; replay additionally limits records to the sealed
 proposal maximum plus the five fixed header/transcript records.
+
+The public decoder also validates the typed schemas inside transcript payloads,
+header-to-provider/plan/projection binding, canonical redaction, response-to-
+validation membership, and every payload hash that can be checked without the
+sealed source text. Live recording MUST pass the same codec bounds before it is
+returned. Replay performs the remaining plan-bound and redacted-request hash
+checks. Recording clones may share immutable storage internally; this does not
+change the serialized contract.
 
 `replay_augmentation` is a pure validation/reconstruction operation. It does
 not call `KnowledgeAugmentor`, spawn a process, resolve an MCP tool, or use the

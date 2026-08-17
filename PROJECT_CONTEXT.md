@@ -3,7 +3,7 @@ title: Vault Compiler Framework Project Context
 status: normative-v1
 owners:
   - architect
-last_updated: 2026-08-16
+last_updated: 2026-08-17
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -40,7 +40,7 @@ The framework is intended for:
 - Markdown, YAML frontmatter, wikilinks, embeds, block references, attachments, and JSON Canvas are first-class. `.base` files are preserved opaquely with warnings. `.obsidian/**` is excluded.
 - Inputs remain byte-for-byte unchanged. Compilation creates a new output and never stores raw `_sources` inside it.
 - Exact duplicates may be unified deterministically. Near duplicates are candidates for review and are never auto-merged in V1.
-- AI is optional and provider-neutral. It returns proposals, never direct filesystem mutations. Only validated and explicitly approved proposals enter a build.
+- AI is optional and provider-neutral. Live source disclosure passes a sealed-policy plus per-call-consent preflight, every exchange is recorded for provider-free offline replay, and providers return proposals rather than filesystem mutations. Only freshly validated and explicitly approved proposals enter a build.
 - Every output is traceable to immutable input content hashes and, for generated content, explicit evidence references.
 - The AI-free path is reproducible across runs and supported platforms.
 

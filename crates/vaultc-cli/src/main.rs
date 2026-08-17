@@ -3,7 +3,7 @@ mod command_provider;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -13,14 +13,11 @@ use command_provider::{CommandProvider, CommandProviderConfig, ProviderCancellat
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use vaultc::approval::{ApprovalLog, ApprovedPlan, ConflictDecision, ConflictDecisionLog};
+use vaultc::augmentation::{DocumentSelection, RecordedAugmentation, RemoteProviderConsent};
+use vaultc::identity::DocumentId;
 use vaultc::plan::{DraftPlan, Inspection};
-use vaultc::provider::{ProposalValidation, ValidatedProposals};
+use vaultc::provider::ValidatedProposals;
 use vaultc::{CompilerPolicy, SourceId, SourceSpec, VaultCompiler, VaultcError};
-use vaultc_protocol::{
-    AugmentationLimits, AugmentationRequest, AugmentationResponse, DocumentProjection,
-    KnowledgeProposal, MessageType, ObjectKind, ObjectRef, ProjectedBlock, ProposalKindName,
-    ProviderCapabilities, ProviderIdentity, TranscriptDirection, TranscriptRecord,
-};
 
 const EXIT_USAGE: u8 = 2;
 const EXIT_INPUT: u8 = 3;
@@ -30,8 +27,6 @@ const EXIT_OUTPUT: u8 = 6;
 const EXIT_VERIFY: u8 = 7;
 const EXIT_INTERNAL: u8 = 70;
 const CONTROL_FILE_LIMIT: u64 = 1024 * 1024 * 1024;
-const CONTROL_LINE_LIMIT: u64 = 64 * 1024 * 1024;
-const AUGMENTATION_SCHEMA_VERSION: u32 = 1;
 const DECISIONS_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Parser)]
@@ -109,6 +104,16 @@ enum CommandKind {
         /// Additional operator consent for a plan whose policy permits remote providers.
         #[arg(long)]
         allow_remote_provider: bool,
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+    },
+
+    /// Revalidate a canonical augmentation recording without contacting a provider.
+    Replay {
+        #[arg(value_name = "PLAN")]
+        plan: PathBuf,
+        #[arg(long, value_name = "FILE")]
+        augmentation: PathBuf,
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
     },
@@ -247,23 +252,6 @@ fn plan_failure(error: &VaultcError) -> CliFailure {
     CliFailure::new(code, error.to_string())
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum AugmentationRecord {
-    Header {
-        schema_version: u32,
-        plan_id: String,
-        projection_hash: String,
-        provider: ProviderIdentity,
-    },
-    Transcript {
-        record: TranscriptRecord,
-    },
-    Proposal {
-        validation: Box<ProposalValidation>,
-    },
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DecisionDocument {
@@ -292,6 +280,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run(cli: Cli) -> CliResult<()> {
     match cli.command {
         CommandKind::Inspect { sources, format } => {
@@ -356,6 +345,11 @@ fn run(cli: Cli) -> CliResult<()> {
             allow_remote_provider,
             &out,
         ),
+        CommandKind::Replay {
+            plan,
+            augmentation,
+            out,
+        } => replay_command(&plan, &augmentation, &out),
         CommandKind::Approve {
             plan,
             decisions,
@@ -460,10 +454,16 @@ fn augment_command(
     let plan: DraftPlan = read_json(plan_path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
     plan.validate_integrity()
         .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
-    let request = build_augmentation_request(&plan, requested_documents, all_documents)?;
-    let mut runtime_policy = plan.policy.clone();
-    runtime_policy.augmentation.allow_remote_providers =
-        runtime_policy.augmentation.allow_remote_providers && allow_remote_provider;
+    let compiler = build_compiler(plan.policy.clone(), None, EXIT_PROVIDER)?;
+    let selection = document_selection(requested_documents, all_documents)?;
+    let request = compiler
+        .build_augmentation_request(&plan, &selection)
+        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+    let consent = if allow_remote_provider {
+        RemoteProviderConsent::Granted
+    } else {
+        RemoteProviderConsent::Denied
+    };
     let cancellation = ProviderCancellation::default();
     install_provider_cancellation(&cancellation)?;
     let provider = CommandProvider::new(CommandProviderConfig {
@@ -478,7 +478,9 @@ fn augment_command(
     })
     .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
     let run = provider
-        .augment(&request, &runtime_policy)
+        .augment(&request, |capabilities| {
+            compiler.authorize_augmentation_exchange(&plan, &request, capabilities, consent)
+        })
         .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
     if cancellation.is_cancelled() {
         return Err(CliFailure::new(
@@ -486,41 +488,21 @@ fn augment_command(
             "provider operation was cancelled",
         ));
     }
-    let compiler = build_compiler(plan.policy.clone(), None, EXIT_PROVIDER)?;
-    let mut validated = compiler
-        .validate_proposals(&plan, run.response.proposals)
+    let recording = compiler
+        .record_augmentation_exchange(&plan, run.authorization, &run.response)
         .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
-    validated.transcript = run.transcript;
-
-    let mut records =
-        Vec::with_capacity(1 + validated.transcript.len() + validated.validations.len());
-    records.push(AugmentationRecord::Header {
-        schema_version: AUGMENTATION_SCHEMA_VERSION,
-        plan_id: plan.plan_id.to_string(),
-        projection_hash: plan.projection_hash.hex(),
-        provider: run.capabilities.provider,
-    });
-    records.extend(
-        validated
-            .transcript
-            .iter()
-            .cloned()
-            .map(|record| AugmentationRecord::Transcript { record }),
-    );
-    records.extend(validated.validations.iter().cloned().map(|validation| {
-        AugmentationRecord::Proposal {
-            validation: Box::new(validation),
-        }
-    }));
-    write_canonical_jsonl(out, &records)?;
-    let rejected = validated
-        .validations
+    let bytes = recording
+        .to_canonical_jsonl()
+        .map_err(|error| CliFailure::from_vaultc(EXIT_INTERNAL, error))?;
+    write_atomic(out, &bytes)?;
+    let rejected = recording
+        .validations()
         .iter()
         .filter(|validation| !validation.valid)
         .count();
     println!(
         "wrote {} proposal validation(s) to {} ({} rejected)",
-        validated.validations.len(),
+        recording.validations().len(),
         out.display(),
         rejected
     );
@@ -530,6 +512,56 @@ fn augment_command(
             "provider output contained invalid proposals; inspect the emitted validation records",
         ));
     }
+    Ok(())
+}
+
+fn document_selection(requested: &[String], all_documents: bool) -> CliResult<DocumentSelection> {
+    if all_documents {
+        return Ok(DocumentSelection::All);
+    }
+    let mut seen = BTreeSet::new();
+    let mut document_ids = Vec::with_capacity(requested.len());
+    for value in requested {
+        let document_id = value.parse::<DocumentId>().map_err(|error| {
+            CliFailure::new(
+                EXIT_USAGE,
+                format!("invalid --document-id `{value}`: {error}"),
+            )
+        })?;
+        if !seen.insert(document_id) {
+            return Err(CliFailure::new(EXIT_USAGE, "duplicate --document-id value"));
+        }
+        document_ids.push(document_id);
+    }
+    Ok(DocumentSelection::Explicit(document_ids))
+}
+
+fn replay_command(plan_path: &Path, augmentation_path: &Path, out: &Path) -> CliResult<()> {
+    let plan: DraftPlan = read_json(plan_path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
+    plan.validate_integrity()
+        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+    let compiler = build_compiler(plan.policy.clone(), None, EXIT_PROVIDER)?;
+    let input = read_control_bytes(augmentation_path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
+    let recording = RecordedAugmentation::from_canonical_jsonl(&input)
+        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+    let replayed = compiler
+        .replay_augmentation(&plan, &recording)
+        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+    let output = replayed
+        .to_canonical_jsonl()
+        .map_err(|error| CliFailure::from_vaultc(EXIT_INTERNAL, error))?;
+    if output != input {
+        return Err(CliFailure::new(
+            EXIT_INTERNAL,
+            "canonical augmentation replay changed the recording bytes",
+        ));
+    }
+    write_atomic(out, &output)?;
+    println!(
+        "replayed augmentation for plan {} to {}",
+        plan.plan_id,
+        out.display()
+    );
     Ok(())
 }
 
@@ -684,416 +716,18 @@ fn revalidate_approved_plan(
     Ok(approved.clone())
 }
 
-fn build_augmentation_request(
-    plan: &DraftPlan,
-    requested: &[String],
-    all_documents: bool,
-) -> CliResult<AugmentationRequest> {
-    let requested_count = requested.len();
-    let requested: BTreeSet<_> = requested.iter().cloned().collect();
-    if requested.len() != requested_count {
-        return Err(CliFailure::new(EXIT_USAGE, "duplicate --document-id value"));
-    }
-    let known: BTreeSet<_> = plan
-        .workspace
-        .documents
-        .keys()
-        .map(ToString::to_string)
-        .collect();
-    for id in &requested {
-        if !known.contains(id) {
-            return Err(CliFailure::new(
-                EXIT_PROVIDER,
-                format!("document `{id}` is not present in the sealed plan"),
-            ));
-        }
-    }
-    let documents = plan
-        .workspace
-        .documents
-        .values()
-        .filter(|document| all_documents || requested.contains(&document.document_id.to_string()))
-        .map(|document| DocumentProjection {
-            snapshot_id: document.source_file.snapshot_id.to_string(),
-            document: ObjectRef {
-                kind: ObjectKind::Document,
-                id: document.document_id.to_string(),
-                content_hash: document.body_hash.hex(),
-            },
-            logical_path: document.source_file.logical_path.clone(),
-            title: document.title.clone(),
-            selected_blocks: document
-                .blocks
-                .iter()
-                .map(|block| ProjectedBlock {
-                    block: ObjectRef {
-                        kind: ObjectKind::Block,
-                        id: block.block_id.to_string(),
-                        content_hash: block.content_hash.hex(),
-                    },
-                    text: block.comparison_text.clone(),
-                })
-                .collect(),
-        })
-        .collect();
-    Ok(AugmentationRequest {
-        plan_id: plan.plan_id.to_string(),
-        projection_hash: plan.projection_hash.hex(),
-        allowed_proposal_kinds: vec![
-            ProposalKindName::CreateGeneratedNote,
-            ProposalKindName::ExplainConflict,
-        ],
-        documents,
-        limits: AugmentationLimits {
-            max_proposals: plan.policy.augmentation.max_proposals,
-            max_generated_bytes: plan.policy.augmentation.max_generated_bytes,
-        },
-    })
-}
-
 fn load_augmentation(
     path: &Path,
     plan: &DraftPlan,
     compiler: &VaultCompiler,
 ) -> CliResult<ValidatedProposals> {
-    let max_records = usize::try_from(plan.policy.augmentation.max_proposals)
-        .unwrap_or(usize::MAX)
-        .saturating_add(5);
-    let records: Vec<AugmentationRecord> = read_jsonl(
-        path,
-        CONTROL_FILE_LIMIT,
-        CONTROL_LINE_LIMIT,
-        max_records,
-        EXIT_PROVIDER,
-    )?;
-    let mut header = None;
-    let mut transcript = Vec::new();
-    let mut recorded_validations = Vec::new();
-    for (index, record) in records.into_iter().enumerate() {
-        match record {
-            AugmentationRecord::Header {
-                schema_version,
-                plan_id,
-                projection_hash,
-                provider,
-            } => {
-                if index != 0 || header.is_some() {
-                    return Err(CliFailure::new(
-                        EXIT_PROVIDER,
-                        "augmentation header must be the first and only header record",
-                    ));
-                }
-                if schema_version != AUGMENTATION_SCHEMA_VERSION {
-                    return Err(CliFailure::new(
-                        EXIT_PROVIDER,
-                        format!("unsupported augmentation schema version {schema_version}"),
-                    ));
-                }
-                header = Some((plan_id, projection_hash, provider));
-            }
-            AugmentationRecord::Transcript { record } => transcript.push(record),
-            AugmentationRecord::Proposal { validation } => {
-                recorded_validations.push(*validation);
-            }
-        }
-    }
-    let Some((plan_id, projection_hash, provider)) = header else {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "augmentation file has no header",
-        ));
-    };
-    if plan_id != plan.plan_id.to_string() || projection_hash != plan.projection_hash.hex() {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "augmentation output is stale for this plan",
-        ));
-    }
-    validate_transcript(&transcript, &provider, &recorded_validations, plan)?;
-    let proposals: Vec<_> = recorded_validations
-        .iter()
-        .map(|validation| validation.proposal.clone())
-        .collect();
-    let mut revalidated = compiler
-        .validate_proposals(plan, proposals)
+    let bytes = read_control_bytes(path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
+    let recording = RecordedAugmentation::from_canonical_jsonl(&bytes)
         .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
-    if revalidated.validations != recorded_validations {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "augmentation validation records do not match deterministic revalidation",
-        ));
-    }
-    revalidated.transcript = transcript;
-    Ok(revalidated)
-}
-
-fn validate_transcript(
-    transcript: &[TranscriptRecord],
-    provider: &ProviderIdentity,
-    validations: &[ProposalValidation],
-    plan: &DraftPlan,
-) -> CliResult<()> {
-    validate_transcript_shape_and_hashes(transcript, plan)?;
-    validate_transcript_payloads(transcript, provider, validations, plan)
-}
-
-fn validate_transcript_shape_and_hashes(
-    transcript: &[TranscriptRecord],
-    plan: &DraftPlan,
-) -> CliResult<()> {
-    if transcript.len() != 4 {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "V1 augmentation transcript must contain exactly four records",
-        ));
-    }
-    for (index, record) in transcript.iter().enumerate() {
-        if record.sequence != index as u64 {
-            return Err(CliFailure::new(
-                EXIT_PROVIDER,
-                "augmentation transcript sequence is not contiguous",
-            ));
-        }
-        if index == 2 {
-            let hydrated = hydrate_redacted_request(&record.payload, plan)?;
-            let hash = vaultc::canonical::canonical_hash(
-                "vaultc:provider-transcript-payload:v1\0",
-                &hydrated,
-            )
-            .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?
-            .hex();
-            if hash != record.canonical_payload_hash {
-                return Err(CliFailure::new(
-                    EXIT_PROVIDER,
-                    "augmentation request transcript hash mismatch",
-                ));
-            }
-        } else {
-            let hash = vaultc::canonical::canonical_hash(
-                "vaultc:provider-transcript-payload:v1\0",
-                &record.payload,
-            )
-            .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?
-            .hex();
-            if hash != record.canonical_payload_hash {
-                return Err(CliFailure::new(
-                    EXIT_PROVIDER,
-                    "augmentation transcript payload hash mismatch",
-                ));
-            }
-        }
-    }
-    let expected_types = [
-        MessageType::CapabilitiesRequest,
-        MessageType::CapabilitiesResponse,
-        MessageType::AugmentationRequest,
-        MessageType::AugmentationResponse,
-    ];
-    if transcript
-        .iter()
-        .map(|record| record.message_type)
-        .ne(expected_types)
-    {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "augmentation transcript message ordering is invalid",
-        ));
-    }
-    let expected_directions = [
-        TranscriptDirection::Request,
-        TranscriptDirection::Response,
-        TranscriptDirection::Request,
-        TranscriptDirection::Response,
-    ];
-    if transcript
-        .iter()
-        .map(|record| record.direction)
-        .ne(expected_directions)
-        || transcript[0].request_id != "capabilities-1"
-        || transcript[1].request_id != "capabilities-1"
-        || transcript[2].request_id != "augmentation-1"
-        || transcript[3].request_id != "augmentation-1"
-    {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "augmentation transcript direction or request IDs are invalid",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_transcript_payloads(
-    transcript: &[TranscriptRecord],
-    provider: &ProviderIdentity,
-    validations: &[ProposalValidation],
-    plan: &DraftPlan,
-) -> CliResult<()> {
-    let capabilities: ProviderCapabilities = serde_json::from_value(transcript[1].payload.clone())
-        .map_err(|error| CliFailure::from_error(EXIT_PROVIDER, error))?;
-    vaultc::provider::validate_capabilities(&capabilities, &plan.policy)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
-    if !capabilities.structured_output {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "augmentation transcript provider did not declare structured output",
-        ));
-    }
-    if &capabilities.provider != provider {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "augmentation header provider differs from negotiated capabilities",
-        ));
-    }
-    let response: AugmentationResponse = serde_json::from_value(transcript[3].payload.clone())
-        .map_err(|error| CliFailure::from_error(EXIT_PROVIDER, error))?;
-    let response_bytes = serde_json::to_vec(&response)
-        .map_err(|error| CliFailure::from_error(EXIT_INTERNAL, error))?;
-    if response_bytes.len() as u64 > capabilities.max_output_bytes {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "augmentation response exceeds the provider's declared output limit",
-        ));
-    }
-    let mut response_proposals = response.proposals;
-    response_proposals.sort_by(|left, right| left.proposal_id.cmp(&right.proposal_id));
-    let recorded: Vec<KnowledgeProposal> = validations
-        .iter()
-        .map(|validation| validation.proposal.clone())
-        .collect();
-    if response_proposals != recorded {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "transcript proposals do not match proposal validation records",
-        ));
-    }
-    if recorded
-        .iter()
-        .any(|proposal| &proposal.provider != provider)
-    {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "proposal provider identity differs from augmentation header",
-        ));
-    }
-    Ok(())
-}
-
-fn hydrate_redacted_request(
-    payload: &serde_json::Value,
-    plan: &DraftPlan,
-) -> CliResult<serde_json::Value> {
-    let mut hydrated = payload.clone();
-    let documents = hydrated
-        .get_mut("documents")
-        .and_then(serde_json::Value::as_array_mut)
-        .ok_or_else(|| {
-            CliFailure::new(
-                EXIT_PROVIDER,
-                "augmentation request transcript lacks document projections",
-            )
-        })?;
-    for projected_document in documents {
-        let document_id = projected_document
-            .pointer("/document/id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                CliFailure::new(
-                    EXIT_PROVIDER,
-                    "augmentation transcript has a malformed document projection",
-                )
-            })?;
-        let Some(document) = plan
-            .workspace
-            .documents
-            .values()
-            .find(|document| document.document_id.to_string() == document_id)
-        else {
-            return Err(CliFailure::new(
-                EXIT_PROVIDER,
-                "augmentation transcript references an unknown document",
-            ));
-        };
-        validate_projected_snapshot(
-            projected_document,
-            &document.source_file.snapshot_id.to_string(),
-        )?;
-        let blocks = projected_document
-            .get_mut("selected_blocks")
-            .and_then(serde_json::Value::as_array_mut)
-            .ok_or_else(|| {
-                CliFailure::new(
-                    EXIT_PROVIDER,
-                    "augmentation transcript has malformed selected blocks",
-                )
-            })?;
-        for projected_block in blocks {
-            let block_id = projected_block
-                .pointer("/block/id")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    CliFailure::new(
-                        EXIT_PROVIDER,
-                        "augmentation transcript has a malformed block projection",
-                    )
-                })?;
-            let Some(block) = document
-                .blocks
-                .iter()
-                .find(|block| block.block_id.to_string() == block_id)
-            else {
-                return Err(CliFailure::new(
-                    EXIT_PROVIDER,
-                    "augmentation transcript references an unknown document block",
-                ));
-            };
-            let text = projected_block.get_mut("text").ok_or_else(|| {
-                CliFailure::new(
-                    EXIT_PROVIDER,
-                    "augmentation transcript block has no redacted text field",
-                )
-            })?;
-            if text.as_str() != Some("[redacted]") {
-                return Err(CliFailure::new(
-                    EXIT_PROVIDER,
-                    "augmentation transcript contains unredacted source projection text",
-                ));
-            }
-            *text = serde_json::Value::String(block.comparison_text.clone());
-        }
-    }
-    let request: AugmentationRequest = serde_json::from_value(hydrated.clone())
-        .map_err(|error| CliFailure::from_error(EXIT_PROVIDER, error))?;
-    let selected_ids: Vec<_> = request
-        .documents
-        .iter()
-        .map(|projection| projection.document.id.clone())
-        .collect();
-    let expected = build_augmentation_request(plan, &selected_ids, false)?;
-    if request != expected {
-        return Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "augmentation request transcript is stale for this plan or policy",
-        ));
-    }
-    Ok(hydrated)
-}
-
-fn validate_projected_snapshot(
-    projected_document: &serde_json::Value,
-    expected_snapshot_id: &str,
-) -> CliResult<()> {
-    if projected_document
-        .get("snapshot_id")
-        .and_then(serde_json::Value::as_str)
-        == Some(expected_snapshot_id)
-    {
-        Ok(())
-    } else {
-        Err(CliFailure::new(
-            EXIT_PROVIDER,
-            "augmentation transcript document snapshot binding is stale",
-        ))
-    }
+    compiler
+        .replay_augmentation(plan, &recording)
+        .map(RecordedAugmentation::into_validated)
+        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))
 }
 
 fn validate_approval_decisions(
@@ -1281,76 +915,17 @@ fn read_json<T: DeserializeOwned>(path: &Path, limit: u64, code: u8) -> CliResul
     })
 }
 
-fn read_jsonl<T: DeserializeOwned>(
-    path: &Path,
-    limit: u64,
-    line_limit: u64,
-    record_limit: usize,
-    code: u8,
-) -> CliResult<Vec<T>> {
+fn read_control_bytes(path: &Path, limit: u64, code: u8) -> CliResult<Vec<u8>> {
     let file = open_bounded(path, limit, code)?;
-    let mut reader = BufReader::new(file);
-    let mut records = Vec::new();
-    let mut total = 0_u64;
-    loop {
-        let mut line = Vec::new();
-        let mut bounded_line = (&mut reader).take(line_limit.saturating_add(1));
-        let read = bounded_line
-            .read_until(b'\n', &mut line)
-            .map_err(|error| CliFailure::new(code, format!("{}: {error}", path.display())))?;
-        if read == 0 {
-            break;
-        }
-        total = total.saturating_add(read as u64);
-        if total > limit {
-            return Err(control_file_limit_failure(path, limit, code));
-        }
-        if line.len() as u64 > line_limit {
-            return Err(CliFailure::new(
-                code,
-                format!(
-                    "JSONL record in `{}` exceeds the {line_limit}-byte line limit",
-                    path.display()
-                ),
-            ));
-        }
-        if line.last() == Some(&b'\n') {
-            line.pop();
-        }
-        if line.last() == Some(&b'\r') {
-            line.pop();
-        }
-        if line.is_empty() {
-            return Err(CliFailure::new(
-                code,
-                format!(
-                    "blank JSONL record at {}:{}",
-                    path.display(),
-                    records.len() + 1
-                ),
-            ));
-        }
-        if records.len() >= record_limit {
-            return Err(CliFailure::new(
-                code,
-                format!(
-                    "`{}` exceeds the {record_limit}-record JSONL limit",
-                    path.display()
-                ),
-            ));
-        }
-        records.push(serde_json::from_slice(&line).map_err(|error| {
-            CliFailure::new(
-                code,
-                format!(
-                    "invalid JSONL at {}:{}: {error}",
-                    path.display(),
-                    records.len() + 1
-                ),
-            )
-        })?);
+    let mut reader = file.take(limit.saturating_add(1));
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|error| CliFailure::new(code, format!("{}: {error}", path.display())))?;
+    if bytes.len() as u64 > limit {
+        return Err(control_file_limit_failure(path, limit, code));
     }
-    Ok(records)
+    Ok(bytes)
 }
 
 fn open_bounded(path: &Path, limit: u64, code: u8) -> CliResult<File> {
@@ -1389,18 +964,6 @@ fn control_file_limit_failure(path: &Path, limit: u64, code: u8) -> CliFailure {
 fn write_canonical_json<T: Serialize>(path: &Path, value: &T) -> CliResult<()> {
     let bytes = vaultc::canonical::to_canonical_json_pretty(value)
         .map_err(|error| CliFailure::from_vaultc(EXIT_INTERNAL, error))?;
-    write_atomic(path, &bytes)
-}
-
-fn write_canonical_jsonl<T: Serialize>(path: &Path, values: &[T]) -> CliResult<()> {
-    let mut bytes = Vec::new();
-    for value in values {
-        bytes.extend(
-            vaultc::canonical::to_canonical_json(value)
-                .map_err(|error| CliFailure::from_vaultc(EXIT_INTERNAL, error))?,
-        );
-        bytes.push(b'\n');
-    }
     write_atomic(path, &bytes)
 }
 
@@ -1731,16 +1294,42 @@ mod tests {
     }
 
     #[test]
-    fn control_jsonl_is_line_and_record_bounded() {
-        let mut file = tempfile::NamedTempFile::new().expect("temporary JSONL");
-        file.write_all(b"{}\n{}\n").expect("write JSONL records");
-        let path = file.path();
+    fn replay_arguments_have_no_provider_or_remote_consent_surface() {
+        let cli = Cli::try_parse_from([
+            "vaultc",
+            "replay",
+            "plan.json",
+            "--augmentation",
+            "augmentation.jsonl",
+            "--out",
+            "replayed.jsonl",
+        ])
+        .expect("valid replay arguments");
+        match cli.command {
+            CommandKind::Replay {
+                plan,
+                augmentation,
+                out,
+            } => {
+                assert_eq!(plan, PathBuf::from("plan.json"));
+                assert_eq!(augmentation, PathBuf::from("augmentation.jsonl"));
+                assert_eq!(out, PathBuf::from("replayed.jsonl"));
+            }
+            _ => panic!("expected replay command"),
+        }
 
-        let records: Vec<serde_json::Value> =
-            read_jsonl(path, 64, 8, 2, EXIT_PROVIDER).expect("bounded JSONL");
-        assert_eq!(records.len(), 2);
-        assert!(read_jsonl::<serde_json::Value>(path, 64, 1, 2, EXIT_PROVIDER).is_err());
-        assert!(read_jsonl::<serde_json::Value>(path, 64, 8, 1, EXIT_PROVIDER).is_err());
+        let error = Cli::try_parse_from([
+            "vaultc",
+            "replay",
+            "plan.json",
+            "--augmentation",
+            "augmentation.jsonl",
+            "--out",
+            "replayed.jsonl",
+            "--allow-remote-provider",
+        ])
+        .expect_err("replay must not accept durable remote consent");
+        assert_eq!(error.exit_code(), i32::from(EXIT_USAGE));
     }
 
     #[test]

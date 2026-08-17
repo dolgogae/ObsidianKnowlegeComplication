@@ -618,6 +618,23 @@ printf '%s\n' "{\"protocol_version\":1,\"request_id\":\"augmentation-1\",\"messa
     assert!(!augmentation_text.contains("Welcome to the fixture"));
     assert!(augmentation_text.contains(&snapshot_id));
 
+    let replayed_augmentation = temporary.path().join("replayed-augmentation.jsonl");
+    assert_exit(
+        &run(&[
+            "replay",
+            as_utf8(&plan_path),
+            "--augmentation",
+            as_utf8(&augmentation),
+            "--out",
+            as_utf8(&replayed_augmentation),
+        ]),
+        0,
+    );
+    assert_eq!(
+        fs::read(&replayed_augmentation).expect("read proposal-bearing replay"),
+        fs::read(&augmentation).expect("read live proposal recording")
+    );
+
     let augmentation_records: Vec<serde_json::Value> = augmentation_text
         .lines()
         .map(|line| serde_json::from_str(line).expect("decode augmentation record"))
@@ -701,7 +718,7 @@ printf '%s\n' "{\"protocol_version\":1,\"request_id\":\"augmentation-1\",\"messa
             "--decisions",
             as_utf8(&decisions),
             "--proposals",
-            as_utf8(&augmentation),
+            as_utf8(&replayed_augmentation),
             "--out",
             as_utf8(&approved),
         ]),

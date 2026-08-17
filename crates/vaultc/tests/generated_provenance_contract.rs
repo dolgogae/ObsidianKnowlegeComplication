@@ -85,9 +85,7 @@ fn approved_generated_fixture() -> (VaultCompiler, ApprovedPlan, KnowledgePropos
         .plan(&inspection)
         .expect("plan generated provenance fixture");
     let proposal = generated_proposal(&plan);
-    let validated = compiler
-        .validate_proposals(&plan, vec![proposal.clone()])
-        .expect("validate generated provenance proposal");
+    let validated = common::record_proposals(&compiler, &plan, vec![proposal.clone()]);
     let proposal_content_hash = validated
         .valid()
         .next()

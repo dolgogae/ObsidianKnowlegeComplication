@@ -1,6 +1,7 @@
 //! Deterministic Obsidian Vault compiler.
 
 pub mod approval;
+pub mod augmentation;
 pub mod canonical;
 pub mod compile;
 pub mod config;
@@ -24,6 +25,9 @@ pub use approval::{
     ApprovalDecision, ApprovalLog, ApprovedPlan, ConflictDecision, ConflictDecisionLog,
     ProposalMaterialization,
 };
+pub use augmentation::{
+    AuthorizedAugmentationExchange, DocumentSelection, RecordedAugmentation, RemoteProviderConsent,
+};
 pub use compile::{CompileOptions, CompiledArtifact};
 pub use config::{CompilerPolicy, SafetyLimits};
 pub use error::{Result, VaultcError};
@@ -37,7 +41,7 @@ pub use provenance::{
     ProvenanceQuery, ProvenanceRecord, ProvenanceRecordKind, ProvenanceSubject, SourceRecord,
     VaultFileSourceRecord,
 };
-pub use provider::{KnowledgeAugmentor, ProposalValidation, ValidatedProposals};
+pub use provider::{CancellationToken, KnowledgeAugmentor, ProposalValidation, ValidatedProposals};
 pub use source::{SourceId, SourceSpec};
 pub use verify::VerificationReport;
 
@@ -79,6 +83,65 @@ impl VaultCompiler {
         proposals: Vec<vaultc_protocol::KnowledgeProposal>,
     ) -> Result<ValidatedProposals> {
         provider::validate_proposals(plan, proposals, &self.policy)
+    }
+
+    pub fn build_augmentation_request(
+        &self,
+        plan: &DraftPlan,
+        selection: &augmentation::DocumentSelection,
+    ) -> Result<vaultc_protocol::AugmentationRequest> {
+        augmentation::build_augmentation_request(plan, &self.policy, selection)
+    }
+
+    pub fn augment(
+        &self,
+        plan: &DraftPlan,
+        selection: &augmentation::DocumentSelection,
+        augmentor: &(impl provider::KnowledgeAugmentor + ?Sized),
+        cancellation: &provider::CancellationToken,
+        consent: augmentation::RemoteProviderConsent,
+    ) -> Result<augmentation::RecordedAugmentation> {
+        augmentation::augment(
+            plan,
+            &self.policy,
+            selection,
+            augmentor,
+            cancellation,
+            consent,
+        )
+    }
+
+    pub fn record_augmentation_exchange(
+        &self,
+        plan: &DraftPlan,
+        authorization: augmentation::AuthorizedAugmentationExchange,
+        response: &vaultc_protocol::AugmentationResponse,
+    ) -> Result<augmentation::RecordedAugmentation> {
+        augmentation::record_augmentation_exchange(plan, &self.policy, authorization, response)
+    }
+
+    pub fn authorize_augmentation_exchange(
+        &self,
+        plan: &DraftPlan,
+        request: &vaultc_protocol::AugmentationRequest,
+        capabilities: &vaultc_protocol::ProviderCapabilities,
+        consent: augmentation::RemoteProviderConsent,
+    ) -> Result<augmentation::AuthorizedAugmentationExchange> {
+        augmentation::authorize_augmentation_exchange(
+            plan,
+            &self.policy,
+            request,
+            capabilities,
+            consent,
+        )
+    }
+
+    pub fn replay_augmentation(
+        &self,
+        plan: &DraftPlan,
+        recording: &augmentation::RecordedAugmentation,
+    ) -> Result<augmentation::RecordedAugmentation> {
+        augmentation::replay_augmentation(plan, &self.policy, recording)
     }
 
     pub fn approve(

@@ -90,6 +90,11 @@ pub trait RerankProvider: Send + Sync {
 }
 
 pub trait KnowledgeAugmentor: Send + Sync {
+    /// Returns bounded, side-effect-free local metadata.
+    ///
+    /// Implementations must not perform network access or blocking capability
+    /// negotiation here. Transports with a live negotiation step use the
+    /// cancellable transport boundary and core pre-disclosure authorization.
     fn capabilities(&self) -> ProviderCapabilities;
     fn propose(
         &self,

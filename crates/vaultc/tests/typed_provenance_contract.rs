@@ -86,9 +86,7 @@ fn approved_generated_fixture_for(
         .plan(&inspection)
         .expect("plan typed provenance fixture");
     let proposal = generated_proposal(&plan);
-    let validated = compiler
-        .validate_proposals(&plan, vec![proposal.clone()])
-        .expect("validate typed provenance proposal");
+    let validated = common::record_proposals(&compiler, &plan, vec![proposal.clone()]);
     let proposal_content_hash = validated
         .valid()
         .next()

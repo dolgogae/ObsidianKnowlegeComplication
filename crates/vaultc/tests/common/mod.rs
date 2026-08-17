@@ -4,7 +4,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use vaultc::{DocumentSelection, DraftPlan, RemoteProviderConsent, ValidatedProposals};
 use vaultc::{SourceSpec, VaultCompiler};
+use vaultc_protocol::{
+    AugmentationResponse, DataBoundary, KnowledgeProposal, PROTOCOL_VERSION, ProviderCapabilities,
+    ProviderOperation,
+};
 
 pub fn compiler() -> VaultCompiler {
     VaultCompiler::builder()
@@ -80,4 +85,48 @@ pub fn copy_tree(source: &Path, destination: &Path) {
             });
         }
     }
+}
+
+pub fn record_proposals(
+    compiler: &VaultCompiler,
+    plan: &DraftPlan,
+    proposals: Vec<KnowledgeProposal>,
+) -> ValidatedProposals {
+    let provider = proposals
+        .first()
+        .expect("record at least one proposal")
+        .provider
+        .clone();
+    assert!(
+        proposals
+            .iter()
+            .all(|proposal| proposal.provider == provider),
+        "one recorded exchange has one provider identity"
+    );
+    let request = compiler
+        .build_augmentation_request(plan, &DocumentSelection::All)
+        .expect("build recorded proposal request");
+    let capabilities = ProviderCapabilities {
+        provider,
+        protocol_versions: vec![PROTOCOL_VERSION],
+        operations: vec![ProviderOperation::KnowledgeAugmentation],
+        max_input_bytes: 64 * 1024 * 1024,
+        max_output_bytes: 64 * 1024 * 1024,
+        structured_output: true,
+        streaming: false,
+        deterministic_controls: true,
+        data_boundary: DataBoundary::Local,
+    };
+    let authorization = compiler
+        .authorize_augmentation_exchange(
+            plan,
+            &request,
+            &capabilities,
+            RemoteProviderConsent::Denied,
+        )
+        .expect("authorize canonical proposal exchange");
+    compiler
+        .record_augmentation_exchange(plan, authorization, &AugmentationResponse { proposals })
+        .expect("record canonical proposal exchange")
+        .into_validated()
 }

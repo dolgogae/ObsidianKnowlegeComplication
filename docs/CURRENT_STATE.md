@@ -10,6 +10,7 @@ decision_refs:
   - ADR-0004
   - ADR-0009
   - ADR-0010
+  - ADR-0011
 source_refs:
   - HIST-CURRENT-PLAN
 ---
@@ -29,13 +30,14 @@ Implemented production packages:
   exact and review-only near deduplication, conflict/path planning, source-aware
   Markdown rewrites with sealed output commitments and reverse verification,
   typed Canvas reference resolution and rewriting, immutable approvals, atomic
-  compilation, typed content-addressed provenance with a non-circular audit
-  envelope, deterministic packing, independent verification, and SQLite
+  compilation, provider-neutral augmentation request/authorization/recording
+  and offline replay, typed content-addressed provenance with a non-circular
+  audit envelope, deterministic packing, independent verification, and SQLite
   workspace state;
 - `vaultc-protocol`: versioned provider capabilities, projections, evidence,
   proposals, and transcript records without a vendor SDK dependency;
-- `vaultc-cli`: `inspect`, `plan`, `augment`, `approve`, `compile`, `verify`,
-  and `explain`, including a bounded NDJSON subprocess provider.
+- `vaultc-cli`: `inspect`, `plan`, `augment`, `replay`, `approve`, `compile`,
+  `verify`, and `explain`, including a bounded NDJSON subprocess provider.
 
 The compiler accepts directories, ZIP, `tar.zst`, and `.tzst` sources. It
 rejects or excludes traversal, duplicate archive members, archive expansion
@@ -50,8 +52,10 @@ AI is not required. The implemented augmentation types are
 plan/projection/evidence set, validated as untrusted data, and materialized only
 after an explicit content-hash-bound approval. Generated-note approvals also
 seal their destination, canonical body/output hashes, ordered EvidenceId list,
-and operation ID. Conflict decisions are immutable approval overlays. V1
-permits only `waived_by_policy`; it does not mislabel an
+and operation ID. SDK and CLI live calls share an exact pre-disclosure policy
+and consent gate; canonical four-record recordings can be replayed offline
+without invoking a provider. Conflict decisions are immutable approval
+overlays. V1 permits only `waived_by_policy`; it does not mislabel an
 ambiguous link as user-resolved without a typed target/rewrite action.
 
 ## Verification evidence
@@ -60,15 +64,15 @@ All commands below passed on macOS arm64 with Rust 1.97.1:
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 87 tests and all doctests passed |
+| `cargo test --workspace --all-features --no-fail-fast` | 105 tests and all doctests passed |
 | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
 
-The 87 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 4
+The 105 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 4
 generated-provenance tests, 5 pack integration tests, 8 pipeline tests, 5
-provider/approval tests, 18 security tests, 9 typed-provenance tests, 10 CLI
-unit tests, 6 CLI integration tests, and 2 protocol tests. They cover, among
-other cases:
+provider/approval tests, 14 SDK augmentation/replay tests, 18 security tests, 9
+typed-provenance tests, 11 CLI unit tests, 3 CLI replay tests, 6 CLI lifecycle
+tests, and 2 protocol tests. They cover, among other cases:
 
 - source immutability, deterministic plan/output, absolute-source-location
   independence, and byte-identical VaultPacks on one supported host;
@@ -105,6 +109,11 @@ other cases:
   and fail-closed pre-output-hash plan rejection;
 - provider deadline and SIGINT cancellation while input is blocked, bounded
   shutdown, process-group reaping, and non-publication of partial augmentation.
+- deterministic SDK projection construction, exact redacted four-record
+  recordings, provider-free byte-identical replay, fresh validation at the
+  approval boundary, remote policy/consent preflight before disclosure,
+  cooperative cancellation, strict nested wire schemas, stale/header/validation
+  attacks, SDK/CLI byte parity, and replay no-clobber publication.
 
 The exact requirement-to-test mapping is in
 [`TRACEABILITY.md`](TRACEABILITY.md).
@@ -148,7 +157,9 @@ The exact requirement-to-test mapping is in
   arbitrary byte-span evidence is rejected.
 - Some source and pack members are buffered under hard limits. The V1 20 GB
   workload and ≤2 GB RSS target cannot be claimed until streaming and the
-  reference benchmark are verified.
+  reference benchmark are verified. Augmentation recordings share immutable
+  decoded state across replay clones, but canonical 1 GiB control-file decoding
+  and re-encoding are not yet a fully streaming pipeline.
 - Only macOS arm64 has been exercised in this workspace. Linux, Windows, macOS
   x86_64, filesystem normalization, and deterministic cross-platform CI remain.
 - `.vaultpack` is deterministic and checksum/audit-verified but unsigned. The
@@ -188,17 +199,16 @@ The exact requirement-to-test mapping is in
 
 ## Next implementation slices
 
-1. Add the public SDK augmentation request/record/replay surface and enforce
-   canonical transcripts for every approved AI proposal.
-2. Complete the remaining ALG-NRM-001 Markdown/Canvas golden corpus and retain
+1. Complete the remaining ALG-NRM-001 Markdown/Canvas golden corpus and retain
    original pre-normalization path spellings.
-3. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
+2. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
    artifact determinism fixtures.
-4. Harden source/archive accounting and public SDK no-clobber pack publication.
-5. Define schema migrations and run property/fuzz and fault-injection suites.
-6. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
+3. Harden source/archive accounting and public SDK no-clobber pack publication.
+4. Define schema migrations and run property/fuzz and fault-injection suites.
+5. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
    ADR before calling a pack signed or marketplace-ready.
-7. Stream large blobs and run QG-006 at the full reference workload.
+6. Stream large blobs and control files and run QG-006 at the full reference
+   workload.
 
 No MCP, plugin, marketplace, or neuroscience-inspired runtime behavior should
 enter the default compiler path while these stable V1 gates remain open.

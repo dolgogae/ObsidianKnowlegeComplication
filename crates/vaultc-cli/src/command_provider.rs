@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::fmt::{Formatter, Result as FormatResult};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -8,15 +9,13 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use vaultc::config::CompilerPolicy;
-use vaultc::provider::validate_capabilities;
 use vaultc::{Result, VaultcError};
 use vaultc_protocol::{
     AugmentationRequest, AugmentationResponse, Envelope, MessageType, PROTOCOL_VERSION,
-    ProtocolError, ProviderCapabilities, ProviderOperation, TranscriptDirection, TranscriptRecord,
+    ProtocolError, ProviderCapabilities, ProviderOperation,
 };
 
 const HARD_MAX_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
@@ -59,10 +58,124 @@ pub(crate) struct CommandProvider {
 }
 
 #[derive(Debug)]
-pub(crate) struct ProviderRun {
-    pub capabilities: ProviderCapabilities,
+pub(crate) struct ProviderRun<A> {
+    pub authorization: A,
     pub response: AugmentationResponse,
-    pub transcript: Vec<TranscriptRecord>,
+}
+
+struct UniqueJsonValue(Value);
+
+impl<'de> Deserialize<'de> for UniqueJsonValue {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(UniqueJsonVisitor)
+    }
+}
+
+struct UniqueJsonVisitor;
+
+impl<'de> Visitor<'de> for UniqueJsonVisitor {
+    type Value = UniqueJsonValue;
+
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> FormatResult {
+        formatter.write_str("a JSON value without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::Bool(value)))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::Number(value.into())))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::Number(value.into())))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> std::result::Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let number = serde_json::Number::from_f64(value)
+            .ok_or_else(|| E::custom("JSON number must be finite"))?;
+        Ok(UniqueJsonValue(Value::Number(number)))
+    }
+
+    fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::String(value.to_owned())))
+    }
+
+    fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::String(value)))
+    }
+
+    fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::Null))
+    }
+
+    fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(UniqueJsonValue(Value::Null))
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(UniqueJsonValue(value)) = sequence.next_element()? {
+            values.push(value);
+        }
+        Ok(UniqueJsonValue(Value::Array(values)))
+    }
+
+    fn visit_map<A>(self, mut object: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut values = serde_json::Map::new();
+        while let Some(key) = object.next_key::<String>()? {
+            if values.contains_key(&key) {
+                return Err(serde::de::Error::custom(format!(
+                    "duplicate JSON object key `{key}`"
+                )));
+            }
+            let UniqueJsonValue(value) = object.next_value()?;
+            values.insert(key, value);
+        }
+        Ok(UniqueJsonValue(Value::Object(values)))
+    }
+}
+
+fn parse_unique_json(bytes: &[u8]) -> Result<Value> {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let UniqueJsonValue(value) =
+        UniqueJsonValue::deserialize(&mut deserializer).map_err(|error| {
+            VaultcError::Provider(format!("provider emitted malformed NDJSON: {error}"))
+        })?;
+    deserializer.end().map_err(|error| {
+        VaultcError::Provider(format!("provider emitted malformed NDJSON: {error}"))
+    })?;
+    Ok(value)
+}
+
+fn decode_exact_value<T>(value: &Value, context: &str) -> Result<T>
+where
+    T: DeserializeOwned + Serialize,
+{
+    let decoded: T = serde_json::from_value(value.clone())
+        .map_err(|error| VaultcError::Provider(format!("{context} schema is invalid: {error}")))?;
+    let encoded = serde_json::to_value(&decoded).map_err(|error| {
+        VaultcError::Internal(format!("failed to re-encode typed provider data: {error}"))
+    })?;
+    if encoded != *value {
+        return Err(VaultcError::Provider(format!(
+            "{context} contains unknown or non-schema fields"
+        )));
+    }
+    Ok(decoded)
 }
 
 impl CommandProvider {
@@ -113,11 +226,14 @@ impl CommandProvider {
         Ok(Self { config })
     }
 
-    pub fn augment(
+    pub fn augment<A, F>(
         &self,
         request: &AugmentationRequest,
-        policy: &CompilerPolicy,
-    ) -> Result<ProviderRun> {
+        authorize: F,
+    ) -> Result<ProviderRun<A>>
+    where
+        F: FnOnce(&ProviderCapabilities) -> Result<A>,
+    {
         let deadline = Instant::now()
             .checked_add(self.config.timeout)
             .ok_or_else(|| VaultcError::InvalidConfig("provider timeout overflow".into()))?;
@@ -135,7 +251,6 @@ impl CommandProvider {
             MessageType::CapabilitiesResponse,
         )?;
         let capabilities = capabilities_wire.payload.clone();
-        validate_capabilities(&capabilities, policy)?;
         if !capabilities.structured_output {
             return Err(VaultcError::Provider(
                 "knowledge augmentation requires structured provider output".into(),
@@ -146,6 +261,7 @@ impl CommandProvider {
                 "provider did not negotiate knowledge augmentation".into(),
             ));
         }
+        let authorization = authorize(&capabilities)?;
 
         let request_payload = serde_json::to_vec(request)?;
         if request_payload.len() as u64 > capabilities.max_input_bytes {
@@ -183,58 +299,10 @@ impl CommandProvider {
         }
 
         session.finish(deadline)?;
-        let transcript = vec![
-            transcript_record(0, &capabilities_request, TranscriptDirection::Request)?,
-            transcript_record(1, &capabilities_wire, TranscriptDirection::Response)?,
-            transcript_record(2, &augmentation_request, TranscriptDirection::Request)?,
-            transcript_record(3, &response_wire, TranscriptDirection::Response)?,
-        ];
         Ok(ProviderRun {
-            capabilities,
+            authorization,
             response: response_wire.payload,
-            transcript,
         })
-    }
-}
-
-fn transcript_record<T: Serialize>(
-    sequence: u64,
-    envelope: &Envelope<T>,
-    direction: TranscriptDirection,
-) -> Result<TranscriptRecord> {
-    let mut payload = serde_json::to_value(&envelope.payload)?;
-    let canonical_payload_hash =
-        vaultc::canonical::canonical_hash("vaultc:provider-transcript-payload:v1\0", &payload)?
-            .hex();
-    if envelope.message_type == MessageType::AugmentationRequest {
-        redact_projection_text(&mut payload);
-    }
-    Ok(TranscriptRecord {
-        sequence,
-        request_id: envelope.request_id.clone(),
-        direction,
-        message_type: envelope.message_type,
-        canonical_payload_hash,
-        payload,
-    })
-}
-
-fn redact_projection_text(payload: &mut Value) {
-    let Some(documents) = payload.get_mut("documents").and_then(Value::as_array_mut) else {
-        return;
-    };
-    for document in documents {
-        let Some(blocks) = document
-            .get_mut("selected_blocks")
-            .and_then(Value::as_array_mut)
-        else {
-            continue;
-        };
-        for block in blocks {
-            if let Some(text) = block.get_mut("text") {
-                *text = Value::String("[redacted]".into());
-            }
-        }
     }
 }
 
@@ -377,7 +445,7 @@ impl ChildSession {
         }
     }
 
-    fn receive<T: DeserializeOwned>(
+    fn receive<T: DeserializeOwned + Serialize>(
         &mut self,
         deadline: Instant,
         request_id: &str,
@@ -418,9 +486,8 @@ impl ChildSession {
                 }
             }
         };
-        let wire: Envelope<Value> = serde_json::from_slice(&line).map_err(|error| {
-            VaultcError::Provider(format!("provider emitted malformed NDJSON: {error}"))
-        })?;
+        let raw = parse_unique_json(&line)?;
+        let wire: Envelope<Value> = decode_exact_value(&raw, "provider response envelope")?;
         if wire.protocol_version != PROTOCOL_VERSION {
             return Err(VaultcError::Provider(format!(
                 "provider responded with unsupported protocol version {}",
@@ -434,11 +501,7 @@ impl ChildSession {
         }
         if wire.message_type == MessageType::Error {
             let protocol_error: ProtocolError =
-                serde_json::from_value(wire.payload).map_err(|error| {
-                    VaultcError::Provider(format!(
-                        "provider returned a malformed error envelope: {error}"
-                    ))
-                })?;
+                decode_exact_value(&wire.payload, "provider error payload")?;
             return Err(VaultcError::Provider(format!(
                 "provider returned error code `{}`; untrusted error text was withheld",
                 safe_protocol_label(&protocol_error.code)
@@ -450,9 +513,7 @@ impl ChildSession {
                 wire.message_type, expected_type
             )));
         }
-        let payload = serde_json::from_value(wire.payload).map_err(|error| {
-            VaultcError::Provider(format!("provider response schema is invalid: {error}"))
-        })?;
+        let payload = decode_exact_value(&wire.payload, "provider response payload")?;
         Ok(Envelope {
             protocol_version: wire.protocol_version,
             request_id: wire.request_id,
@@ -799,6 +860,35 @@ mod tests {
         assert!(matches!(&messages[1], ReaderEvent::Line(_)));
         assert!(
             matches!(&messages[2], ReaderEvent::Failed(message) if message.contains("protocol messages"))
+        );
+    }
+
+    #[test]
+    fn provider_json_rejects_recursive_duplicates_and_non_schema_fields() {
+        assert!(
+            parse_unique_json(br#"{"payload":{"proposals":[],"proposals":[]}}"#).is_err(),
+            "nested duplicate object keys must fail before Value materialization"
+        );
+
+        let unknown_payload = parse_unique_json(br#"{"proposals":[],"unexpected":true}"#)
+            .expect("unique JSON with an unknown field");
+        assert!(
+            decode_exact_value::<AugmentationResponse>(
+                &unknown_payload,
+                "provider response payload"
+            )
+            .is_err(),
+            "typed payload roundtrip must reject unknown fields"
+        );
+
+        let unknown_envelope = parse_unique_json(
+            br#"{"message_type":"augmentation_response","payload":{"proposals":[]},"protocol_version":1,"request_id":"augmentation-1","unexpected":true}"#,
+        )
+        .expect("unique envelope with an unknown field");
+        assert!(
+            decode_exact_value::<Envelope<Value>>(&unknown_envelope, "provider response envelope")
+                .is_err(),
+            "typed envelope roundtrip must reject unknown fields"
         );
     }
 

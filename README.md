@@ -111,9 +111,42 @@ fn main() -> vaultc::Result<()> {
 }
 ```
 
-For AI-assisted builds, an application implements `KnowledgeAugmentor` or uses
-the `vaultc-protocol` wire types, passes returned `KnowledgeProposal` values to
-`validate_proposals`, and supplies content-hash-bound `ApprovalLog` decisions.
+For AI-assisted builds, an application implements provider-neutral
+`KnowledgeAugmentor` rather than depending on one LLM vendor:
+
+```rust,ignore
+use vaultc::{
+    CancellationToken, DocumentSelection, KnowledgeAugmentor,
+    RemoteProviderConsent, VaultCompiler,
+};
+
+fn record_and_replay(
+    compiler: &VaultCompiler,
+    plan: &vaultc::DraftPlan,
+    augmentor: &impl KnowledgeAugmentor,
+) -> vaultc::Result<vaultc::ValidatedProposals> {
+    let recording = compiler.augment(
+        plan,
+        &DocumentSelection::All,
+        augmentor,
+        &CancellationToken::default(),
+        RemoteProviderConsent::Denied,
+    )?;
+
+    // This validates the saved exchange without calling the provider again.
+    let replayed = compiler.replay_augmentation(plan, &recording)?;
+    assert_eq!(
+        recording.to_canonical_jsonl()?,
+        replayed.to_canonical_jsonl()?,
+    );
+    Ok(replayed.into_validated())
+}
+```
+
+Remote providers require both sealed-policy permission and explicit live-call
+consent. External transports first obtain an opaque core authorization after
+capability negotiation and before disclosing source text. Returned proposals
+remain untrusted data and need content-hash-bound `ApprovalLog` decisions.
 Required conflicts use a separate immutable `ConflictDecisionLog` overlay. V1
 accepts only the explicit `waived_by_policy` conflict resolution until typed
 rewrite/target actions are defined.
@@ -127,7 +160,9 @@ extension.
 ```sh
 cargo run -p vaultc-cli -- inspect personal=./PersonalVault team=./TeamVault.zip --format json
 cargo run -p vaultc-cli -- plan personal=./PersonalVault team=./TeamVault.zip --out plan.json
-cargo run -p vaultc-cli -- approve plan.json --decisions decisions.json --out approved-plan.json
+cargo run -p vaultc-cli -- augment plan.json --provider-cmd ./provider --all-documents --out augmentation.jsonl
+cargo run -p vaultc-cli -- replay plan.json --augmentation augmentation.jsonl --out replayed.jsonl
+cargo run -p vaultc-cli -- approve plan.json --decisions decisions.json --proposals replayed.jsonl --out approved-plan.json
 cargo run -p vaultc-cli -- compile approved-plan.json --output CompiledVault --pack CompiledVault.vaultpack
 cargo run -p vaultc-cli -- verify CompiledVault.vaultpack --format json
 cargo run -p vaultc-cli -- explain CompiledVault.vaultpack knowledge/Topic.md --format json

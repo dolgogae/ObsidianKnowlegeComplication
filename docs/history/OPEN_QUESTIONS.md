@@ -3,12 +3,13 @@ title: Open Questions
 status: normative-future
 owners:
   - architect
-last_updated: 2026-08-16
+last_updated: 2026-08-17
 decision_refs:
   - ADR-0002
   - ADR-0004
   - ADR-0009
   - ADR-0010
+  - ADR-0011
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -31,10 +32,8 @@ implementation gaps are also summarized in
   and supported-filesystem vectors.
 - Freeze full MinHash seed/candidate vectors and short-document behavior beyond
   the implemented threshold arithmetic test.
-- Decide the public SDK augmentation surface: add a plan-to-projection request
-  builder and/or `VaultCompiler::augment`, define transcript capture for
-  in-process `KnowledgeAugmentor`, and remove or connect unused
-  `CompileOptions`.
+- Remove or connect unused `CompileOptions`; ADR-0011 separately closed the
+  public SDK augmentation/record/replay surface.
 - Define typed conflict actions for selected link targets, path mappings, and
   other real `user_resolved` operations. Until then, ADR-0009 permits only an
   explicit policy waiver overlay.
@@ -46,8 +45,9 @@ implementation gaps are also summarized in
   approved generated-note outputs now carry and verify sealed commitments.
 - Close filesystem race hardening: descriptor-relative/no-follow source opens
   and a portable atomic no-clobber directory publication primitive.
-- Complete archive accounting for compressed bytes, excluded/duplicate member
-  counts, nesting, and outer VaultPack zstd expansion ratio.
+- Complete source-archive accounting for compressed bytes,
+  excluded/duplicate-member counts, and nesting. VaultPack outer size and
+  declared/streamed expansion ratio are now bounded.
 - Define SQLite migrations, reload/resume/cleanup, batching, and workspace
   encryption policy; the current schema is reset-and-write-only version 1.
 - Define the deterministic tar/zstd compatibility contract across compressor,
@@ -172,3 +172,9 @@ change.
   subject are deterministic virtual records constructed after final bytes
   exist, eliminating self-hash fixed points. Legacy flat development ledgers
   fail closed.
+- ADR-0011 assigns projection construction, provider exchange recording,
+  canonical augmentation JSONL, redacted-request hydration, and offline replay
+  to `vaultc::augmentation`. Live remote disclosure requires sealed policy and
+  per-call consent; offline replay never calls a provider and needs no new
+  consent. Non-empty validations require the exact four-record transcript, and
+  canonical schema-1 recordings replay byte-for-byte.

@@ -4,10 +4,11 @@ status: normative-v1
 owners:
   - algorithms-ai-engineer
   - qa-security-engineer
-last_updated: 2026-08-16
+last_updated: 2026-08-17
 decision_refs:
   - ADR-0004
   - ADR-0009
+  - ADR-0011
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -68,6 +69,33 @@ trait KnowledgeAugmentor {
 request/response types are available under `vaultc::provider`. Wire types live
 in the independent `vaultc-protocol` crate.
 
+ADR-0011 adds a provider-neutral façade rather than a vendor client:
+
+```rust,ignore
+let request = compiler.build_augmentation_request(&plan, &selection)?;
+let recording = compiler.augment(
+    &plan,
+    &selection,
+    &augmentor,
+    &cancellation,
+    RemoteProviderConsent::Denied,
+)?;
+let replayed = compiler.replay_augmentation(&plan, &recording)?;
+assert_eq!(
+    recording.to_canonical_jsonl()?,
+    replayed.to_canonical_jsonl()?,
+);
+```
+
+`DocumentSelection` is either a non-empty unique explicit `DocumentId` list or
+`All`. `RecordedAugmentation` owns the versioned header, exact transcript, and
+deterministic validation records. A lower-level transport first calls
+`authorize_augmentation_exchange` after capability negotiation but before
+source projection disclosure. The returned opaque, non-serializable
+authorization is then consumed by `record_augmentation_exchange` with the
+response. This gives non-Rust and non-trait transports the same consent,
+validation, and recording boundary without taking ownership of policy.
+
 V1 `ProviderCapabilities` contains provider identity, supported protocol
 versions and operations, maximum input/output bytes, structured-output,
 streaming and deterministic-control declarations, and a `local` or labeled
@@ -88,8 +116,11 @@ error. The CLI exchange is exactly:
 
 The provider must negotiate protocol V1, `knowledge_augmentation`, and
 structured output. The CLI verifies declared input/output limits and proposal
-provider identity. Extra protocol messages, a malformed line, refusal, crash,
-non-success exit, or failure to close after the response is an error.
+provider identity. It invokes the core pre-disclosure authorization after the
+capability response and before sending `augmentation_request`. Extra protocol
+messages, a malformed line, duplicate or unknown fields at any JSON depth,
+refusal, crash, non-success exit, or failure to close after the response is an
+error.
 
 `CommandProvider` launches an explicitly configured executable directly, never
 through a shell. It uses a sanitized environment, optional working directory,
@@ -107,8 +138,8 @@ platforms. It does not publish a partial augmentation file.
 
 An augmentation request binds the sealed `plan_id`, the complete canonical
 workspace `projection_hash`, allowed proposal kinds, selected document
-projections, and output limits. The CLI requires explicit `--document-id`
-selection or `--all-documents`; it never defaults to sending the whole plan.
+projections, and output limits. Every live SDK or CLI call requires an explicit
+document selection; it never defaults to sending the whole plan.
 
 Each `DocumentProjection` carries the owning sealed `snapshot_id`, a document
 object reference and content hash, logical path, title, and selected blocks.
@@ -120,7 +151,19 @@ The current projection granularity sends every parsed block of each selected
 document. Block-level disclosure selection is future work, so policy and UI
 must not claim a finer minimum-disclosure guarantee. Remote providers are
 default-denied and require both `allow_remote_providers = true` in the sealed
-policy and explicit CLI `--allow-remote-provider` consent.
+policy and explicit runtime `RemoteProviderConsent::Granted`. CLI
+`--allow-remote-provider` is one UI for that runtime consent. Consent authorizes
+only that live disclosure and is not serialized as a reusable permission.
+
+The in-process façade checks cancellation before capability negotiation,
+before projection disclosure, after the provider returns, and before returning
+a recording. `KnowledgeAugmentor::capabilities()` is local, bounded,
+side-effect-free metadata and MUST NOT perform network or blocking negotiation.
+`propose` implementations must cooperate with `CancellationToken`; the core
+cannot forcibly stop arbitrary provider code. Transports with live capability
+negotiation use their own deadline/cancellation and MUST obtain the opaque core
+authorization before sending source text. The subprocess adapter retains its
+stronger deadline and process-tree termination behavior.
 
 ## Proposal model
 
@@ -180,24 +223,41 @@ supply or override this compiler-owned commitment.
 
 ## Transcript and offline compilation
 
-The CLI augmentation JSONL contains one header, four canonical transcript
-records, and one validation record per proposal. A transcript record stores
+The canonical augmentation JSONL contains one header, exactly four canonical
+transcript records, and one proposal-ID-sorted validation record per proposal.
+A transcript record stores
 sequence, request ID, direction, message type, canonical payload hash, and
 payload. There is no timing-metadata field in V1.
 
 For the stored augmentation request, block text is replaced by
 `"[redacted]"`, while `canonical_payload_hash` commits to the original sent
-projection. Approval rehydrates the request from the sealed plan and validates
-the commitment, document-to-snapshot identity, request/response sequence,
-provider identity, and proposals.
+projection. Approval and replay rehydrate the request from the sealed plan,
+rebuild the public projection for exactly the recorded documents, and validate
+the commitment, all-block projection, document-to-snapshot identity,
+request/response sequence, negotiated limits, provider identity, and proposals.
+Empty transcript is valid only when validations are also empty. A canonical
+four-record exchange with zero proposals is valid; any non-empty validation
+set without the exchange fails closed.
+
+Every JSONL line is compact recursively key-sorted JSON followed by LF, and the
+file ends in LF. Blank/CRLF/unterminated/non-canonical lines, unknown or
+duplicate fields, record reordering, and over-limit input are rejected. V1
+hard limits are 64 MiB per line, 1 GiB per file, and the sealed maximum proposal
+count plus five fixed records. The decoder validates typed nested payloads and
+header/provider/plan/projection self-consistency before exposing a recording;
+replay adds sealed-plan hydration and fresh validation. A live recorder MUST
+also prove that the canonical encoding fits those bounds before returning.
 The Compiled Vault stores the approved transcript audit file, and the
 independent verifier requires exact semantic equality with `ApprovedPlan`.
 
-Compilation of an `ApprovedPlan` never contacts a provider. Given identical
+Compilation of an `ApprovedPlan` never contacts a provider. Offline
+`replay_augmentation` likewise never contacts a provider, network, MCP server,
+or output destination; no live remote consent is required, although the sealed
+plan must have permitted the recorded remote capability. Given identical
 snapshots, policy, compiler version, approved proposal contents, conflict
 decisions, and transcript, the deterministic materialization path is reusable
-offline. A dedicated record-to-replay byte-equality E2E remains a required
-quality-gate test.
+offline. Canonical record-to-replay JSONL bytes, approval bytes, Compiled Vault,
+and VaultPack outputs MUST be equal in the required replay E2E.
 
 ## Failure behavior
 

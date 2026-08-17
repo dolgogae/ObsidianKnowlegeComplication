@@ -178,9 +178,7 @@ fn valid_proposal_requires_explicit_matching_approval() {
     let (compiler, plan) = basic_plan();
     let proposal = valid_proposal(&plan);
 
-    let unapproved_validation = compiler
-        .validate_proposals(&plan, vec![proposal.clone()])
-        .expect("validate unapproved proposal");
+    let unapproved_validation = common::record_proposals(&compiler, &plan, vec![proposal.clone()]);
     assert_eq!(unapproved_validation.valid().count(), 1);
     let unapproved = compiler
         .approve(plan.clone(), unapproved_validation, ApprovalLog::default())
@@ -198,9 +196,7 @@ fn valid_proposal_requires_explicit_matching_approval() {
             .exists()
     );
 
-    let validated = compiler
-        .validate_proposals(&plan, vec![proposal.clone()])
-        .expect("validate approved proposal");
+    let validated = common::record_proposals(&compiler, &plan, vec![proposal.clone()]);
     let content_hash = validated
         .valid()
         .next()
@@ -283,9 +279,7 @@ fn stale_or_forged_proposals_fail_validation_or_approval() {
     );
 
     let proposal = valid_proposal(&plan);
-    let validated = compiler
-        .validate_proposals(&plan, vec![proposal.clone()])
-        .expect("validate proposal for stale approval test");
+    let validated = common::record_proposals(&compiler, &plan, vec![proposal.clone()]);
     let content_hash = validated
         .valid()
         .next()
@@ -310,9 +304,7 @@ fn stale_or_forged_proposals_fail_validation_or_approval() {
     assert!(matches!(error, VaultcError::ApprovalStale(_)));
 
     let proposal = valid_proposal(&plan);
-    let validated = compiler
-        .validate_proposals(&plan, vec![proposal.clone()])
-        .expect("validate proposal for stale content test");
+    let validated = common::record_proposals(&compiler, &plan, vec![proposal.clone()]);
     let error = compiler
         .approve(
             plan.clone(),
@@ -336,9 +328,7 @@ fn stale_or_forged_proposals_fail_validation_or_approval() {
 fn approved_proposal_content_cannot_change_before_materialization() {
     let (compiler, plan) = basic_plan();
     let proposal = valid_proposal(&plan);
-    let validated = compiler
-        .validate_proposals(&plan, vec![proposal.clone()])
-        .expect("validate proposal");
+    let validated = common::record_proposals(&compiler, &plan, vec![proposal.clone()]);
     let content_hash = validated
         .valid()
         .next()
@@ -384,9 +374,7 @@ fn generated_frontmatter_quotes_untrusted_proposal_identity_as_data() {
     let (compiler, plan) = basic_plan();
     let mut proposal = valid_proposal(&plan);
     proposal.proposal_id = "quoted\"\nvaultc_generated: false".into();
-    let validated = compiler
-        .validate_proposals(&plan, vec![proposal.clone()])
-        .expect("validate proposal with hostile identifier");
+    let validated = common::record_proposals(&compiler, &plan, vec![proposal.clone()]);
     let content_hash = validated
         .valid()
         .next()

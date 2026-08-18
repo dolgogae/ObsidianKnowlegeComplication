@@ -172,7 +172,16 @@ impl VaultCompiler {
         approved: &ApprovedPlan,
         destination: impl AsRef<Path>,
     ) -> Result<CompiledArtifact> {
-        compile::compile_plan(approved, destination.as_ref(), &self.policy)
+        self.compile_with_options(approved, destination, &CompileOptions::default())
+    }
+
+    pub fn compile_with_options(
+        &self,
+        approved: &ApprovedPlan,
+        destination: impl AsRef<Path>,
+        options: &CompileOptions,
+    ) -> Result<CompiledArtifact> {
+        compile::compile_plan_with_options(approved, destination.as_ref(), &self.policy, options)
     }
 
     pub fn verify(&self, artifact: impl AsRef<Path>) -> Result<VerificationReport> {

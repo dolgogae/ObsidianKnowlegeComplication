@@ -4,10 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
+use clap::builder::{OsStringValueParser, TypedValueParser as _};
 use clap::{Parser, Subcommand, ValueEnum};
 use command_provider::{CommandProvider, CommandProviderConfig, ProviderCancellation};
 use serde::de::DeserializeOwned;
@@ -17,7 +18,7 @@ use vaultc::augmentation::{DocumentSelection, RecordedAugmentation, RemoteProvid
 use vaultc::identity::DocumentId;
 use vaultc::plan::{DraftPlan, Inspection};
 use vaultc::provider::ValidatedProposals;
-use vaultc::{CompilerPolicy, SourceId, SourceSpec, VaultCompiler, VaultcError};
+use vaultc::{CompileOptions, CompilerPolicy, SourceId, SourceSpec, VaultCompiler, VaultcError};
 
 const EXIT_USAGE: u8 = 2;
 const EXIT_INPUT: u8 = 3;
@@ -139,7 +140,11 @@ enum CommandKind {
         approved_plan: PathBuf,
         #[arg(long, value_name = "PATH")]
         output: PathBuf,
-        #[arg(long, value_name = "FILE")]
+        #[arg(
+            long,
+            value_name = "FILE",
+            value_parser = OsStringValueParser::new().try_map(parse_vaultpack_path)
+        )]
         pack: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
@@ -219,12 +224,22 @@ impl CliFailure {
 
     #[allow(clippy::needless_pass_by_value)]
     fn from_vaultc(default_code: u8, error: VaultcError) -> Self {
-        let code = if matches!(&error, VaultcError::Internal(_)) {
+        let code = if vaultc_error_contains_internal(&error) {
             EXIT_INTERNAL
         } else {
             default_code
         };
         Self::new(code, error.to_string())
+    }
+}
+
+fn vaultc_error_contains_internal(error: &VaultcError) -> bool {
+    match error {
+        VaultcError::Internal(_) => true,
+        VaultcError::PackPublicationAfterCompile { source, .. } => {
+            vaultc_error_contains_internal(source)
+        }
+        _ => false,
     }
 }
 
@@ -238,18 +253,22 @@ fn plan_failure(error: &VaultcError) -> CliFailure {
         | VaultcError::Io { .. } => EXIT_INPUT,
         VaultcError::InvalidConfig(_) => EXIT_USAGE,
         VaultcError::PlanStale(_) => EXIT_DECISION,
-        VaultcError::ProposalInvalid(_)
-        | VaultcError::ApprovalStale(_)
-        | VaultcError::OutputExists(_)
-        | VaultcError::VerificationFailed(_)
-        | VaultcError::Provider(_)
-        | VaultcError::Json(_)
-        | VaultcError::TomlDecode(_)
-        | VaultcError::TomlEncode(_)
-        | VaultcError::Sqlite(_)
-        | VaultcError::Internal(_) => EXIT_INTERNAL,
+        _ => EXIT_INTERNAL,
     };
     CliFailure::new(code, error.to_string())
+}
+
+fn parse_vaultpack_path(value: OsString) -> Result<PathBuf, &'static str> {
+    let path = PathBuf::from(value);
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("vaultpack"))
+    {
+        Ok(path)
+    } else {
+        Err("VaultPack destination must use the .vaultpack extension")
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -659,7 +678,6 @@ fn compile_command(
         .plan
         .validate_integrity()
         .map_err(|error| CliFailure::from_vaultc(EXIT_OUTPUT, error))?;
-    reject_existing_entry(output)?;
     if let Some(path) = policy_path {
         let supplied = CompilerPolicy::from_file(path)
             .map_err(|error| CliFailure::from_vaultc(EXIT_USAGE, error))?;
@@ -678,17 +696,14 @@ fn compile_command(
             ));
         }
     }
-    if let Some(pack_path) = pack {
-        validate_pack_destination(output, pack_path)?;
-    }
     let compiler = build_compiler(approved.plan.policy.clone(), None, EXIT_OUTPUT)?;
     let approved = revalidate_approved_plan(&compiler, &approved)?;
+    let options = CompileOptions {
+        create_pack: pack.map(Path::to_path_buf),
+    };
     let artifact = compiler
-        .compile(&approved, output)
+        .compile_with_options(&approved, output, &options)
         .map_err(|error| CliFailure::from_vaultc(EXIT_OUTPUT, error))?;
-    if let Some(pack_path) = pack {
-        create_pack_atomic(output, pack_path, approved.plan.policy.output.zstd_level)?;
-    }
     match format {
         OutputFormat::Json => print_json(&serde_json::json!({
             "artifact": artifact,
@@ -1005,137 +1020,6 @@ fn sync_parent(parent: &Path) -> CliResult<()> {
     Ok(())
 }
 
-fn validate_pack_destination(output: &Path, pack: &Path) -> CliResult<()> {
-    if !pack
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("vaultpack"))
-    {
-        return Err(CliFailure::new(
-            EXIT_USAGE,
-            "VaultPack destination must use the .vaultpack extension",
-        ));
-    }
-    let output = resolve_existing_ancestors(output)?;
-    let pack = resolve_existing_ancestors(pack)?;
-    if pack == output || pack.starts_with(&output) {
-        return Err(CliFailure::new(
-            EXIT_OUTPUT,
-            "VaultPack destination cannot be inside the Compiled Vault",
-        ));
-    }
-    reject_existing_entry(&pack)?;
-    Ok(())
-}
-
-fn reject_existing_entry(path: &Path) -> CliResult<()> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Err(CliFailure::new(
-            EXIT_OUTPUT,
-            format!("destination already exists: {}", path.display()),
-        )),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(CliFailure::new(
-            EXIT_OUTPUT,
-            format!("cannot inspect destination `{}`: {error}", path.display()),
-        )),
-    }
-}
-
-fn create_pack_atomic(compiled_vault: &Path, destination: &Path, zstd_level: i32) -> CliResult<()> {
-    let parent = destination
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
-        .map_err(|error| CliFailure::new(EXIT_OUTPUT, format!("{}: {error}", parent.display())))?;
-    let staging = tempfile::Builder::new()
-        .prefix(".vaultc-pack-")
-        .tempdir_in(parent)
-        .map_err(|error| CliFailure::new(EXIT_OUTPUT, format!("{}: {error}", parent.display())))?;
-    let staged_pack = staging.path().join("artifact.vaultpack");
-    vaultc::pack::create_pack(compiled_vault, &staged_pack, zstd_level)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_OUTPUT, error))?;
-    fs::hard_link(&staged_pack, destination).map_err(|error| {
-        CliFailure::new(
-            EXIT_OUTPUT,
-            format!(
-                "failed to publish `{}` without overwrite: {error}",
-                destination.display()
-            ),
-        )
-    })?;
-    sync_parent(parent)?;
-    Ok(())
-}
-
-fn absolute_lexical(path: &Path) -> CliResult<PathBuf> {
-    let combined = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map_err(|error| CliFailure::from_error(EXIT_OUTPUT, error))?
-            .join(path)
-    };
-    let mut normalized = PathBuf::new();
-    for component in combined.components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(component.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(segment) => normalized.push(segment),
-        }
-    }
-    Ok(normalized)
-}
-
-fn resolve_existing_ancestors(path: &Path) -> CliResult<PathBuf> {
-    let mut ancestor = absolute_lexical(path)?;
-    let mut suffix = Vec::new();
-    loop {
-        match fs::symlink_metadata(&ancestor) {
-            Ok(_) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let name = ancestor.file_name().ok_or_else(|| {
-                    CliFailure::new(
-                        EXIT_OUTPUT,
-                        format!("cannot resolve destination `{}`", path.display()),
-                    )
-                })?;
-                suffix.push(name.to_os_string());
-                if !ancestor.pop() {
-                    return Err(CliFailure::new(
-                        EXIT_OUTPUT,
-                        format!("cannot resolve destination `{}`", path.display()),
-                    ));
-                }
-            }
-            Err(error) => {
-                return Err(CliFailure::new(
-                    EXIT_OUTPUT,
-                    format!("cannot inspect destination `{}`: {error}", path.display()),
-                ));
-            }
-        }
-    }
-    let mut resolved = fs::canonicalize(&ancestor).map_err(|error| {
-        CliFailure::new(
-            EXIT_OUTPUT,
-            format!(
-                "cannot resolve destination ancestor `{}`: {error}",
-                ancestor.display()
-            ),
-        )
-    })?;
-    for component in suffix.into_iter().rev() {
-        resolved.push(component);
-    }
-    Ok(resolved)
-}
-
 fn print_inspection(inspection: &Inspection, format: OutputFormat) -> CliResult<()> {
     match format {
         OutputFormat::Json => print_json(inspection),
@@ -1278,16 +1162,35 @@ mod tests {
     }
 
     #[test]
-    fn pack_must_be_outside_output_tree() {
-        let output = Path::new("target/test-output/CompiledVault");
-        assert!(validate_pack_destination(output, &output.join("bad.vaultpack")).is_err());
-        assert!(
-            validate_pack_destination(output, Path::new("target/test-output/good.vaultpack"))
-                .is_ok()
-        );
-        assert!(
-            validate_pack_destination(output, Path::new("target/test-output/bad.tar.zst")).is_err()
-        );
+    fn compile_pack_argument_requires_vaultpack_extension() {
+        let cli = Cli::try_parse_from([
+            "vaultc",
+            "compile",
+            "approved.json",
+            "--output",
+            "compiled",
+            "--pack",
+            "release.VAULTPACK",
+        ])
+        .expect("ASCII-case-insensitive VaultPack extension");
+        match cli.command {
+            CommandKind::Compile { pack, .. } => {
+                assert_eq!(pack, Some(PathBuf::from("release.VAULTPACK")));
+            }
+            _ => panic!("expected compile command"),
+        }
+
+        let error = Cli::try_parse_from([
+            "vaultc",
+            "compile",
+            "approved.json",
+            "--output",
+            "compiled",
+            "--pack",
+            "release.tar.zst",
+        ])
+        .expect_err("non-VaultPack extension must be a usage error");
+        assert_eq!(error.exit_code(), i32::from(EXIT_USAGE));
     }
 
     #[test]
@@ -1453,6 +1356,41 @@ mod tests {
         assert_eq!(
             plan_failure(&VaultcError::Provider("impossible during planning".into())).code,
             EXIT_INTERNAL
+        );
+    }
+
+    #[test]
+    fn compile_error_families_preserve_nested_internal_invariants() {
+        let wrapped_internal = VaultcError::PackPublicationAfterCompile {
+            compiled_vault: PathBuf::from("compiled"),
+            pack: PathBuf::from("compiled.vaultpack"),
+            source: Box::new(VaultcError::Internal("broken pack invariant".into())),
+        };
+        assert_eq!(
+            CliFailure::from_vaultc(EXIT_OUTPUT, wrapped_internal).code,
+            EXIT_INTERNAL
+        );
+
+        let wrapped_runtime = VaultcError::PackPublicationAfterCompile {
+            compiled_vault: PathBuf::from("compiled"),
+            pack: PathBuf::from("compiled.vaultpack"),
+            source: Box::new(VaultcError::Io {
+                path: PathBuf::from("compiled.vaultpack"),
+                source: std::io::Error::other("runtime pack failure"),
+            }),
+        };
+        assert_eq!(
+            CliFailure::from_vaultc(EXIT_OUTPUT, wrapped_runtime).code,
+            EXIT_OUTPUT
+        );
+
+        let durability = VaultcError::PublishedButDurabilityUncertain {
+            path: PathBuf::from("compiled.vaultpack"),
+            source: std::io::Error::other("directory sync failed"),
+        };
+        assert_eq!(
+            CliFailure::from_vaultc(EXIT_OUTPUT, durability).code,
+            EXIT_OUTPUT
         );
     }
 }

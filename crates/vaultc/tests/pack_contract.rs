@@ -69,7 +69,7 @@ fn vaultpack_is_byte_deterministic_verifiable_and_explainable() {
 }
 
 #[test]
-fn vaultpack_verifier_rejects_a_valid_archive_with_tampered_content() {
+fn public_pack_creation_rejects_tampered_input_without_destination() {
     let compiler = common::compiler();
     let inspection = compiler
         .inspect([common::fixture_source("basic", "basic_vault")])
@@ -90,12 +90,20 @@ fn vaultpack_verifier_rejects_a_valid_archive_with_tampered_content() {
     .expect("tamper compiled content while retaining stale checksums");
 
     let pack = temporary.path().join("tampered.vaultpack");
-    vaultc::pack::create_pack(&artifact_root, &pack, compiler.policy().output.zstd_level)
-        .expect("package structurally valid tampered artifact");
-    let error = compiler
-        .verify(&pack)
-        .expect_err("tampered VaultPack must fail closed");
+    let entries_before: BTreeSet<_> = fs::read_dir(temporary.path())
+        .expect("read tampered-pack parent before publication")
+        .map(|entry| entry.expect("tampered-pack parent entry").file_name())
+        .collect();
+    let error =
+        vaultc::pack::create_pack(&artifact_root, &pack, compiler.policy().output.zstd_level)
+            .expect_err("public publisher must independently reject tampered input");
     assert!(matches!(error, VaultcError::VerificationFailed(_)));
+    assert!(!pack.exists());
+    let entries_after: BTreeSet<_> = fs::read_dir(temporary.path())
+        .expect("read tampered-pack parent after publication")
+        .map(|entry| entry.expect("tampered-pack parent entry").file_name())
+        .collect();
+    assert_eq!(entries_after, entries_before);
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 #[cfg(feature = "archives")]
 use sha2::{Digest as _, Sha256};
@@ -21,20 +21,41 @@ pub(crate) struct PackObservation {
 }
 
 #[cfg(feature = "archives")]
-pub fn create_pack(compiled_vault: &Path, destination: &Path, zstd_level: i32) -> Result<()> {
-    if destination.exists() {
-        return Err(VaultcError::OutputExists(destination.to_path_buf()));
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackPublicationStep {
+    Write,
+    Finish,
+    Flush,
+    FileSync,
+    StagedVerify,
+    Publish,
+    ParentSync,
+}
+
+#[cfg(feature = "archives")]
+trait PackPublicationHook {
+    fn checkpoint(&self, _step: PackPublicationStep, _path: &Path) -> std::io::Result<()> {
+        Ok(())
     }
-    let sealed_level = sealed_zstd_level(compiled_vault)?;
-    if zstd_level != sealed_level {
-        return Err(VaultcError::InvalidConfig(format!(
-            "VaultPack zstd level {zstd_level} disagrees with sealed plan level {sealed_level}"
-        )));
-    }
+}
+
+#[cfg(feature = "archives")]
+struct ProductionPackPublicationHook;
+
+#[cfg(feature = "archives")]
+impl PackPublicationHook for ProductionPackPublicationHook {}
+
+#[cfg(feature = "archives")]
+fn write_pack_stream<W: Write>(
+    compiled_vault: &Path,
+    output: W,
+    error_path: &Path,
+    zstd_level: i32,
+    hook: &impl PackPublicationHook,
+) -> Result<W> {
     let files = crate::compile::inventory(compiled_vault, &[])?;
-    let output = File::create(destination).map_err(|error| VaultcError::io(destination, error))?;
     let encoder = zstd::Encoder::new(output, zstd_level)
-        .map_err(|error| VaultcError::io(destination, error))?;
+        .map_err(|error| VaultcError::io(error_path, error))?;
     let mut archive = tar::Builder::new(encoder);
     archive.mode(tar::HeaderMode::Deterministic);
     for file in files {
@@ -50,26 +71,306 @@ pub fn create_pack(compiled_vault: &Path, destination: &Path, zstd_level: i32) -
         header.set_cksum();
         archive
             .append_data(&mut header, &file.path, &mut input)
-            .map_err(|error| VaultcError::io(destination, error))?;
+            .map_err(|error| VaultcError::io(error_path, error))?;
     }
+    hook.checkpoint(PackPublicationStep::Write, error_path)
+        .map_err(|error| VaultcError::io(error_path, error))?;
     let encoder = archive
         .into_inner()
-        .map_err(|error| VaultcError::io(destination, error))?;
+        .map_err(|error| VaultcError::io(error_path, error))?;
     let mut output = encoder
         .finish()
-        .map_err(|error| VaultcError::io(destination, error))?;
+        .map_err(|error| VaultcError::io(error_path, error))?;
+    hook.checkpoint(PackPublicationStep::Finish, error_path)
+        .map_err(|error| VaultcError::io(error_path, error))?;
     output
         .flush()
+        .map_err(|error| VaultcError::io(error_path, error))?;
+    hook.checkpoint(PackPublicationStep::Flush, error_path)
+        .map_err(|error| VaultcError::io(error_path, error))?;
+    Ok(output)
+}
+
+#[cfg(feature = "archives")]
+fn write_pack_path_raw(compiled_vault: &Path, destination: &Path, zstd_level: i32) -> Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    let output = options
+        .open(destination)
         .map_err(|error| VaultcError::io(destination, error))?;
+    let output = write_pack_stream(
+        compiled_vault,
+        output,
+        destination,
+        zstd_level,
+        &ProductionPackPublicationHook,
+    )?;
     output
         .sync_all()
-        .map_err(|error| VaultcError::io(destination, error))?;
+        .map_err(|error| VaultcError::io(destination, error))
+}
+
+#[cfg(feature = "archives")]
+pub fn create_pack(compiled_vault: &Path, destination: &Path, zstd_level: i32) -> Result<()> {
+    create_pack_with_hook(
+        compiled_vault,
+        destination,
+        zstd_level,
+        &ProductionPackPublicationHook,
+    )
+}
+
+#[cfg(feature = "archives")]
+fn create_pack_with_hook(
+    compiled_vault: &Path,
+    destination: &Path,
+    zstd_level: i32,
+    hook: &impl PackPublicationHook,
+) -> Result<()> {
+    let sealed_level = sealed_zstd_level(compiled_vault)?;
+    if zstd_level != sealed_level {
+        return Err(VaultcError::InvalidConfig(format!(
+            "VaultPack zstd level {zstd_level} disagrees with sealed plan level {sealed_level}"
+        )));
+    }
+    require_compiled_vault_directory(compiled_vault)?;
+    crate::verify::verify_directory(compiled_vault)?;
+    preflight_pack_destination(compiled_vault, destination)?;
+
+    let parent = destination_parent(destination);
+    let mut staged = tempfile::Builder::new()
+        .prefix(".vaultc-pack-")
+        .suffix(".vaultpack")
+        .tempfile_in(parent)
+        .map_err(|error| VaultcError::io(parent, error))?;
+    let staged_path = staged.path().to_path_buf();
+    write_pack_stream(
+        compiled_vault,
+        staged.as_file_mut(),
+        &staged_path,
+        zstd_level,
+        hook,
+    )?;
+    staged
+        .as_file()
+        .sync_all()
+        .map_err(|error| VaultcError::io(&staged_path, error))?;
+    hook.checkpoint(PackPublicationStep::FileSync, &staged_path)
+        .map_err(|error| VaultcError::io(&staged_path, error))?;
+    crate::verify::verify_artifact(&staged_path)?;
+    hook.checkpoint(PackPublicationStep::StagedVerify, &staged_path)
+        .map_err(|error| VaultcError::io(&staged_path, error))?;
+
+    let published = match staged.persist_noclobber(destination) {
+        Ok(file) => file,
+        Err(error) => {
+            let source = error.error;
+            if source.kind() == std::io::ErrorKind::AlreadyExists
+                || fs::symlink_metadata(destination).is_ok()
+            {
+                return Err(VaultcError::OutputExists(destination.to_path_buf()));
+            }
+            return Err(VaultcError::io(destination, source));
+        }
+    };
+    if let Err(source) = hook.checkpoint(PackPublicationStep::Publish, destination) {
+        return Err(VaultcError::PublishedButDurabilityUncertain {
+            path: destination.to_path_buf(),
+            source,
+        });
+    }
+    drop(published);
+    if let Err(error) = sync_parent_after_publication(parent, destination, hook) {
+        return Err(VaultcError::PublishedButDurabilityUncertain {
+            path: destination.to_path_buf(),
+            source: error,
+        });
+    }
     Ok(())
 }
 
 #[cfg(not(feature = "archives"))]
 pub fn create_pack(_compiled_vault: &Path, destination: &Path, _zstd_level: i32) -> Result<()> {
     Err(VaultcError::UnsupportedSource(destination.to_path_buf()))
+}
+
+#[cfg(feature = "archives")]
+pub(crate) fn preflight_pack_destination(compiled_vault: &Path, destination: &Path) -> Result<()> {
+    validate_pack_extension(destination)?;
+    reject_existing_pack_leaf(destination)?;
+    validate_disjoint_paths(compiled_vault, destination)?;
+
+    let parent = destination_parent(destination);
+    fs::create_dir_all(parent).map_err(|error| VaultcError::io(parent, error))?;
+
+    // Creating a previously absent parent can expose a different canonical
+    // ancestor than the first pass. Repeat both security checks before any
+    // staging file is created.
+    reject_existing_pack_leaf(destination)?;
+    validate_disjoint_paths(compiled_vault, destination)
+}
+
+#[cfg(not(feature = "archives"))]
+pub(crate) fn preflight_pack_destination(_compiled_vault: &Path, destination: &Path) -> Result<()> {
+    Err(VaultcError::UnsupportedSource(destination.to_path_buf()))
+}
+
+#[cfg(feature = "archives")]
+fn validate_pack_extension(destination: &Path) -> Result<()> {
+    if destination
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("vaultpack"))
+    {
+        return Ok(());
+    }
+    Err(VaultcError::InvalidConfig(format!(
+        "VaultPack destination `{}` must use the .vaultpack extension",
+        destination.display()
+    )))
+}
+
+#[cfg(feature = "archives")]
+fn reject_existing_pack_leaf(destination: &Path) -> Result<()> {
+    match fs::symlink_metadata(destination) {
+        Ok(_) => Err(VaultcError::OutputExists(destination.to_path_buf())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(VaultcError::io(destination, error)),
+    }
+}
+
+#[cfg(feature = "archives")]
+fn require_compiled_vault_directory(compiled_vault: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(compiled_vault)
+        .map_err(|error| VaultcError::io(compiled_vault, error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(VaultcError::VerificationFailed(format!(
+            "VaultPack input `{}` must be a non-symlink Compiled Vault directory",
+            compiled_vault.display()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "archives")]
+fn validate_disjoint_paths(compiled_vault: &Path, destination: &Path) -> Result<()> {
+    let compiled = resolve_existing_ancestor(compiled_vault)?;
+    let pack = resolve_existing_ancestor(destination)?;
+    let compiled_key = portable_host_path_key(&compiled)?;
+    let pack_key = portable_host_path_key(&pack)?;
+    if compiled_key == pack_key
+        || compiled_key.starts_with(&pack_key)
+        || pack_key.starts_with(&compiled_key)
+    {
+        return Err(VaultcError::UnsafePath {
+            path: destination.display().to_string(),
+            reason: "VaultPack destination and Compiled Vault must be disjoint in both containment directions"
+                .into(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(feature = "archives")]
+fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| VaultcError::io(path, error))?
+            .join(path)
+    };
+    for ancestor in absolute.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(_) => {
+                let resolved =
+                    fs::canonicalize(ancestor).map_err(|error| VaultcError::io(ancestor, error))?;
+                let suffix = absolute.strip_prefix(ancestor).map_err(|_| {
+                    VaultcError::Internal(
+                        "existing destination ancestor was not a lexical prefix".into(),
+                    )
+                })?;
+                return lexical_normalize(&resolved.join(suffix));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(VaultcError::io(ancestor, error)),
+        }
+    }
+    Err(VaultcError::Io {
+        path: path.to_path_buf(),
+        source: std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "destination has no resolvable existing ancestor",
+        ),
+    })
+}
+
+#[cfg(feature = "archives")]
+fn lexical_normalize(path: &Path) -> Result<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(VaultcError::UnsafePath {
+                        path: path.display().to_string(),
+                        reason: "host destination path traverses above its root".into(),
+                    });
+                }
+            }
+            Component::Normal(segment) => normalized.push(segment),
+        }
+    }
+    Ok(normalized)
+}
+
+#[cfg(feature = "archives")]
+fn portable_host_path_key(path: &Path) -> Result<Vec<String>> {
+    path.components()
+        .map(|component| match component {
+            Component::RootDir => Ok("root:".to_owned()),
+            Component::Prefix(prefix) => portable_component_key(prefix.as_os_str(), path),
+            Component::Normal(segment) => portable_component_key(segment, path),
+            Component::CurDir | Component::ParentDir => Err(VaultcError::Internal(
+                "portable host path key received a non-normalized path".into(),
+            )),
+        })
+        .collect()
+}
+
+#[cfg(feature = "archives")]
+fn portable_component_key(component: &std::ffi::OsStr, path: &Path) -> Result<String> {
+    let component = component.to_str().ok_or_else(|| VaultcError::UnsafePath {
+        path: path.display().to_string(),
+        reason: "pack publication paths must be valid UTF-8 for portable comparison".into(),
+    })?;
+    Ok(crate::parse::full_casefold_nfc(component))
+}
+
+#[cfg(feature = "archives")]
+fn destination_parent(destination: &Path) -> &Path {
+    destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+#[cfg(feature = "archives")]
+fn sync_parent_after_publication(
+    parent: &Path,
+    destination: &Path,
+    hook: &impl PackPublicationHook,
+) -> std::io::Result<()> {
+    hook.checkpoint(PackPublicationStep::ParentSync, destination)?;
+    #[cfg(unix)]
+    {
+        let directory = File::open(parent)?;
+        directory.sync_all()?;
+    }
+    Ok(())
 }
 
 #[cfg(feature = "archives")]
@@ -144,7 +445,7 @@ pub(crate) fn verify_canonical_pack(pack: &Path, compiled_vault: &Path) -> Resul
     let zstd_level = sealed_zstd_level(compiled_vault)?;
     let temporary = tempfile::tempdir().map_err(|error| VaultcError::io(pack, error))?;
     let expected = temporary.path().join("canonical.vaultpack");
-    create_pack(compiled_vault, &expected, zstd_level)?;
+    write_pack_path_raw(compiled_vault, &expected, zstd_level)?;
     compare_pack_bytes(pack, &expected)
 }
 
@@ -308,4 +609,188 @@ pub(crate) fn extract_pack_safely(pack: &Path, destination: &Path) -> Result<()>
         total = next_total;
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "archives"))]
+mod tests {
+    use std::cell::RefCell;
+    use std::collections::BTreeSet;
+    use std::ffi::OsString;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use super::{PackPublicationHook, PackPublicationStep, create_pack_with_hook};
+    use crate::{SourceSpec, VaultCompiler, VaultcError};
+
+    struct RecordingHook {
+        steps: RefCell<Vec<PackPublicationStep>>,
+        fail_at: Option<PackPublicationStep>,
+    }
+
+    impl RecordingHook {
+        fn new(fail_at: Option<PackPublicationStep>) -> Self {
+            Self {
+                steps: RefCell::new(Vec::new()),
+                fail_at,
+            }
+        }
+
+        fn observed(&self) -> Vec<PackPublicationStep> {
+            self.steps.borrow().clone()
+        }
+    }
+
+    impl PackPublicationHook for RecordingHook {
+        fn checkpoint(&self, step: PackPublicationStep, _path: &Path) -> std::io::Result<()> {
+            self.steps.borrow_mut().push(step);
+            if self.fail_at == Some(step) {
+                return Err(std::io::Error::other(format!(
+                    "injected VaultPack publication failure at {step:?}"
+                )));
+            }
+            Ok(())
+        }
+    }
+
+    fn compile_fixture(parent: &Path) -> (VaultCompiler, PathBuf) {
+        let sdk = VaultCompiler::builder()
+            .build()
+            .expect("build pack publication test compiler");
+        let source =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/basic_vault");
+        let inspection = sdk
+            .inspect([SourceSpec::directory("pack-publication-unit", source)
+                .expect("pack publication unit source")])
+            .expect("inspect pack publication unit source");
+        let plan = sdk
+            .plan(&inspection)
+            .expect("plan pack publication unit source");
+        let approved = sdk
+            .approve_without_augmentation(plan)
+            .expect("approve pack publication unit source");
+        let compiled_vault = parent.join("compiled");
+        sdk.compile(&approved, &compiled_vault)
+            .expect("compile pack publication unit source");
+        (sdk, compiled_vault)
+    }
+
+    fn entry_names(parent: &Path) -> BTreeSet<OsString> {
+        fs::read_dir(parent)
+            .expect("read pack publication test parent")
+            .map(|entry| entry.expect("pack publication test entry").file_name())
+            .collect()
+    }
+
+    #[test]
+    fn pack_publication_checkpoints_follow_the_normative_order() {
+        let temporary = tempfile::tempdir().expect("pack checkpoint temporary parent");
+        let (sdk, compiled_vault) = compile_fixture(temporary.path());
+        let destination = temporary.path().join("ordered.vaultpack");
+        let hook = RecordingHook::new(None);
+
+        create_pack_with_hook(
+            &compiled_vault,
+            &destination,
+            sdk.policy().output.zstd_level,
+            &hook,
+        )
+        .expect("publish pack through every checkpoint");
+
+        assert_eq!(
+            hook.observed(),
+            vec![
+                PackPublicationStep::Write,
+                PackPublicationStep::Finish,
+                PackPublicationStep::Flush,
+                PackPublicationStep::FileSync,
+                PackPublicationStep::StagedVerify,
+                PackPublicationStep::Publish,
+                PackPublicationStep::ParentSync,
+            ]
+        );
+        assert!(
+            sdk.verify(&destination)
+                .expect("verify checkpoint pack")
+                .valid
+        );
+    }
+
+    #[test]
+    fn precommit_pack_faults_leave_no_destination_or_sibling_stage() {
+        let temporary = tempfile::tempdir().expect("precommit fault temporary parent");
+        let (sdk, compiled_vault) = compile_fixture(temporary.path());
+        let normative_order = [
+            PackPublicationStep::Write,
+            PackPublicationStep::Finish,
+            PackPublicationStep::Flush,
+            PackPublicationStep::FileSync,
+            PackPublicationStep::StagedVerify,
+        ];
+
+        for (index, fail_at) in normative_order.iter().copied().enumerate() {
+            let destination = temporary
+                .path()
+                .join(format!("precommit-{index}.vaultpack"));
+            let entries_before = entry_names(temporary.path());
+            let hook = RecordingHook::new(Some(fail_at));
+            let error = create_pack_with_hook(
+                &compiled_vault,
+                &destination,
+                sdk.policy().output.zstd_level,
+                &hook,
+            )
+            .expect_err("injected precommit fault must fail");
+
+            assert!(matches!(error, VaultcError::Io { .. }));
+            assert!(fs::symlink_metadata(&destination).is_err());
+            assert_eq!(entry_names(temporary.path()), entries_before);
+            assert_eq!(hook.observed(), normative_order[..=index]);
+        }
+    }
+
+    #[test]
+    fn postcommit_pack_faults_retain_a_complete_published_pack() {
+        let temporary = tempfile::tempdir().expect("postcommit fault temporary parent");
+        let (sdk, compiled_vault) = compile_fixture(temporary.path());
+
+        for (index, fail_at) in [
+            PackPublicationStep::Publish,
+            PackPublicationStep::ParentSync,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let destination = temporary
+                .path()
+                .join(format!("postcommit-{index}.vaultpack"));
+            let entries_before = entry_names(temporary.path());
+            let hook = RecordingHook::new(Some(fail_at));
+            let error = create_pack_with_hook(
+                &compiled_vault,
+                &destination,
+                sdk.policy().output.zstd_level,
+                &hook,
+            )
+            .expect_err("injected postcommit fault must report uncertain durability");
+
+            assert!(matches!(
+                error,
+                VaultcError::PublishedButDurabilityUncertain { ref path, .. }
+                    if path == &destination
+            ));
+            assert!(
+                sdk.verify(&destination)
+                    .expect("verify retained postcommit pack")
+                    .valid
+            );
+            let mut expected_entries = entries_before;
+            expected_entries.insert(
+                destination
+                    .file_name()
+                    .expect("postcommit destination file name")
+                    .to_os_string(),
+            );
+            assert_eq!(entry_names(temporary.path()), expected_entries);
+        }
+    }
 }

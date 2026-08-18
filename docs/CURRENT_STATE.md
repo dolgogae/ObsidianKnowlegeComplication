@@ -12,6 +12,7 @@ decision_refs:
   - ADR-0010
   - ADR-0011
   - ADR-0012
+  - ADR-0013
 source_refs:
   - HIST-CURRENT-PLAN
 ---
@@ -35,8 +36,8 @@ Implemented production packages:
   typed Canvas reference resolution and rewriting, immutable approvals, atomic
   compilation, provider-neutral augmentation request/authorization/recording
   and offline replay, typed content-addressed provenance with a non-circular
-  audit envelope, deterministic packing, independent verification, and SQLite
-  workspace state;
+  audit envelope, deterministic packing with verified atomic no-clobber pack
+  publication, independent verification, and SQLite workspace state;
 - `vaultc-protocol`: versioned provider capabilities, projections, evidence,
   proposals, and transcript records without a vendor SDK dependency;
 - `vaultc-cli`: `inspect`, `plan`, `augment`, `replay`, `approve`, `compile`,
@@ -67,16 +68,16 @@ All commands below passed on macOS arm64 with Rust 1.97.1:
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 129 tests and all doctests passed |
+| `cargo test --workspace --all-features --no-fail-fast` | 148 tests and all doctests passed |
 | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
 
-The 129 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 4
+The 148 tests comprise 18 `vaultc` unit tests, 5 Canvas integration tests, 4
 generated-provenance tests, 22 normalization/archive tests, 5 pack integration
-tests, 8 pipeline tests, 5 provider/approval tests, 14 SDK augmentation/replay
-tests, 18 security tests, 9
-typed-provenance tests, 12 CLI unit tests, 3 CLI replay tests, 7 CLI lifecycle
-tests, and 2 protocol tests. They cover, among other cases:
+tests, 11 atomic-pack-publication tests, 8 pipeline tests, 5 provider/approval
+tests, 14 SDK augmentation/replay tests, 18 security tests, 9 typed-provenance
+tests, 13 CLI unit tests, 3 CLI replay tests, 11 CLI lifecycle tests, and 2
+protocol tests. They cover, among other cases:
 
 - source immutability, deterministic plan/output, absolute-source-location
   independence, and byte-identical VaultPacks on one supported host;
@@ -113,6 +114,10 @@ tests, and 2 protocol tests. They cover, among other cases:
 - canonical VaultPack outer-byte verification, rejection of alternate zstd
   encodings or policy-mismatched levels, and streamed outer expansion-ratio
   enforcement before materialization;
+- SDK/CLI pack staging, input and staged-pack verification, atomic no-replace
+  publication, existing file/directory/live-or-dangling-symlink preservation,
+  bidirectional containment and portable alias rejection, deterministic
+  concurrent single-winner publication, and injected pre/post-commit faults;
 - CLI/SDK plan parity and the full plan → approve → compile → pack → verify →
   explain lifecycle, including stable plan input/decision/internal exit families
   and fail-closed pre-output-hash plan rejection;
@@ -134,7 +139,7 @@ The exact requirement-to-test mapping is in
 | QG-001 Functional | implemented on macOS arm64 | current automated suite is green; the complete Markdown/Canvas golden corpus and supported-platform matrix are not complete |
 | QG-002 Determinism | implemented on one platform | same-host bytes and absolute-location independence pass; Linux/Windows/toolchain comparison remains |
 | QG-003 Provenance | implemented and locally verified | typed stored graph, virtual audit envelope, RecordIds, decisions/approvals, frontmatter attribution, pagination, exact reconstruction, and adversarial reseal tests pass on macOS arm64; platform matrix remains |
-| QG-004 Safety | implemented corpus green | current hostile-input and control-file tests pass; fuzz/property campaigns remain |
+| QG-004 Safety | implemented corpus green | current hostile-input, control-file, pack-publication race, and pack fault-seam tests pass; fuzz/property campaigns remain |
 | QG-005 Compatibility | documented | no migration/version compatibility matrix is implemented yet |
 | QG-006 Performance | not verified | the 100,000-note/20 GB/20-minute/2 GB RSS benchmark has not run |
 | QG-007 Documentation | passed for this change | current state, traceability, specs, and append-only decision log are updated; all repository-relative Markdown links resolve |
@@ -179,12 +184,15 @@ The exact requirement-to-test mapping is in
   signing profile, key lifecycle, revocation, SBOM, and release artifacts are
   future work.
 - Schema migrations, resume semantics, workspace encryption policy, broader
-  property/fuzz testing, and an interrupted-materialization fault-injection
-  harness remain.
-- CLI `compile --pack` stages both results, rejects destinations already
-  observed to exist, and publishes the pack file with no-clobber semantics, but
-  the Compiled Vault and pack are not one combined filesystem transaction. A
-  pack failure after Vault publication can leave the valid Compiled Vault.
+  property/fuzz testing, and a process-crash harness for directory
+  materialization remain. Pack publication has deterministic in-process fault
+  injection at every write-to-parent-sync boundary.
+- SDK and CLI share one verified sibling-staging/no-replace pack publisher.
+  The Compiled Vault and pack remain two ordered publications rather than one
+  combined filesystem transaction. A runtime pack failure returns an explicit
+  `PackPublicationAfterCompile` state and keeps the valid Compiled Vault; a
+  post-commit parent-sync failure keeps the complete pack and reports uncertain
+  durability.
 - Source opening is rechecked but not yet descriptor-relative/no-follow, and
   portable no-clobber directory publication is not proven race-free on every
   platform. VaultPack extraction now bounds the outer file, declared and
@@ -201,9 +209,9 @@ The exact requirement-to-test mapping is in
   output is hash-committed; generated bodies/frontmatter source IDs now have an
   equivalent approved-proposal derivation check. An unsigned, wholly resealed
   artifact still has no external authenticity anchor.
-- The public SDK pack writer writes directly to its destination; atomic
-  no-clobber pack staging is currently a CLI-only wrapper. There is no installer
-  or permission/license/signature display surface.
+- Pack no-clobber and symlink/race behavior is verified locally on macOS; the
+  Windows reparse-point and full supported-filesystem matrix remain. There is
+  no installer or permission/license/signature display surface.
 - Typed conflict actions are not modeled yet. `user_resolved` and
   `provider_suggested` remain reserved states; V1 only accepts an explicit
   policy waiver overlay for a required conflict.
@@ -214,14 +222,12 @@ The exact requirement-to-test mapping is in
 
 ## Next implementation slices
 
-1. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
-   artifact determinism fixtures.
-2. Make public SDK pack creation atomic/no-clobber and add combined
-   Compiled-Vault-plus-pack failure/fault-injection coverage.
-3. Define schema migrations and run property/fuzz and fault-injection suites.
-4. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
+1. Close portable atomic no-replace Compiled Vault directory publication and
+   add Linux, Windows, and macOS matrix CI for path, race, and determinism cases.
+2. Define schema migrations and run property/fuzz plus process-crash suites.
+3. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
    ADR before calling a pack signed or marketplace-ready.
-5. Stream large blobs and control files and run QG-006 at the full reference
+4. Stream large blobs and control files and run QG-006 at the full reference
    workload.
 
 No MCP, plugin, marketplace, or neuroscience-inspired runtime behavior should

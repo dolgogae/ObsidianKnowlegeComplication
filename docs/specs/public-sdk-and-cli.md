@@ -3,13 +3,14 @@ title: Public SDK and CLI Contract
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0001
   - ADR-0004
   - ADR-0009
   - ADR-0010
   - ADR-0011
+  - ADR-0013
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -71,8 +72,8 @@ plan.
 | replay | `VaultCompiler::replay_augmentation`; CLI `replay` | sealed plan + canonical recording | provider-free revalidated recording | no |
 | validate | `VaultCompiler::validate_proposals` | `&DraftPlan` + proposals | deterministic `ValidatedProposals` | no |
 | approve | `approve`, `approve_with_conflicts`, `approve_without_augmentation` | owned `DraftPlan` + validation/decision logs | `ApprovedPlan` | no |
-| compile | `VaultCompiler::compile` | `&ApprovedPlan` + absent destination | `CompiledArtifact` | yes; sibling-stages then renames a new directory; portable race-free no-clobber remains open |
-| pack | `vaultc::pack::create_pack`; CLI `compile --pack` | verified Compiled Vault + absent `.vaultpack` path | deterministic pack | yes; SDK writes directly, CLI stages/no-clobbers |
+| compile | `VaultCompiler::{compile,compile_with_options}` | `&ApprovedPlan` + absent destination + optional pack path | `CompiledArtifact` | yes; the directory and optional pack are two ordered publications |
+| pack | `vaultc::pack::create_pack`; CLI `compile --pack` | verified Compiled Vault + absent disjoint `.vaultpack` path | deterministic pack | yes; sibling-stages, synchronizes, verifies, and atomically publishes without replacement |
 | verify | `VaultCompiler::verify` | Compiled Vault or `.vaultpack` | `VerificationReport` | no |
 | explain | `VaultCompiler::explain_provenance_page`; bounded `explain_provenance` convenience | artifact + typed path/package query | versioned `ProvenancePage` or complete bounded explanation | no |
 
@@ -153,12 +154,24 @@ deadline bounds, writes provider input on a supervised thread, and on deadline
 or SIGINT terminates and reaps the provider process tree on supported Unix
 platforms. It never publishes a partial augmentation file.
 
-`compile` rejects an output or pack that exists when checked. A pack path must end in
-`.vaultpack`, must be outside the Compiled Vault tree, and is published with
-no-clobber file semantics. The directory compilation and subsequent pack
-creation are two publications, not one combined transaction. The V1 contract
-still requires closing the cross-platform destination check/rename race before
-release qualification.
+`compile` rejects an output or pack that exists. A pack path must end in
+`.vaultpack`, must be disjoint from the Compiled Vault in either containment
+direction, and is sibling-staged and atomically published with no-clobber file
+semantics. `VaultCompiler::compile_with_options` connects the public
+`CompileOptions.create_pack` path; the simpler `compile` uses default options.
+The directory compilation and subsequent pack creation are two publications,
+not one combined transaction, so a runtime pack failure leaves the already
+valid Compiled Vault and returns `PackPublicationAfterCompile`. The V1 contract
+still requires closing the portable directory destination check/rename race
+before release qualification.
+
+Every caught failure before pack publication leaves no vaultc-created file at
+the requested pack destination. A parent-directory synchronization failure
+after publication returns `PublishedButDurabilityUncertain`; the complete pack
+is retained because deleting it would not restore atomicity and could destroy
+an observable result. Standalone pack creation independently verifies both its
+input Compiled Vault and staged pack, but that integrity check is not publisher
+authentication.
 
 `explain` emits schema-versioned typed provenance. Its default and hard limits
 are 256/4,096 records and 4/16 MiB respectively. A returned cursor is bound to

@@ -5,6 +5,7 @@ use thiserror::Error;
 pub type Result<T, E = VaultcError> = std::result::Result<T, E>;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum VaultcError {
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
@@ -26,6 +27,23 @@ pub enum VaultcError {
     ApprovalStale(String),
     #[error("destination already exists: {0}")]
     OutputExists(PathBuf),
+    #[error(
+        "`{path}` was published completely, but synchronizing its parent directory failed; durability is uncertain: {source}"
+    )]
+    PublishedButDurabilityUncertain {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error(
+        "Compiled Vault `{compiled_vault}` remains published after VaultPack `{pack}` publication failed: {source}"
+    )]
+    PackPublicationAfterCompile {
+        compiled_vault: PathBuf,
+        pack: PathBuf,
+        #[source]
+        source: Box<VaultcError>,
+    },
     #[error("verification failed: {0}")]
     VerificationFailed(String),
     #[error("provider failed: {0}")]

@@ -268,3 +268,20 @@ Append-only. Normative details live in specifications and accepted ADRs.
   fault checkpoints. Added 11 SDK publication cases, 3 fault-order unit cases,
   and 4 CLI lifecycle/unit cases; the macOS arm64 suite increased from 129 to
   148 tests with workspace tests, Clippy, rustfmt, and diff checks green.
+
+## 2026-08-18 — Atomic Compiled Vault directory publication contract
+
+- Accepted ADR-0014 to replace the destination check plus replace-capable
+  directory rename with a single native no-replace commit on Linux, macOS, and
+  Windows. Unsupported primitives and filesystems must fail closed without a
+  weaker fallback.
+- Required every existing file, directory, live/dangling symlink or reparse
+  point, and late publication-race winner to remain untouched. A private
+  immediately-before-publish barrier is the required regression boundary.
+- Required output/source disjointness before staging so a requested output
+  cannot place temporary or final compiler state inside an immutable source.
+- Required explicit cleanup or synchronized marked retention of failed stages,
+  with a structured error retaining both the original and disposition failure.
+- Kept public compile return types and serialized artifacts unchanged. This
+  entry records the accepted contract; implementation and platform evidence
+  are reported separately after the feature gates pass.

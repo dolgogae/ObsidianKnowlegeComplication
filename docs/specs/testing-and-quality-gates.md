@@ -13,6 +13,7 @@ decision_refs:
   - ADR-0011
   - ADR-0012
   - ADR-0013
+  - ADR-0014
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -95,6 +96,9 @@ unchanged.
   transcripts, remote policy plus per-call consent, cooperative cancellation,
   and byte-identical SDK/CLI canonical recordings.
 - Compile interruption never publishes partial output.
+- Compiled Vault publication preserves every existing file, directory,
+  symlink/reparse point, and deterministic pre-commit race winner; concurrent
+  SDK/CLI creators have exactly one complete verified winner.
 - Public SDK/CLI pack creation never exposes a partial requested destination,
   never overwrites an existing entry or symlink referent, and has exactly one
   winner under concurrent publication.
@@ -137,6 +141,23 @@ failure. The private fault seam additionally verifies the exact
 write-to-parent-sync order and all pre/post-commit states. Supported-platform
 concurrent destination and Windows reparse-point tests remain release-matrix
 requirements even after local acceptance passes.
+
+The atomic-directory acceptance targets are
+`sdk_directory_concurrent_creators_have_exactly_one_winner`,
+`sdk_directory_distinct_concurrent_builds_never_mix_or_replace_winner`,
+`sdk_directory_existing_file_and_directory_are_preserved`,
+`sdk_directory_live_and_dangling_symlinks_are_rejected_without_following_referents`,
+`directory_publish_barrier_preserves_external_file_directory_and_symlink_winners`,
+`directory_precommit_faults_cleanup_staging_by_default`,
+`directory_retain_policy_marks_only_the_exact_failed_stage`,
+`directory_cleanup_failure_reports_residue`,
+`directory_parent_sync_failure_retains_verified_output`, and
+`directory_unsupported_primitive_never_falls_back_to_replacing_rename`.
+The source/output disjointness matrix covers equality, both containment
+directions, lexical `..`, existing-ancestor symlink aliases, and portable
+case/normalization aliases. Normal concurrent builds are supplemental; the
+private before-publish barrier is required to prove that a late empty-directory
+or symlink winner is not replaced.
 
 These names are acceptance targets. Do not mark their parent requirements
 verified by substituting a checksum-only or helper-unit assertion.

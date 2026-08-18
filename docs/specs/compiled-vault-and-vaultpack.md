@@ -13,6 +13,7 @@ decision_refs:
   - ADR-0010
   - ADR-0012
   - ADR-0013
+  - ADR-0014
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -113,15 +114,34 @@ by format version.
 
 ## Atomic materialization
 
-The compiler verifies sources and destination parent, creates a unique sibling staging directory with restrictive permissions, writes files without following symlinks, fsyncs according to platform policy, verifies the staged tree, then renames it to the requested absent destination. Existing output is rejected unless a separately specified, recoverable update workflow is introduced by ADR.
+The compiler verifies sources and destination parent, rejects source/output
+overlap, creates a unique sibling staging directory with restrictive
+permissions, writes and synchronizes files, synchronizes the completed staging
+tree where supported, independently verifies it, and commits it to the
+requested absent destination with the ADR-0014 platform no-replace primitive.
+Existing output is rejected unless a separately specified, recoverable update
+workflow is introduced by ADR.
 
-The `0.1.0` directory implementation performs an existence check immediately before the
-rename, but a portable atomic no-replace directory primitive has not been
-implemented. Closing that check/rename race on every supported platform is a
-release blocker for the no-clobber portion of REQ-CMP-001.
-If parent synchronization fails after the directory rename, the complete
-Compiled Vault remains visible and compilation returns
-`PublishedButDurabilityUncertain`; it is not deleted as a false rollback.
+Linux uses `renameat2(RENAME_NOREPLACE)` and macOS uses
+`renameatx_np(RENAME_EXCL)` through the safe `rustix` API. Windows uses the safe
+`atomicwrites::move_atomic` wrapper around `MoveFileExW` without replace. The
+compiler never falls back to a replacing rename. Existing files, empty or
+non-empty directories, live or dangling symlinks, supported reparse points,
+and publication-race winners remain untouched. Unsupported primitives or
+filesystems fail closed.
+
+Before staging, the requested output must be disjoint from every immutable
+source locator after existing-ancestor resolution, lexical normalization, and
+portable NFC/full-case-fold comparison. Descriptor-relative ancestor pinning
+is still a separate hardening boundary.
+
+Caught pre-commit failures explicitly remove the exact known staging directory
+or, only under the debug retention option, synchronize an incomplete marker
+before retaining it. A disposition failure is reported together with its stage
+and original error. If parent synchronization fails after the directory
+commit, the complete Compiled Vault remains visible and compilation returns
+`PublishedButDurabilityUncertain`; it is not deleted as a false rollback and
+optional Pack publication does not start.
 
 ADR-0013 defines pack-file publication separately. SDK and CLI independently
 verify the Compiled Vault, write a complete deterministic stream to a

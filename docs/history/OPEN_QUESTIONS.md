@@ -11,6 +11,7 @@ decision_refs:
   - ADR-0010
   - ADR-0011
   - ADR-0013
+  - ADR-0014
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -42,8 +43,9 @@ implementation gaps are also summarized in
 - Decide which trust anchor authenticates a wholly resealed but internally
   consistent unsigned artifact. Source-derived Copy, Markdown, Canvas, and
   approved generated-note outputs now carry and verify sealed commitments.
-- Close filesystem race hardening: descriptor-relative/no-follow source opens
-  and a portable atomic no-clobber directory publication primitive.
+- Close descriptor-relative/no-follow source opens and pin output/staging
+  ancestors against replacement races. ADR-0014 specifies final-leaf atomic
+  no-replace directory publication; ancestor handle pinning remains separate.
 - Define whether nested archives remain opaque permanently or gain a separately
   bounded recursive-inspection profile. Current source and VaultPack container,
   every-member, aggregate, and expansion-ratio accounting is complete for the

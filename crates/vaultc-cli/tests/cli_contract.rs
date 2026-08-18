@@ -46,6 +46,30 @@ fn as_utf8(path: &Path) -> &str {
         .expect("temporary and fixture paths are UTF-8")
 }
 
+fn write_basic_approved_plan(parent: &Path) -> PathBuf {
+    let compiler = VaultCompiler::builder()
+        .build()
+        .expect("build approved-plan fixture compiler");
+    let inspection = compiler
+        .inspect([SourceSpec::directory("basic", fixture("basic_vault"))
+            .expect("approved-plan fixture source")])
+        .expect("inspect approved-plan fixture");
+    let plan = compiler
+        .plan(&inspection)
+        .expect("plan approved-plan fixture");
+    let approved = compiler
+        .approve_without_augmentation(plan)
+        .expect("approve approved-plan fixture");
+    let path = parent.join("approved.json");
+    fs::write(
+        &path,
+        vaultc::canonical::to_canonical_json_pretty(&approved)
+            .expect("encode approved-plan fixture"),
+    )
+    .expect("write approved-plan fixture");
+    path
+}
+
 #[cfg(unix)]
 fn wait_for_file(path: &Path, timeout: Duration) {
     let deadline = Instant::now() + timeout;
@@ -185,8 +209,45 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
         "json",
     ]);
     assert_exit(&output, 0);
+    let compile_json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("decode compile success JSON");
+    assert_eq!(compile_json["artifact"]["path"], as_utf8(&compiled_vault));
+    assert_eq!(compile_json["vaultpack"], as_utf8(&pack));
     assert!(compiled_vault.join(".vaultc/manifest.json").is_file());
     assert!(pack.is_file());
+
+    let sdk_pack = temporary.path().join("sdk-published.vaultpack");
+    vaultc::pack::create_pack(
+        &compiled_vault,
+        &sdk_pack,
+        compiler.policy().output.zstd_level,
+    )
+    .expect("publish SDK comparison pack");
+    assert_eq!(
+        fs::read(&pack).expect("read CLI VaultPack"),
+        fs::read(&sdk_pack).expect("read SDK VaultPack"),
+        "CLI and SDK must use the same deterministic pack writer"
+    );
+
+    let human_compiled = temporary.path().join("human-compiled");
+    let human_pack = temporary.path().join("human-compiled.vaultpack");
+    let human = run(&[
+        "compile",
+        as_utf8(&approved_path),
+        "--output",
+        as_utf8(&human_compiled),
+        "--pack",
+        as_utf8(&human_pack),
+    ]);
+    assert_exit(&human, 0);
+    let human_stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(human_stdout.contains(&format!("path: {}", human_compiled.display())));
+    assert!(human_stdout.contains(&format!("vaultpack: {}", human_pack.display())));
+    assert_eq!(
+        fs::read(&pack).expect("read JSON-mode VaultPack"),
+        fs::read(&human_pack).expect("read human-mode VaultPack"),
+        "output format must not affect pack bytes"
+    );
 
     let mut inner_pages = Vec::new();
     let mut inner_page_json = Vec::new();
@@ -354,6 +415,195 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
         &run(&["explain", as_utf8(&compiled_vault), "knowledge/Index.md"]),
         EXIT_VERIFY,
     );
+}
+
+#[test]
+fn cli_compile_pack_extension_is_usage_error_before_control_file_open() {
+    let temporary = tempfile::tempdir().expect("temporary pack-extension workspace");
+    let output = temporary.path().join("must-not-exist");
+    let invalid_pack = temporary.path().join("release.tar.zst");
+    let missing_plan = temporary.path().join("missing-approved.json");
+
+    assert_exit(
+        &run(&[
+            "compile",
+            as_utf8(&missing_plan),
+            "--output",
+            as_utf8(&output),
+            "--pack",
+            as_utf8(&invalid_pack),
+        ]),
+        EXIT_USAGE,
+    );
+    assert!(!output.exists());
+    assert!(!invalid_pack.exists());
+}
+
+#[test]
+fn cli_compile_pack_preflight_rejects_existing_and_path_aliases_without_output() {
+    let temporary = tempfile::tempdir().expect("temporary pack-preflight workspace");
+    let approved = write_basic_approved_plan(temporary.path());
+
+    let existing_pack = temporary.path().join("existing.vaultpack");
+    let sentinel = b"owned by another publisher\n";
+    fs::write(&existing_pack, sentinel).expect("write existing pack sentinel");
+    let existing_output = temporary.path().join("existing-pack-output");
+    assert_exit(
+        &run(&[
+            "compile",
+            as_utf8(&approved),
+            "--output",
+            as_utf8(&existing_output),
+            "--pack",
+            as_utf8(&existing_pack),
+        ]),
+        EXIT_OUTPUT,
+    );
+    assert!(!existing_output.exists());
+    assert_eq!(
+        fs::read(&existing_pack).expect("read preserved pack sentinel"),
+        sentinel
+    );
+
+    let cases = [
+        (
+            temporary.path().join("equal.vaultpack"),
+            temporary.path().join("equal.vaultpack"),
+        ),
+        (
+            temporary.path().join("direct-inside"),
+            temporary
+                .path()
+                .join("direct-inside/nested/release.vaultpack"),
+        ),
+        (
+            temporary.path().join("reserved.vaultpack/compiled"),
+            temporary.path().join("reserved.vaultpack"),
+        ),
+        (
+            temporary.path().join("StraßeVault"),
+            temporary.path().join("STRASSEVAULT/release.vaultpack"),
+        ),
+        (
+            temporary.path().join("CaféVault"),
+            temporary.path().join("CAFE\u{301}VAULT/release.vaultpack"),
+        ),
+    ];
+    for (output, pack) in cases {
+        let result = run(&[
+            "compile",
+            as_utf8(&approved),
+            "--output",
+            as_utf8(&output),
+            "--pack",
+            as_utf8(&pack),
+        ]);
+        assert_exit(&result, EXIT_OUTPUT);
+        assert!(
+            !output.exists(),
+            "pack preflight must precede output publication: {}",
+            output.display()
+        );
+        assert!(
+            fs::symlink_metadata(&pack).is_err(),
+            "rejected pack destination must remain absent: {}",
+            pack.display()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_compile_pack_preflight_rejects_symlink_aliases_without_output() {
+    use std::os::unix::fs::symlink;
+
+    let temporary = tempfile::tempdir().expect("temporary pack-symlink workspace");
+    let approved = write_basic_approved_plan(temporary.path());
+    let real_parent = temporary.path().join("real");
+    fs::create_dir(&real_parent).expect("create real destination parent");
+    let parent_alias = temporary.path().join("alias");
+    symlink(&real_parent, &parent_alias).expect("create destination-parent alias");
+
+    let output = real_parent.join("compiled");
+    let pack = parent_alias.join("compiled/nested.vaultpack");
+    assert_exit(
+        &run(&[
+            "compile",
+            as_utf8(&approved),
+            "--output",
+            as_utf8(&output),
+            "--pack",
+            as_utf8(&pack),
+        ]),
+        EXIT_OUTPUT,
+    );
+    assert!(!output.exists());
+    assert!(
+        fs::symlink_metadata(&parent_alias)
+            .expect("parent alias remains")
+            .file_type()
+            .is_symlink()
+    );
+
+    let dangling_target = temporary.path().join("must-not-be-created.vaultpack");
+    let dangling_pack = temporary.path().join("dangling.vaultpack");
+    symlink(&dangling_target, &dangling_pack).expect("create dangling pack leaf");
+    let dangling_output = temporary.path().join("dangling-output");
+    assert_exit(
+        &run(&[
+            "compile",
+            as_utf8(&approved),
+            "--output",
+            as_utf8(&dangling_output),
+            "--pack",
+            as_utf8(&dangling_pack),
+        ]),
+        EXIT_OUTPUT,
+    );
+    assert!(!dangling_output.exists());
+    assert!(!dangling_target.exists());
+    assert!(
+        fs::symlink_metadata(&dangling_pack)
+            .expect("dangling pack leaf remains")
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_runtime_pack_failure_leaves_verified_output_and_no_pack() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let temporary = tempfile::tempdir().expect("temporary runtime-pack-failure workspace");
+    let approved = write_basic_approved_plan(temporary.path());
+    let output = temporary.path().join("compiled-after-pack-failure");
+    let pack_parent = temporary.path().join("read-only-pack-parent");
+    fs::create_dir(&pack_parent).expect("create pack parent");
+    fs::set_permissions(&pack_parent, fs::Permissions::from_mode(0o500))
+        .expect("make pack parent read-only");
+    let pack = pack_parent.join("runtime-failure.vaultpack");
+
+    let result = run(&[
+        "compile",
+        as_utf8(&approved),
+        "--output",
+        as_utf8(&output),
+        "--pack",
+        as_utf8(&pack),
+    ]);
+    fs::set_permissions(&pack_parent, fs::Permissions::from_mode(0o700))
+        .expect("restore pack-parent permissions");
+
+    assert_exit(&result, EXIT_OUTPUT);
+    assert!(output.join(".vaultc/manifest.json").is_file());
+    assert!(!pack.exists());
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("remains published after VaultPack"),
+        "runtime failure must expose the two-publication state: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_exit(&run(&["verify", as_utf8(&output)]), 0);
 }
 
 #[test]

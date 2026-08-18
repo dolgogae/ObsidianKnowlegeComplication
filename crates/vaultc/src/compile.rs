@@ -55,11 +55,45 @@ pub fn compile_plan(
     destination: &Path,
     policy: &CompilerPolicy,
 ) -> Result<CompiledArtifact> {
+    compile_plan_with_options(approved, destination, policy, &CompileOptions::default())
+}
+
+pub fn compile_plan_with_options(
+    approved: &ApprovedPlan,
+    destination: &Path,
+    policy: &CompilerPolicy,
+    options: &CompileOptions,
+) -> Result<CompiledArtifact> {
+    validate_compile_request(approved, destination, policy)?;
+    if let Some(pack) = &options.create_pack {
+        crate::pack::preflight_pack_destination(destination, pack)?;
+    }
+
+    let artifact = compile_validated_plan(approved, destination, policy)?;
+    if let Some(pack) = &options.create_pack
+        && let Err(source) = crate::pack::create_pack(destination, pack, policy.output.zstd_level)
+    {
+        return Err(VaultcError::PackPublicationAfterCompile {
+            compiled_vault: destination.to_path_buf(),
+            pack: pack.clone(),
+            source: Box::new(source),
+        });
+    }
+    Ok(artifact)
+}
+
+fn validate_compile_request(
+    approved: &ApprovedPlan,
+    destination: &Path,
+    policy: &CompilerPolicy,
+) -> Result<()> {
     // Publishing over an existing destination is never safe: on some platforms
     // `rename` may replace an existing directory. Keep the policy field for
     // schema compatibility, but V1 compilation is unconditionally create-new.
-    if destination.exists() {
-        return Err(VaultcError::OutputExists(destination.to_path_buf()));
+    match fs::symlink_metadata(destination) {
+        Ok(_) => return Err(VaultcError::OutputExists(destination.to_path_buf())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(VaultcError::io(destination, error)),
     }
     crate::approval::validate_approved_plan(approved, policy)?;
     if !approved.conflict_decisions_complete {
@@ -83,6 +117,14 @@ pub fn compile_plan(
             "approved plan policy does not match compiler policy".into(),
         ));
     }
+    Ok(())
+}
+
+fn compile_validated_plan(
+    approved: &ApprovedPlan,
+    destination: &Path,
+    policy: &CompilerPolicy,
+) -> Result<CompiledArtifact> {
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(|error| VaultcError::io(parent, error))?;
     let staging = tempfile::Builder::new()
@@ -103,13 +145,26 @@ pub fn compile_plan(
         }
     };
     let kept = staging.keep();
-    if destination.exists() {
-        if policy.output.retain_failed_staging {
-            mark_incomplete(&kept, &VaultcError::OutputExists(destination.to_path_buf()));
-        } else {
-            let _ = fs::remove_dir_all(&kept);
+    match fs::symlink_metadata(destination) {
+        Ok(_) => {
+            let error = VaultcError::OutputExists(destination.to_path_buf());
+            if policy.output.retain_failed_staging {
+                mark_incomplete(&kept, &error);
+            } else {
+                let _ = fs::remove_dir_all(&kept);
+            }
+            return Err(error);
         }
-        return Err(VaultcError::OutputExists(destination.to_path_buf()));
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            let error = VaultcError::io(destination, source);
+            if policy.output.retain_failed_staging {
+                mark_incomplete(&kept, &error);
+            } else {
+                let _ = fs::remove_dir_all(&kept);
+            }
+            return Err(error);
+        }
     }
     if let Err(error) = fs::rename(&kept, destination) {
         let error = VaultcError::io(destination, error);
@@ -120,7 +175,12 @@ pub fn compile_plan(
         }
         return Err(error);
     }
-    sync_parent(parent)?;
+    if let Err(source) = sync_parent(parent) {
+        return Err(VaultcError::PublishedButDurabilityUncertain {
+            path: destination.to_path_buf(),
+            source,
+        });
+    }
     Ok(CompiledArtifact {
         path: destination.to_path_buf(),
         ..artifact
@@ -599,13 +659,11 @@ pub(crate) fn raw_sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-fn sync_parent(parent: &Path) -> Result<()> {
+fn sync_parent(parent: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        let directory = File::open(parent).map_err(|error| VaultcError::io(parent, error))?;
-        directory
-            .sync_all()
-            .map_err(|error| VaultcError::io(parent, error))?;
+        let directory = File::open(parent)?;
+        directory.sync_all()?;
     }
     Ok(())
 }

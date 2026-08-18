@@ -3,13 +3,14 @@ title: Open Questions
 status: normative-future
 owners:
   - architect
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0002
   - ADR-0004
   - ADR-0009
   - ADR-0010
   - ADR-0011
+  - ADR-0013
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -32,8 +33,6 @@ implementation gaps are also summarized in
   and supported-filesystem vectors.
 - Freeze full MinHash seed/candidate vectors and short-document behavior beyond
   the implemented threshold arithmetic test.
-- Remove or connect unused `CompileOptions`; ADR-0011 separately closed the
-  public SDK augmentation/record/replay surface.
 - Define typed conflict actions for selected link targets, path mappings, and
   other real `user_resolved` operations. Until then, ADR-0009 permits only an
   explicit policy waiver overlay.
@@ -45,9 +44,10 @@ implementation gaps are also summarized in
   approved generated-note outputs now carry and verify sealed commitments.
 - Close filesystem race hardening: descriptor-relative/no-follow source opens
   and a portable atomic no-clobber directory publication primitive.
-- Complete source-archive accounting for compressed bytes,
-  excluded/duplicate-member counts, and nesting. VaultPack outer size and
-  declared/streamed expansion ratio are now bounded.
+- Define whether nested archives remain opaque permanently or gain a separately
+  bounded recursive-inspection profile. Current source and VaultPack container,
+  every-member, aggregate, and expansion-ratio accounting is complete for the
+  non-recursive V1 boundary.
 - Define SQLite migrations, reload/resume/cleanup, batching, and workspace
   encryption policy; the current schema is reset-and-write-only version 1.
 - Define the deterministic tar/zstd compatibility contract across compressor,
@@ -104,8 +104,8 @@ schema/API version 1. Reopening one requires an ADR or versioned compatibility
 change.
 
 - Public crates are `vaultc`, `vaultc-protocol`, and `vaultc-cli`; the CLI
-  commands are `inspect`, `plan`, `augment`, `approve`, `compile`, `verify`, and
-  `explain`.
+  commands are `inspect`, `plan`, `augment`, `replay`, `approve`, `compile`,
+  `verify`, and `explain`.
 - Exit codes are frozen as `0`, `2`, `3`, `4`, `5`, `6`, `7`, and `70` with
   the families specified in
   [`../specs/public-sdk-and-cli.md`](../specs/public-sdk-and-cli.md).
@@ -178,3 +178,7 @@ change.
   per-call consent; offline replay never calls a provider and needs no new
   consent. Non-empty validations require the exact four-record transcript, and
   canonical schema-1 recordings replay byte-for-byte.
+- ADR-0013 connects `CompileOptions.create_pack`, assigns verified atomic
+  no-replace Pack publication to one SDK/CLI implementation, and distinguishes
+  pre-commit absence from a complete post-commit publication with uncertain
+  parent durability. Compiled Vault and Pack remain two honest ordered commits.

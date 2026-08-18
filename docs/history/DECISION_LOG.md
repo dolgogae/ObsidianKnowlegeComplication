@@ -263,3 +263,8 @@ Append-only. Normative details live in specifications and accepted ADRs.
   publication of the Compiled Vault directory, descriptor-relative ancestor
   hardening, orphan-stage cleanup, and physical power-loss qualification remain
   separate work.
+- Implemented the public SDK publisher, `compile_with_options`, shared CLI
+  orchestration, explicit publication-state errors, and deterministic private
+  fault checkpoints. Added 11 SDK publication cases, 3 fault-order unit cases,
+  and 4 CLI lifecycle/unit cases; the macOS arm64 suite increased from 129 to
+  148 tests with workspace tests, Clippy, rustfmt, and diff checks green.

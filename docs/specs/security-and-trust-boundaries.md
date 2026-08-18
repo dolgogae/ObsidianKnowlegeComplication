@@ -11,6 +11,7 @@ decision_refs:
   - ADR-0009
   - ADR-0010
   - ADR-0012
+  - ADR-0013
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-ONPREM-STACK
@@ -50,6 +51,9 @@ Primary threats include path traversal, symlink escapes, archive bombs, parser d
 
 - Write only into a validated sibling staging directory and publish atomically.
 - Reject existing destinations by default.
+- For VaultPack files, verify the source and staged pack, publish with an
+  atomic no-replace primitive, never follow an existing leaf symlink, and
+  report post-commit durability failure separately from pre-commit absence.
 
 ### Future installation clients
 
@@ -101,6 +105,11 @@ invalid identities, graph closure violations, oversized records or ledgers,
 and semantic graph substitutions even when all surrounding unsigned envelope
 hashes are recomputed. Explanation pages bind their subject and cursor and
 enforce their byte limit over the complete serialized response.
+SDK and CLI now use one Pack publisher that validates portable path aliases,
+rejects either containment direction, verifies the source and staged archive,
+and commits a synchronized sibling file without replacement. Its deterministic
+fault seam distinguishes an absent pre-commit failure from a complete retained
+publication whose parent-directory durability is uncertain.
 
 This is not yet the full release threat model:
 
@@ -111,8 +120,8 @@ This is not yet the full release threat model:
   recursive;
 - a no-clobber destination check followed by a directory rename is not proven
   race-free on every supported platform;
-- the public SDK pack writer writes directly to its destination; only the CLI
-  wrapper currently stages and no-clobber-publishes a pack file;
+- pack-file publication is locally verified on macOS, but Windows reparse
+  points and the full supported-filesystem concurrency matrix are not yet;
 - there is no fuzz/property campaign, malware scanner, PII/secret content
   scanner, dependency audit, SBOM, or signing/authenticity layer;
 - current provider cancellation/process-tree E2E evidence is Unix-only.

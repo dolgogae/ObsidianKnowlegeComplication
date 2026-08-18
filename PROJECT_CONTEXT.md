@@ -3,7 +3,7 @@ title: Vault Compiler Framework Project Context
 status: normative-v1
 owners:
   - architect
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -12,6 +12,7 @@ decision_refs:
   - ADR-0009
   - ADR-0011
   - ADR-0012
+  - ADR-0013
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN

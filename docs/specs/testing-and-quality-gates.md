@@ -32,7 +32,7 @@ source_refs:
 
 ## Current `0.1.0` evidence
 
-Local macOS arm64 execution with Rust 1.97.1 has 129 passing tests plus passing
+Local macOS arm64 execution with Rust 1.97.1 has 148 passing tests plus passing
 doctest harnesses, warning-free workspace Clippy, and a clean rustfmt check.
 This evidence does not make the full release gates green:
 
@@ -123,7 +123,7 @@ implemented, including
 `cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path` and
 `archive_declared_member_count_and_compressed_bytes_are_bounded`.
 
-The atomic-pack acceptance target includes
+The locally implemented atomic-pack acceptance includes
 `sdk_pack_failure_does_not_leave_partial_destination`,
 `sdk_pack_existing_destination_is_preserved`,
 `sdk_pack_dangling_symlink_is_rejected_without_following_target`,
@@ -133,8 +133,10 @@ The atomic-pack acceptance target includes
 `compile_with_pack_failure_leaves_valid_compiled_vault_and_no_partial_pack`.
 Fault-seam tests distinguish pre-commit absence from the complete published
 file returned with `PublishedButDurabilityUncertain` after a parent-sync
-failure. Supported-platform concurrent destination tests remain a release
-matrix requirement even after local acceptance passes.
+failure. The private fault seam additionally verifies the exact
+write-to-parent-sync order and all pre/post-commit states. Supported-platform
+concurrent destination and Windows reparse-point tests remain release-matrix
+requirements even after local acceptance passes.
 
 These names are acceptance targets. Do not mark their parent requirements
 verified by substituting a checksum-only or helper-unit assertion.

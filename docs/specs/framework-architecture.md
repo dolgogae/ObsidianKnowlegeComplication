@@ -4,12 +4,13 @@ status: normative-v1
 owners:
   - architect
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0001
   - ADR-0002
   - ADR-0004
   - ADR-0005
+  - ADR-0013
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -64,7 +65,8 @@ Circular dependencies are forbidden. `vaultc` may depend on protocol data types 
 - `provider`: provider-neutral traits plus capability/evidence/proposal validation.
 - `approval`: record explicit decisions and invalidation rules.
 - `compile`: stage, materialize, checksum, and atomically publish.
-- `pack`: deterministic VaultPack creation and safe extraction for verification.
+- `pack`: verified deterministic VaultPack creation, atomic no-replace file
+  publication, and safe extraction for verification.
 - `provenance`: emit and explain exact output-to-source derivations.
 - `verify`: independently verify manifest, paths, hashes, sealed audit linkage, approvals, and provenance closure.
 - `workspace`: bounded SQLite-backed intermediate state.

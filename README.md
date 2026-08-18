@@ -50,9 +50,9 @@ Vaults and a publishable result. It:
 - accepts optional provider-neutral AI proposals as data, then validates their
   identities, evidence, and approvals;
 - materializes only a sealed `ApprovedPlan` into a new destination;
-- creates deterministic `.vaultpack` archives and independently verifies their
-  checksums, plan linkage, source-derived output commitments, audit files, and
-  provenance.
+- creates deterministic `.vaultpack` archives through one SDK/CLI verified,
+  atomic no-clobber publisher and independently verifies their checksums, plan
+  linkage, source-derived output commitments, audit files, and provenance.
 
 The current `.vaultpack` format is deterministic but unsigned. Signing, MCP,
 the Obsidian installer, the registry, and brain-inspired retrieval algorithms
@@ -113,6 +113,25 @@ fn main() -> vaultc::Result<()> {
     Ok(())
 }
 ```
+
+To publish a Compiled Vault and an optional pack through the same core policy,
+use `compile_with_options`:
+
+```rust,ignore
+use vaultc::CompileOptions;
+
+let artifact = compiler.compile_with_options(
+    &approved,
+    "./CompiledVault",
+    &CompileOptions {
+        create_pack: Some("./CompiledVault.vaultpack".into()),
+    },
+)?;
+```
+
+These are two ordered publications, not one cross-filesystem transaction. If
+the later pack step fails, the error identifies the valid Compiled Vault that
+remains; vaultc never exposes a partial requested pack file.
 
 For AI-assisted builds, an application implements provider-neutral
 `KnowledgeAugmentor` rather than depending on one LLM vendor:

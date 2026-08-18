@@ -12,6 +12,7 @@ decision_refs:
   - ADR-0010
   - ADR-0011
   - ADR-0012
+  - ADR-0013
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -94,6 +95,9 @@ unchanged.
   transcripts, remote policy plus per-call consent, cooperative cancellation,
   and byte-identical SDK/CLI canonical recordings.
 - Compile interruption never publishes partial output.
+- Public SDK/CLI pack creation never exposes a partial requested destination,
+  never overwrites an existing entry or symlink referent, and has exactly one
+  winner under concurrent publication.
 - Independent verifier catches each intentionally corrupted artifact class.
 - Future MCP and Obsidian adapters pass contract and permission tests without bypassing framework invariants.
 
@@ -119,10 +123,18 @@ implemented, including
 `cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path` and
 `archive_declared_member_count_and_compressed_bytes_are_bounded`.
 
-The following required regressions remain:
-
-- `sdk_pack_failure_does_not_leave_partial_destination`;
-- supported-platform concurrent destination creation/no-clobber tests.
+The atomic-pack acceptance target includes
+`sdk_pack_failure_does_not_leave_partial_destination`,
+`sdk_pack_existing_destination_is_preserved`,
+`sdk_pack_dangling_symlink_is_rejected_without_following_target`,
+`sdk_pack_destination_inside_compiled_vault_is_rejected_without_mutation`,
+`sdk_pack_concurrent_publish_has_exactly_one_winner`,
+`compile_options_reject_output_pack_aliases_before_publication`, and
+`compile_with_pack_failure_leaves_valid_compiled_vault_and_no_partial_pack`.
+Fault-seam tests distinguish pre-commit absence from the complete published
+file returned with `PublishedButDurabilityUncertain` after a parent-sync
+failure. Supported-platform concurrent destination tests remain a release
+matrix requirement even after local acceptance passes.
 
 These names are acceptance targets. Do not mark their parent requirements
 verified by substituting a checksum-only or helper-unit assertion.

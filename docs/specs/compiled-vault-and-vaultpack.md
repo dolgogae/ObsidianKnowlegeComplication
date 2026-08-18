@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - core-rust-engineer
   - release-maintainer
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0003
   - ADR-0004
@@ -12,6 +12,7 @@ decision_refs:
   - ADR-0009
   - ADR-0010
   - ADR-0012
+  - ADR-0013
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -114,18 +115,37 @@ by format version.
 
 The compiler verifies sources and destination parent, creates a unique sibling staging directory with restrictive permissions, writes files without following symlinks, fsyncs according to platform policy, verifies the staged tree, then renames it to the requested absent destination. Existing output is rejected unless a separately specified, recoverable update workflow is introduced by ADR.
 
-The `0.1.0` implementation performs an existence check immediately before the
+The `0.1.0` directory implementation performs an existence check immediately before the
 rename, but a portable atomic no-replace directory primitive has not been
 implemented. Closing that check/rename race on every supported platform is a
 release blocker for the no-clobber portion of REQ-CMP-001.
+If parent synchronization fails after the directory rename, the complete
+Compiled Vault remains visible and compilation returns
+`PublishedButDurabilityUncertain`; it is not deleted as a false rollback.
 
-When the CLI is also asked for a pack, Compiled Vault publication and pack
-publication are not one combined filesystem transaction: a valid Compiled
-Vault may remain if later pack creation fails. The CLI pack wrapper stages and
-no-clobber-publishes the pack file. The public SDK `pack::create_pack` currently
-writes directly to its absent destination and can leave a partial pack on I/O
-failure. Callers needing an all-or-nothing release need a future hardened SDK
-pack/release-bundle API.
+ADR-0013 defines pack-file publication separately. SDK and CLI independently
+verify the Compiled Vault, write a complete deterministic stream to a
+synchronized, restrictive sibling temporary file, verify the staged pack, and
+then atomically publish it without replacement. Existing regular files,
+directories, live or dangling symlinks, and publication-race winners are never
+overwritten. Pack destinations must end in `.vaultpack` and be disjoint from
+the Compiled Vault in either containment direction. Caught pre-publication
+failures leave no vaultc-created file at the requested pack destination.
+
+Compiled Vault publication and pack publication are not one combined
+filesystem transaction: a valid Compiled Vault remains if later pack creation
+fails. `VaultCompiler::compile_with_options` performs detectable pack preflight
+before compilation and then performs these two ordered commits. A runtime pack
+failure is wrapped as `PackPublicationAfterCompile` so callers can identify
+the retained valid directory. A future true all-or-nothing release requires a
+single-root versioned bundle format rather than rollback across unrelated
+paths.
+
+If Unix parent-directory synchronization fails after the pack has been
+published, the complete pack remains and the SDK returns the distinct
+`PublishedButDurabilityUncertain` error. Windows V1 synchronizes the file and
+provides process-visible atomic no-replace publication but does not claim a
+safe-Rust parent-directory flush or physical power-loss durability.
 
 ## VaultPack
 

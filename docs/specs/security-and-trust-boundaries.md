@@ -52,8 +52,8 @@ Primary threats include path traversal, symlink escapes, archive bombs, parser d
 
 - Write only into a validated sibling staging directory and publish atomically.
 - Reject existing destinations by default.
-- Reject an output equal to, containing, or nested within an immutable source
-  before creating its parent or staging directory.
+- Reject a Compiled Vault or integrated Pack equal to, containing, or nested
+  within an immutable source before creating its parent or staging entry.
 - Publish Compiled Vault directories with the supported platform's atomic
   no-replace primitive. Preserve every file, directory, symlink/reparse point,
   and race winner; never fall back to a replacing rename.

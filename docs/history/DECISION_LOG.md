@@ -278,8 +278,9 @@ Append-only. Normative details live in specifications and accepted ADRs.
 - Required every existing file, directory, live/dangling symlink or reparse
   point, and late publication-race winner to remain untouched. A private
   immediately-before-publish barrier is the required regression boundary.
-- Required output/source disjointness before staging so a requested output
-  cannot place temporary or final compiler state inside an immutable source.
+- Required Compiled Vault/source and integrated Pack/source disjointness before
+  staging so requested publications cannot place temporary or final compiler
+  state inside an immutable source.
 - Required explicit cleanup or synchronized marked retention of failed stages,
   with a structured error retaining both the original and disposition failure.
 - Kept public compile return types and serialized artifacts unchanged. This

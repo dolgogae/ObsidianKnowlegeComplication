@@ -158,8 +158,8 @@ platforms. It never publishes a partial augmentation file.
 `compile` rejects an output or pack that exists. The directory publisher uses
 the ADR-0014 native no-replace primitive, preserves a destination created after
 preflight, and fails closed where that primitive is unsupported. The output is
-also rejected before staging if it aliases, contains, or is nested within an
-immutable source. A pack path must end in
+and an optional integrated Pack are also rejected before staging if either
+aliases, contains, or is nested within an immutable source. A pack path must end in
 `.vaultpack`, must be disjoint from the Compiled Vault in either containment
 direction, and is sibling-staged and atomically published with no-clobber file
 semantics. `VaultCompiler::compile_with_options` connects the public

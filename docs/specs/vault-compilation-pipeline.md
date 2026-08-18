@@ -118,8 +118,9 @@ disposition failure rather than being silently ignored.
 The final directory namespace commit follows ADR-0014. Every existing leaf and
 race winner is preserved as `OutputExists`; an unsupported no-replace
 primitive fails closed without a replacing fallback. Before staging, the
-output is required to be disjoint from every immutable source path under
-resolved-ancestor, lexical, NFC, and full-case-fold comparison. A
+output and optional integrated Pack are required to be disjoint from every
+immutable source path under resolved-ancestor, lexical, NFC, and full-case-fold
+comparison. A
 post-publication parent-sync failure retains the verified directory and reports
 `PublishedButDurabilityUncertain`; optional Pack publication does not begin.
 

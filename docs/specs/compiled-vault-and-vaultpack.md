@@ -130,10 +130,12 @@ non-empty directories, live or dangling symlinks, supported reparse points,
 and publication-race winners remain untouched. Unsupported primitives or
 filesystems fail closed.
 
-Before staging, the requested output must be disjoint from every immutable
-source locator after existing-ancestor resolution, lexical normalization, and
-portable NFC/full-case-fold comparison. Descriptor-relative ancestor pinning
-is still a separate hardening boundary.
+Before staging, the requested output and any Pack path supplied to
+`compile_with_options` must be disjoint from every immutable source locator
+after existing-ancestor resolution, lexical normalization, and portable
+NFC/full-case-fold comparison. A standalone Pack call cannot recover redacted
+original source locators and retains its Compiled-Vault-versus-Pack boundary.
+Descriptor-relative ancestor pinning is still a separate hardening boundary.
 
 Caught pre-commit failures explicitly remove the exact known staging directory
 or, only under the debug retention option, synchronize an incomplete marker

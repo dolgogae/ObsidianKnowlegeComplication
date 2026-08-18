@@ -153,9 +153,10 @@ The atomic-directory acceptance targets are
 `directory_cleanup_failure_reports_residue`,
 `directory_parent_sync_failure_retains_verified_output`, and
 `directory_unsupported_primitive_never_falls_back_to_replacing_rename`.
-The source/output disjointness matrix covers equality, both containment
-directions, lexical `..`, existing-ancestor symlink aliases, and portable
-case/normalization aliases. Normal concurrent builds are supplemental; the
+The source/publication disjointness matrix covers the Compiled Vault and
+integrated Pack, equality, both containment directions, lexical `..`,
+existing-ancestor symlink aliases, and portable case/normalization aliases.
+Normal concurrent builds are supplemental; the
 private before-publish barrier is required to prove that a late empty-directory
 or symlink winner is not replaced.
 

@@ -53,8 +53,8 @@ boundary.
 
 The compiler MUST perform these ordered steps:
 
-1. validate the approved plan, source/output separation, destination, and any
-   optional Pack preflight before creating a stage;
+1. validate the approved plan, source/publication separation, destination, and
+   any optional Pack preflight before creating a stage;
 2. create one restrictive unique sibling staging directory in the output
    parent;
 3. materialize every output with create-new semantics and synchronize every
@@ -101,13 +101,16 @@ observed absence.
 
 ### Source/output separation
 
-Before creating the output parent or staging directory, the compiler resolves
-each source locator and the requested output through their existing ancestor,
-performs lexical normalization, and compares the V1 portable NFC/full-case-fold
-component keys. The output MUST NOT equal a source, contain a source, or be
-nested inside a source directory through lexical spelling, existing symlink
-alias, case alias, or normalization alias. In particular, a stage may not be
-created inside an immutable source Vault.
+Before creating an output/Pack parent or staging entry, the compiler resolves
+each source locator and every requested publication path through their existing
+ancestor, performs lexical normalization, and compares the V1 portable
+NFC/full-case-fold component keys. The Compiled Vault and an optional
+integrated Pack MUST NOT equal a source, contain a source, or be nested inside
+a source directory through lexical spelling, existing symlink alias, case
+alias, or normalization alias. In particular, no directory or Pack stage may be
+created inside an immutable source Vault. A standalone Pack publisher cannot
+recover redacted original source locators from a Compiled Vault, so this
+additional source boundary belongs to `compile_with_options`.
 
 This check does not claim to close a malicious replacement of an ancestor
 after validation. Descriptor-relative/no-follow source opening, staging, and
@@ -161,7 +164,8 @@ Acceptance MUST include:
 - default cleanup, explicit marked retention, cleanup failure reporting,
   staged-verification failure, unsupported-primitive fail-closed behavior, and
   post-commit parent-sync state;
-- source/output equality and containment aliases rejected before any stage;
+- source/publication equality and containment aliases, including an integrated
+  Pack inside a source, rejected before any stage or final output;
 - no optional Pack started by a race loser or a directory durability error;
   and
 - Linux, macOS, and Windows local-filesystem CI. Symlink/reparse cases may be

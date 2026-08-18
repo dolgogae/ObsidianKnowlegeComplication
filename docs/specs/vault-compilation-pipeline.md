@@ -3,12 +3,13 @@ title: Vault Compilation Pipeline
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0003
   - ADR-0005
   - ADR-0008
   - ADR-0009
+  - ADR-0012
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -37,21 +38,22 @@ Stages are resumable only when their input identity and semantic configuration h
 
 V1 excludes `.obsidian/**`, `.git/**`, known executable file classes, named secret files, and any external symlink traversal. Symlinks are not followed by default. A logical path containing an absolute root, drive prefix, NUL, or `..` traversal is rejected.
 
-Duplicate logical paths within one source after NFC normalization are rejected.
-Across sources, exact, case-fold, and Unicode-normalization collisions must be
-typed and resolved only through the sealed deterministic layout rule; silent
-last-writer-wins is forbidden. The current implementation normalizes away the
-original NFD/NFC spelling before cross-source classification, so it can report
-some normalization collisions as `PATH_EXACT` and cannot preserve that raw
-spelling in provenance. This is an ALG-NRM-001 implementation gap.
+Every accepted source entry retains its exact portable UTF-8 spelling before
+NFC and its NFC logical path under ADR-0012. Duplicate logical paths within one
+source after NFC normalization are rejected. Across sources, exact, case-fold,
+and Unicode-normalization collisions are typed from the original request
+spellings and resolved only through the sealed deterministic layout rule;
+silent last-writer-wins is forbidden. Source rereads must match both sealed
+path forms as well as the content identity.
 
 Archive extraction is virtual/streamed when possible. Limits MUST cover compressed bytes, expanded bytes, file count, per-file size, path length, nesting, and compression ratio. The planner does not need to execute or import uploaded plugin JavaScript.
 
 The current scanner retains every accepted entry's bytes in memory before
-sealing/parsing, does not separately cap the compressed source archive byte
-length or all visited members, and treats nested archives as opaque assets.
-Those are implementation gaps against the streaming and complete accounting
-contract, not alternate V1 behavior.
+sealing/parsing and treats nested archives as opaque assets. ZIP and `tar.zst`
+containers are bounded before parser construction, all effective members count
+toward limits, and the complete `tar.zst` decoder stream is expansion-bounded.
+Streaming accepted-file storage and recursive archive policy remain
+implementation gaps, not alternate V1 behavior.
 
 ## Analysis policy
 

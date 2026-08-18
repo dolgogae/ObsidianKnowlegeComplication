@@ -473,6 +473,65 @@ fn approve_rejects_pre_hash_markdown_plan_as_decision_error() {
 }
 
 #[test]
+fn approve_rejects_pre_original_path_plan_as_decision_error() {
+    let temporary = tempfile::tempdir().expect("temporary old path-schema workspace");
+    let source = fixture("basic_vault");
+    let source_argument = format!("old-path-schema={}", source.display());
+    let plan_path = temporary.path().join("plan.json");
+    assert_exit(
+        &run(&["plan", &source_argument, "--out", as_utf8(&plan_path)]),
+        0,
+    );
+
+    let mut plan: serde_json::Value =
+        serde_json::from_slice(&fs::read(&plan_path).expect("read current plan"))
+            .expect("decode current plan");
+    let plan_id = plan["plan_id"].as_str().expect("plan ID").to_owned();
+    let source_file = plan["snapshots"][0]["files"][0]
+        .as_object_mut()
+        .expect("sealed source file");
+    assert!(
+        source_file.remove("original_path").is_some(),
+        "current source file must contain required original_path"
+    );
+    let old_plan_path = temporary.path().join("pre-original-path-plan.json");
+    fs::write(
+        &old_plan_path,
+        serde_json::to_vec_pretty(&plan).expect("encode pre-original-path plan"),
+    )
+    .expect("write pre-original-path plan");
+
+    let decisions_path = temporary.path().join("decisions.json");
+    fs::write(
+        &decisions_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "plan_id": plan_id,
+            "decisions": [],
+            "conflicts": []
+        }))
+        .expect("encode decisions"),
+    )
+    .expect("write decisions");
+    let approved_path = temporary.path().join("approved.json");
+    let output = run(&[
+        "approve",
+        as_utf8(&old_plan_path),
+        "--decisions",
+        as_utf8(&decisions_path),
+        "--out",
+        as_utf8(&approved_path),
+    ]);
+    assert_exit(&output, EXIT_DECISION);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("original_path"),
+        "stderr must identify the missing required source-path field: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!approved_path.exists());
+}
+
+#[test]
 fn cli_reports_unresolved_required_conflicts_as_decision_exit() {
     let temporary = tempfile::tempdir().expect("temporary decision workspace");
     let source = temporary.path().join("ambiguous-vault");

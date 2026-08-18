@@ -4,13 +4,14 @@ status: normative-v1
 owners:
   - qa-security-engineer
   - core-rust-engineer
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0004
   - ADR-0007
   - ADR-0008
   - ADR-0010
   - ADR-0011
+  - ADR-0012
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -30,7 +31,7 @@ source_refs:
 
 ## Current `0.1.0` evidence
 
-Local macOS arm64 execution with Rust 1.97.1 has 87 passing tests plus passing
+Local macOS arm64 execution with Rust 1.97.1 has 129 passing tests plus passing
 doctest harnesses, warning-free workspace Clippy, and a clean rustfmt check.
 This evidence does not make the full release gates green:
 
@@ -77,6 +78,14 @@ The authoritative live status and exact limitations are in
 
 Include ZIP slip, tar traversal, symlink/hardlink escape, decompression bomb, huge frontmatter, deeply nested Markdown/JSON, duplicate archive members, malformed UTF-8/YAML/JSON, NFC/NFD/case collisions, Windows reserved names, control characters, malicious HTML, fake tool instructions, forged/stale proposal IDs, invalid evidence spans, extension spoofing, and interrupted writes.
 
+The normalization corpus MUST also cover directory/archive original-path
+spelling, strict raw ZIP/tar UTF-8 rejection, leading BOM byte offsets,
+frontmatter-adjacent BOM content, CRLF/lone-CR preservation outside rewritten
+spans, combining marks and emoji, full-fold `ß/ss` and sigma vectors, multiple
+grow/shrink rewrites, existing escaped delimiters, root-escape links, and
+Canvas raw file values whose lookup key normalizes while stored JSON remains
+unchanged.
+
 ### Integration and end-to-end
 
 - Rust SDK and CLI create equivalent plans.
@@ -105,10 +114,13 @@ validation, policy-and-consent preflight, provider-free byte-identical replay,
 canonical JSONL, nested unknown/duplicate-field rejection, header binding,
 SDK/CLI parity, cancellation, stale/cross-plan attacks, and replay no-clobber.
 
+The normalization/original-path and archive-accounting regressions are now
+implemented, including
+`cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path` and
+`archive_declared_member_count_and_compressed_bytes_are_bounded`.
+
 The following required regressions remain:
 
-- `cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path`;
-- `archive_declared_member_count_and_compressed_bytes_are_bounded`;
 - `sdk_pack_failure_does_not_leave_partial_destination`;
 - supported-platform concurrent destination creation/no-clobber tests.
 

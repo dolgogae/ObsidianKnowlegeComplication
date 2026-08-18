@@ -178,7 +178,25 @@ fn compile_into(
         let source = approved.plan.source(source_id).ok_or_else(|| {
             VaultcError::PlanStale(format!("source `{source_id}` is missing from plan"))
         })?;
-        let bytes = read_source_entry(source, source_path, policy)?;
+        let source_file = approved
+            .plan
+            .snapshots
+            .iter()
+            .find(|snapshot| {
+                &snapshot.source_id == source_id && snapshot.snapshot_id == *snapshot_id
+            })
+            .and_then(|snapshot| {
+                snapshot
+                    .files
+                    .iter()
+                    .find(|file| file.logical_path == *source_path)
+            })
+            .ok_or_else(|| {
+                VaultcError::PlanStale(format!(
+                    "source file `{source_id}/{source_path}` is missing from plan"
+                ))
+            })?;
+        let bytes = read_source_entry(source, source_file, policy)?;
         if ContentHash::from_bytes(&bytes) != *expected_hash {
             return Err(VaultcError::IdentityMismatch(format!(
                 "source `{source_id}/{source_path}` changed after planning"

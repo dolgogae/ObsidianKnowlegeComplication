@@ -47,12 +47,20 @@ impl FileKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourcePathEncoding {
+    Utf8,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceFile {
     pub source_id: SourceId,
     pub snapshot_id: SnapshotId,
     pub file_id: SourceFileId,
+    pub original_path: String,
     pub logical_path: String,
+    pub path_encoding: SourcePathEncoding,
     pub kind: FileKind,
     pub byte_len: u64,
     pub content_hash: ContentHash,

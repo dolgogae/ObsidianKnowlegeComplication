@@ -17,7 +17,7 @@ use crate::ir::{
     CanonicalWorkspace, CanvasReferenceResolution, CanvasReferenceTarget, Document, FileKind,
     LinkResolution,
 };
-use crate::snapshot::{VaultSnapshot, validate_output_logical_path};
+use crate::snapshot::{VaultSnapshot, validate_output_logical_path, validate_source_path_pair};
 use crate::source::{SourceId, SourceSpec};
 
 pub const INSPECTION_SCHEMA_VERSION: u32 = 1;
@@ -93,6 +93,11 @@ struct AuxiliaryPathAllocation {
     canvases: BTreeMap<CanvasId, String>,
     bases: BTreeMap<BaseArtifactId, String>,
     conflicts: Vec<Conflict>,
+}
+
+struct AllocatedPath {
+    destination: String,
+    original_request: String,
 }
 
 struct PendingMarkdownRewrite {
@@ -544,6 +549,12 @@ fn validate_snapshot_set(snapshots: &[VaultSnapshot], policy: &CompilerPolicy) -
                 )));
             }
             previous_path = Some(&file.logical_path);
+            validate_source_path_pair(
+                &file.original_path,
+                &file.logical_path,
+                file.path_encoding,
+                policy,
+            )?;
             validate_output_logical_path(&file.logical_path, policy)?;
             if file.source_id != snapshot.source_id || file.snapshot_id != snapshot.snapshot_id {
                 return Err(VaultcError::PlanStale(format!(
@@ -1565,18 +1576,16 @@ fn allocate_document_paths(
         .filter_map(|id| workspace.documents.get(&id))
         .collect();
     documents.sort_by_key(|document| allocation_tuple(document));
-    let mut allocated: BTreeMap<String, DocumentId> = BTreeMap::new();
+    let mut allocated: BTreeMap<String, (DocumentId, String)> = BTreeMap::new();
     let mut output: BTreeMap<DocumentId, String> = BTreeMap::new();
     let mut conflicts = Vec::new();
     for document in documents {
         let preferred = format!("knowledge/{}", document.source_file.logical_path);
+        let original_request = format!("knowledge/{}", document.source_file.original_path);
         validate_output_logical_path(&preferred, policy)?;
         let key = portable_key(&preferred);
-        let destination = if let Some(existing) = allocated.get(&key) {
-            let existing_path = output.get(existing).ok_or_else(|| {
-                VaultcError::Internal("allocated document path is missing".into())
-            })?;
-            let kind = classify_path_collision(existing_path, &preferred);
+        let destination = if let Some((existing, existing_original)) = allocated.get(&key) {
+            let kind = classify_path_collision(existing_original, &original_request);
             let mut length = 8;
             let candidate = loop {
                 let candidate = insert_suffix(
@@ -1604,9 +1613,17 @@ fn allocate_document_paths(
             )?);
             candidate
         } else {
-            preferred
+            preferred.clone()
         };
-        allocated.insert(portable_key(&destination), document.document_id);
+        let collision_spelling = if destination == preferred {
+            original_request
+        } else {
+            destination.clone()
+        };
+        allocated.insert(
+            portable_key(&destination),
+            (document.document_id, collision_spelling),
+        );
         output.insert(document.document_id, destination);
     }
     Ok((output, conflicts))
@@ -1656,10 +1673,18 @@ fn allocate_canvas_and_base_paths(
     asset_output_paths: &BTreeMap<AssetId, String>,
     policy: &CompilerPolicy,
 ) -> Result<AuxiliaryPathAllocation> {
-    let mut allocated: BTreeMap<String, String> = output_paths
+    let mut allocated: BTreeMap<String, AllocatedPath> = output_paths
         .values()
         .chain(asset_output_paths.values())
-        .map(|path| (portable_key(path), path.clone()))
+        .map(|path| {
+            (
+                portable_key(path),
+                AllocatedPath {
+                    destination: path.clone(),
+                    original_request: path.clone(),
+                },
+            )
+        })
         .collect();
     let mut canvas_output_paths = BTreeMap::new();
     let mut base_output_paths = BTreeMap::new();
@@ -1667,8 +1692,10 @@ fn allocate_canvas_and_base_paths(
 
     for (canvas_id, canvas) in &workspace.canvases {
         let preferred = format!("canvases/{}", canvas.source_file.logical_path);
+        let original_request = format!("canvases/{}", canvas.source_file.original_path);
         let (destination, collision) = allocate_auxiliary_path(
             &preferred,
+            &original_request,
             &canvas.canvas_id.suffix_base32(52),
             &mut allocated,
             policy,
@@ -1703,8 +1730,10 @@ fn allocate_canvas_and_base_paths(
     });
     for base in bases {
         let preferred = format!("views/{}", base.source_file.logical_path);
+        let original_request = format!("views/{}", base.source_file.original_path);
         let (destination, collision) = allocate_auxiliary_path(
             &preferred,
+            &original_request,
             &base.base_artifact_id.suffix_base32(52),
             &mut allocated,
             policy,
@@ -1946,6 +1975,19 @@ fn resolve_links(
                     document_id: candidates[0],
                 };
             } else if candidates.len() > 1 {
+                if let Some(path) = link.path.as_deref() {
+                    let destination = document_output_paths.get(&document_id).ok_or_else(|| {
+                        VaultcError::PlanStale(format!(
+                            "document {document_id} has no sealed output path"
+                        ))
+                    })?;
+                    ensure_preserved_markdown_target_is_contained(
+                        &logical_path,
+                        destination,
+                        path,
+                        &link.raw_target,
+                    )?;
+                }
                 link.resolution = LinkResolution::Ambiguous {
                     candidates: candidates.clone(),
                 };
@@ -1978,6 +2020,17 @@ fn resolve_links(
                         link.resolution = LinkResolution::Asset { asset_id };
                     }
                 } else {
+                    let destination = document_output_paths.get(&document_id).ok_or_else(|| {
+                        VaultcError::PlanStale(format!(
+                            "document {document_id} has no sealed output path"
+                        ))
+                    })?;
+                    ensure_preserved_markdown_target_is_contained(
+                        &logical_path,
+                        destination,
+                        path,
+                        &link.raw_target,
+                    )?;
                     link.resolution = LinkResolution::Unresolved;
                     diagnostics.push(Diagnostic {
                         code: DiagnosticCode::LinkUnresolved,
@@ -2222,11 +2275,32 @@ fn ensure_preserved_canvas_target_is_contained(
     source_path: &str,
     node_id: &str,
 ) -> Result<()> {
-    if resolve_relative_source_path(canvas_destination, raw_path).is_none() {
+    if resolve_contained_relative_path(source_path, raw_path).is_none()
+        || resolve_contained_relative_path(canvas_destination, raw_path).is_none()
+    {
         return Err(VaultcError::UnsafePath {
             path: format!("{source_path}#{node_id}"),
             reason: format!(
                 "preserved Canvas file reference `{raw_path}` escapes the compiled Vault root"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_preserved_markdown_target_is_contained(
+    source_path: &str,
+    output_destination: &str,
+    decoded_path: &str,
+    raw_target: &str,
+) -> Result<()> {
+    if resolve_contained_relative_path(source_path, decoded_path).is_none()
+        || resolve_contained_relative_path(output_destination, decoded_path).is_none()
+    {
+        return Err(VaultcError::UnsafePath {
+            path: source_path.into(),
+            reason: format!(
+                "preserved Markdown reference `{raw_target}` escapes a source or compiled Vault root"
             ),
         });
     }
@@ -2454,7 +2528,17 @@ pub(crate) fn planned_markdown_replacements(
                     ))
                 })?)
             }
-            LinkResolution::Unresolved | LinkResolution::Ambiguous { .. } => None,
+            LinkResolution::Unresolved | LinkResolution::Ambiguous { .. } => {
+                if let Some(path) = link.path.as_deref() {
+                    ensure_preserved_markdown_target_is_contained(
+                        &document.source_file.logical_path,
+                        destination,
+                        path,
+                        &link.raw_target,
+                    )?;
+                }
+                None
+            }
         };
         if let Some(target_output) = target_output {
             let relative = relative_output_target(destination, target_output);
@@ -2491,6 +2575,10 @@ fn validate_markdown_replacement_structure(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one bounded source reopen must validate every pending Markdown rewrite together"
+)]
 fn materialize_markdown_rewrites(
     workspace: &CanonicalWorkspace,
     snapshots: &[VaultSnapshot],
@@ -2534,19 +2622,17 @@ fn materialize_markdown_rewrites(
             })
             .collect();
         let mut reread_diagnostics = Vec::new();
-        let mut source_bytes = BTreeMap::new();
+        let mut source_entries = BTreeMap::new();
         for entry in
             crate::snapshot::collect_entries(&snapshot.source, policy, &mut reread_diagnostics)?
         {
-            if needed_paths.contains(&entry.logical_path)
+            let entry_path = entry.logical_path.clone();
+            if needed_paths.contains(&entry_path)
                 && (entry.kind != FileKind::Markdown
-                    || source_bytes
-                        .insert(entry.logical_path.clone(), entry.bytes)
-                        .is_some())
+                    || source_entries.insert(entry_path.clone(), entry).is_some())
             {
                 return Err(VaultcError::PlanStale(format!(
-                    "Markdown rewrite source `{source_id}/{}` is not unique Markdown",
-                    entry.logical_path
+                    "Markdown rewrite source `{source_id}/{entry_path}` is not unique Markdown"
                 )));
             }
         }
@@ -2559,7 +2645,7 @@ fn materialize_markdown_rewrites(
                     document.source_file.logical_path
                 )));
             }
-            let bytes = source_bytes
+            let entry = source_entries
                 .remove(&document.source_file.logical_path)
                 .ok_or_else(|| {
                     VaultcError::IdentityMismatch(format!(
@@ -2567,10 +2653,18 @@ fn materialize_markdown_rewrites(
                         document.source_file.logical_path
                     ))
                 })?;
+            if entry.original_path != document.source_file.original_path
+                || entry.path_encoding != document.source_file.path_encoding
+            {
+                return Err(VaultcError::IdentityMismatch(format!(
+                    "Markdown rewrite source path spelling changed for `{source_id}/{}`",
+                    document.source_file.logical_path
+                )));
+            }
             let output = render_rewritten_markdown(
                 document,
                 &rewrite.destination,
-                &bytes,
+                &entry.bytes,
                 &rewrite.replacements,
                 policy,
             )?;
@@ -2671,6 +2765,7 @@ fn validate_rewritten_markdown_links(
     policy: &CompilerPolicy,
 ) -> Result<()> {
     let mut output_file = document.source_file.clone();
+    destination.clone_into(&mut output_file.original_path);
     destination.clone_into(&mut output_file.logical_path);
     output_file.byte_len = u64::try_from(output.len())
         .map_err(|_| VaultcError::ResourceLimit("rewritten Markdown length overflow".into()))?;
@@ -2936,17 +3031,25 @@ fn canvas_rewrite_operation_id(
 
 fn allocate_auxiliary_path(
     preferred: &str,
+    original_request: &str,
     identity_suffix: &str,
-    allocated: &mut BTreeMap<String, String>,
+    allocated: &mut BTreeMap<String, AllocatedPath>,
     policy: &CompilerPolicy,
 ) -> Result<(String, Option<(ConflictKind, String)>)> {
     validate_output_logical_path(preferred, policy)?;
     let key = portable_key(preferred);
-    let Some(existing) = allocated.get(&key).cloned() else {
-        allocated.insert(key, preferred.to_owned());
+    let Some(existing) = allocated.get(&key) else {
+        allocated.insert(
+            key,
+            AllocatedPath {
+                destination: preferred.to_owned(),
+                original_request: original_request.to_owned(),
+            },
+        );
         return Ok((preferred.to_owned(), None));
     };
-    let kind = classify_path_collision(&existing, preferred);
+    let kind = classify_path_collision(&existing.original_request, original_request);
+    let existing_destination = existing.destination.clone();
     let mut length = 8_usize;
     let destination = loop {
         let suffix = &identity_suffix[..length.min(identity_suffix.len())];
@@ -2958,7 +3061,10 @@ fn allocate_auxiliary_path(
         let candidate_key = portable_key(&candidate);
         if let std::collections::btree_map::Entry::Vacant(entry) = allocated.entry(candidate_key) {
             validate_output_logical_path(&candidate, policy)?;
-            entry.insert(candidate.clone());
+            entry.insert(AllocatedPath {
+                destination: candidate.clone(),
+                original_request: candidate.clone(),
+            });
             break candidate;
         }
         if length >= identity_suffix.len() {
@@ -2968,7 +3074,7 @@ fn allocate_auxiliary_path(
         }
         length += 1;
     };
-    Ok((destination, Some((kind, existing))))
+    Ok((destination, Some((kind, existing_destination))))
 }
 
 fn copy_operation(
@@ -3059,7 +3165,7 @@ fn allocation_tuple(document: &Document) -> (String, String, SnapshotId, Documen
 }
 
 pub(crate) fn portable_key(path: &str) -> String {
-    path.to_lowercase().nfc().collect()
+    crate::parse::full_casefold_nfc(path)
 }
 
 fn classify_path_collision(existing: &str, requested: &str) -> ConflictKind {
@@ -3127,11 +3233,7 @@ fn truncate_utf8(value: &str, maximum_bytes: usize) -> &str {
 }
 
 fn normalize_link_path(path: &str) -> String {
-    path.trim_start_matches("./")
-        .replace('\\', "/")
-        .to_lowercase()
-        .nfc()
-        .collect()
+    crate::parse::full_casefold_nfc(&path.trim_start_matches("./").replace('\\', "/"))
 }
 
 fn resolve_relative_source_path(current: &str, target: &str) -> Option<String> {
@@ -3156,6 +3258,37 @@ fn resolve_relative_source_path(current: &str, target: &str) -> Option<String> {
         }
     }
     Some(parts.join("/"))
+}
+
+fn resolve_contained_relative_path(current: &str, target: &str) -> Option<String> {
+    let bytes = target.as_bytes();
+    if target.is_empty()
+        || target.starts_with('/')
+        || target.contains('\\')
+        || target.chars().any(char::is_control)
+        || bytes
+            .get(0..2)
+            .is_some_and(|prefix| prefix[0].is_ascii_alphabetic() && prefix[1] == b':')
+    {
+        return None;
+    }
+    let mut parts: Vec<&str> = current
+        .rsplit_once('/')
+        .map_or("", |(parent, _)| parent)
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .collect();
+    for component in target.split('/') {
+        match component {
+            "." => {}
+            "" => return None,
+            ".." => {
+                parts.pop()?;
+            }
+            value => parts.push(value),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 fn relative_output_target(from: &str, to: &str) -> String {

@@ -3,7 +3,7 @@ title: Current State
 status: normative-v1
 owners:
   - release-maintainer
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0001
   - ADR-0003
@@ -11,13 +11,14 @@ decision_refs:
   - ADR-0009
   - ADR-0010
   - ADR-0011
+  - ADR-0012
 source_refs:
   - HIST-CURRENT-PLAN
 ---
 
 # Current State
 
-## Snapshot: 2026-08-17
+## Snapshot: 2026-08-18
 
 The repository now contains a working `0.1.0` Rust framework and CLI. The
 implemented vertical slice covers deterministic inspection through independent
@@ -27,7 +28,9 @@ development implementation, not a cross-platform V1 release.
 Implemented production packages:
 
 - `vaultc`: safe snapshotting, canonical IDs/IR, Markdown and Canvas parsing,
-  exact and review-only near deduplication, conflict/path planning, source-aware
+  exact pre-NFC UTF-8 source-path retention plus NFC logical paths and pinned
+  full-Unicode case-fold lookup, exact and review-only near deduplication,
+  conflict/path planning, source-aware
   Markdown rewrites with sealed output commitments and reverse verification,
   typed Canvas reference resolution and rewriting, immutable approvals, atomic
   compilation, provider-neutral augmentation request/authorization/recording
@@ -64,14 +67,15 @@ All commands below passed on macOS arm64 with Rust 1.97.1:
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 105 tests and all doctests passed |
+| `cargo test --workspace --all-features --no-fail-fast` | 129 tests and all doctests passed |
 | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
 
-The 105 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 4
-generated-provenance tests, 5 pack integration tests, 8 pipeline tests, 5
-provider/approval tests, 14 SDK augmentation/replay tests, 18 security tests, 9
-typed-provenance tests, 11 CLI unit tests, 3 CLI replay tests, 6 CLI lifecycle
+The 129 tests comprise 15 `vaultc` unit tests, 5 Canvas integration tests, 4
+generated-provenance tests, 22 normalization/archive tests, 5 pack integration
+tests, 8 pipeline tests, 5 provider/approval tests, 14 SDK augmentation/replay
+tests, 18 security tests, 9
+typed-provenance tests, 12 CLI unit tests, 3 CLI replay tests, 7 CLI lifecycle
 tests, and 2 protocol tests. They cover, among other cases:
 
 - source immutability, deterministic plan/output, absolute-source-location
@@ -101,6 +105,11 @@ tests, and 2 protocol tests. They cover, among other cases:
 - ZIP/tar traversal and links, duplicate ZIP members, decompression ratio,
   malformed UTF-8/JSON, resource limits, exclusions, output no-clobber, and
   independently resealed artifact tampering;
+- exact pre-NFC/NFC source-path pairs, semantic-ID versus Plan/Record identity
+  boundaries, spelling-only stale detection, Unicode-normalization and pinned
+  full-case-fold collisions, BOM/CRLF/lone-CR byte spans, multi-span rewrites,
+  raw ZIP central-name/Unicode-extra attacks, strict PAX paths, every-member
+  archive accounting, and complete `tar.zst` stream-ratio enforcement;
 - canonical VaultPack outer-byte verification, rejection of alternate zstd
   encodings or policy-mismatched levels, and streamed outer expansion-ratio
   enforcement before materialization;
@@ -135,16 +144,20 @@ The exact requirement-to-test mapping is in
 
 - Canvas file references now resolve through typed Document, Asset, Canvas, and
   Base targets and rewritten outputs are independently reconstructed. The
-  complete normative Markdown/Canvas golden corpus—including broader Unicode,
-  escaping, self-reference, and mixed-target vectors—and all
-  platform-normalization vectors are not yet present.
+  complete normative Markdown/Canvas golden corpus—including delimiter
+  escaping, self-reference, and mixed-target vectors—and the supported-platform
+  normalization matrix are not yet complete.
 - Markdown/frontmatter/wikilink/embed/ordinary-link parsing and exact byte-span
   rewrites are output-hash-bound and independently reversed to their sealed
-  source hash. The remaining corpus gaps include CRLF/BOM, broader Unicode and
-  escaping, and multiple grow/shrink replacement combinations.
-- Input paths are stored after NFC normalization. The original NFD/NFC spelling
-  is not retained, so some cross-source normalization collisions are typed as
-  `PATH_EXACT` and raw-path provenance is incomplete.
+  source hash. BOM-at-zero versus content BOM, CRLF/lone CR, Unicode combining
+  marks/full-fold vectors, and multiple grow/shrink replacements are covered;
+  the remaining corpus gap is broader escaped/delimiter syntax.
+- Every accepted source path retains its exact portable UTF-8 spelling before
+  NFC plus its NFC logical path. Semantic source IDs remain logical-path based,
+  while Plan and typed provenance identities bind the original spelling.
+  Directory, raw ZIP central-directory, tar/PAX, collision classification,
+  spelling-only stale-source, and fully resealed provenance attacks are covered
+  locally; other filesystems and supported platforms remain unverified.
 - Provenance now implements the ALG-PRV-001 typed stored graph for content and
   pre-envelope audit outputs plus deterministic virtual records for provenance,
   manifest, and checksums. Record identity, graph order, closure, decisions,
@@ -176,9 +189,11 @@ The exact requirement-to-test mapping is in
   portable no-clobber directory publication is not proven race-free on every
   platform. VaultPack extraction now bounds the outer file, declared and
   streamed expansion ratio, member count, per-file size, and aggregate size.
-- Source archive compressed-byte size and the count of every visited member
-  (including excluded/non-file entries) are not separately bounded. Nested
-  archives are treated as opaque rather than recursively extracted.
+- Source archive container size, every effective member (including excluded and
+  non-file entries), declared aggregate sizes, ZIP central-directory names, and
+  the complete `tar.zst` decoder stream are bounded. Nested archives remain
+  opaque rather than recursively extracted, and accepted entries are still
+  buffered before sealing.
 - The artifact manifest is still minimal: media types, license/attribution
   summaries, creation-policy/distribution metadata, and signature metadata from
   the target format are not implemented. Canvas and Markdown rewrite bytes are
@@ -199,15 +214,14 @@ The exact requirement-to-test mapping is in
 
 ## Next implementation slices
 
-1. Complete the remaining ALG-NRM-001 Markdown/Canvas golden corpus and retain
-   original pre-normalization path spellings.
-2. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
+1. Add Linux, Windows, and macOS matrix CI plus cross-platform semantic and
    artifact determinism fixtures.
-3. Harden source/archive accounting and public SDK no-clobber pack publication.
-4. Define schema migrations and run property/fuzz and fault-injection suites.
-5. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
+2. Make public SDK pack creation atomic/no-clobber and add combined
+   Compiled-Vault-plus-pack failure/fault-injection coverage.
+3. Define schema migrations and run property/fuzz and fault-injection suites.
+4. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
    ADR before calling a pack signed or marketplace-ready.
-6. Stream large blobs and control files and run QG-006 at the full reference
+5. Stream large blobs and control files and run QG-006 at the full reference
    workload.
 
 No MCP, plugin, marketplace, or neuroscience-inspired runtime behavior should

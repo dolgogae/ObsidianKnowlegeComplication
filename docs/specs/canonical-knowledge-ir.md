@@ -8,6 +8,7 @@ last_updated: 2026-08-16
 decision_refs:
   - ADR-0003
   - ADR-0008
+  - ADR-0012
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -48,7 +49,10 @@ IDs MUST be domain-separated hashes as specified by [`../algorithms/stable/snaps
 
 - `SourceDescriptor`: stable source ID, user label, input kind, policy overrides.
 - `VaultSnapshot`: schema version, snapshot ID, source ID, creation observation, ordered file manifest, exclusion report.
-- `SourceFile`: normalized logical path, raw-path encoding metadata, media type, byte length, SHA-256, safety classification.
+- `SourceFile`: required exact accepted UTF-8 `original_path`, required NFC
+  `logical_path`, required tagged path encoding (`utf8` in V1), media type,
+  byte length, SHA-256, and safety classification. Both paths are portable `/`
+  component sequences; `N_path(original_path) == logical_path`.
 
 Timestamps from the input filesystem MAY be preserved as informational metadata but MUST NOT influence deterministic identity or output bytes.
 
@@ -113,3 +117,5 @@ from earlier development commits are not a supported compatibility version.
 4. Original and normalized forms are distinct fields.
 5. Invalid UTF-8 is either rejected or represented under an explicit binary policy; lossy decoding is forbidden.
 6. Unknown Canvas fields are preserved through round trips.
+7. V1 rejects non-UTF-8 source paths and never labels CP437 or replacement-
+   decoded archive names as UTF-8.

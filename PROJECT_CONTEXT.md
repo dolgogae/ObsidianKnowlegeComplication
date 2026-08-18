@@ -11,6 +11,7 @@ decision_refs:
   - ADR-0004
   - ADR-0009
   - ADR-0011
+  - ADR-0012
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN

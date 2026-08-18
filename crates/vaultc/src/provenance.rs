@@ -7,6 +7,7 @@ use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
+use unicode_normalization::UnicodeNormalization;
 use vaultc_protocol::{ProposalKindName, ProviderIdentity};
 
 use crate::approval::{ApprovalDecision, ApprovedPlan, ConflictDecision, ProposalMaterialization};
@@ -16,7 +17,7 @@ use crate::identity::{
     BlockId, ContentHash, DocumentId, EvidenceId, OperationId, PlanId, RecordId, SnapshotId,
     SourceFileId,
 };
-use crate::ir::{FileKind, SourceFile};
+use crate::ir::{FileKind, SourceFile, SourcePathEncoding};
 use crate::plan::{ConflictKind, ConflictSubject, OutputOperation};
 use crate::source::SourceId;
 
@@ -229,7 +230,9 @@ pub struct VaultFileSourceRecord {
     pub source_id: SourceId,
     pub snapshot_id: SnapshotId,
     pub source_file_id: SourceFileId,
+    pub original_source_path: String,
     pub source_path: String,
+    pub path_encoding: SourcePathEncoding,
     pub file_kind: FileKind,
     pub byte_len: u64,
     pub content_hash: ContentHash,
@@ -244,7 +247,9 @@ pub struct EvidenceSourceRecord {
     pub snapshot_id: SnapshotId,
     pub document_id: DocumentId,
     pub source_file_id: SourceFileId,
+    pub original_source_path: String,
     pub source_path: String,
+    pub path_encoding: SourcePathEncoding,
     pub source_content_hash: ContentHash,
     pub block_id: Option<BlockId>,
     pub byte_start: Option<u64>,
@@ -905,7 +910,9 @@ fn vault_file_source(
         source_id: file.source_id.clone(),
         snapshot_id: file.snapshot_id,
         source_file_id: file.file_id,
+        original_source_path: file.original_path.clone(),
         source_path: file.logical_path.clone(),
+        path_encoding: file.path_encoding,
         file_kind: file.kind.clone(),
         byte_len: file.byte_len,
         content_hash: file.content_hash,
@@ -943,7 +950,9 @@ fn evidence_source(
         snapshot_id,
         document_id,
         source_file_id: document.source_file.file_id,
+        original_source_path: document.source_file.original_path.clone(),
         source_path: document.source_file.logical_path.clone(),
+        path_encoding: document.source_file.path_encoding,
         source_content_hash: document.source_file.content_hash,
         block_id: evidence
             .block_id
@@ -1740,11 +1749,11 @@ fn validate_attribution(
 fn validate_source_record(source: &SourceRecord) -> Result<()> {
     match source {
         SourceRecord::VaultFile(source) => {
-            if source.source_path.contains('\0') {
-                return Err(VaultcError::VerificationFailed(
-                    "provenance source path contains NUL".into(),
-                ));
-            }
+            validate_record_source_path(
+                &source.original_source_path,
+                &source.source_path,
+                source.path_encoding,
+            )?;
             validate_attribution(
                 &source.attribution,
                 source
@@ -1753,15 +1762,19 @@ fn validate_source_record(source: &SourceRecord) -> Result<()> {
             )
         }
         SourceRecord::Evidence(source) => {
-            if source.source_path.contains('\0')
-                || EvidenceId::from_evidence(&vaultc_protocol::EvidenceRefWire {
-                    snapshot_id: source.snapshot_id.to_string(),
-                    document_id: source.document_id.to_string(),
-                    block_id: source.block_id.map(|block_id| block_id.to_string()),
-                    byte_start: source.byte_start,
-                    byte_end: source.byte_end,
-                    content_hash: source.content_hash.hex(),
-                })? != source.evidence_id
+            validate_record_source_path(
+                &source.original_source_path,
+                &source.source_path,
+                source.path_encoding,
+            )?;
+            if EvidenceId::from_evidence(&vaultc_protocol::EvidenceRefWire {
+                snapshot_id: source.snapshot_id.to_string(),
+                document_id: source.document_id.to_string(),
+                block_id: source.block_id.map(|block_id| block_id.to_string()),
+                byte_start: source.byte_start,
+                byte_end: source.byte_end,
+                content_hash: source.content_hash.hex(),
+            })? != source.evidence_id
             {
                 return Err(VaultcError::VerificationFailed(
                     "evidence source identity is invalid".into(),
@@ -1781,6 +1794,79 @@ fn validate_source_record(source: &SourceRecord) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn validate_record_source_path(
+    original_path: &str,
+    source_path: &str,
+    path_encoding: SourcePathEncoding,
+) -> Result<()> {
+    if path_encoding != SourcePathEncoding::Utf8
+        || original_path.is_empty()
+        || original_path.starts_with('/')
+        || original_path.contains('\\')
+        || original_path.contains('\0')
+    {
+        return Err(VaultcError::VerificationFailed(
+            "provenance source path encoding or syntax is invalid".into(),
+        ));
+    }
+    let mut normalized = Vec::new();
+    for component in original_path.split('/') {
+        let reserved_stem = component
+            .split('.')
+            .next()
+            .unwrap_or(component)
+            .to_ascii_uppercase();
+        if component.is_empty()
+            || component == "."
+            || component == ".."
+            || component.ends_with([' ', '.'])
+            || component.chars().any(|character| {
+                character.is_control()
+                    || matches!(
+                        character,
+                        '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                    )
+            })
+            || matches!(
+                reserved_stem.as_str(),
+                "CON"
+                    | "PRN"
+                    | "AUX"
+                    | "NUL"
+                    | "COM1"
+                    | "COM2"
+                    | "COM3"
+                    | "COM4"
+                    | "COM5"
+                    | "COM6"
+                    | "COM7"
+                    | "COM8"
+                    | "COM9"
+                    | "LPT1"
+                    | "LPT2"
+                    | "LPT3"
+                    | "LPT4"
+                    | "LPT5"
+                    | "LPT6"
+                    | "LPT7"
+                    | "LPT8"
+                    | "LPT9"
+            )
+        {
+            return Err(VaultcError::VerificationFailed(
+                "provenance source path contains an invalid portable component".into(),
+            ));
+        }
+        normalized.push(component.nfc().collect::<String>());
+    }
+    if normalized.join("/") != source_path {
+        return Err(VaultcError::VerificationFailed(
+            "provenance original and normalized source paths disagree".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_operation_record(operation: &OperationRecord) -> Result<()> {

@@ -22,42 +22,47 @@ pub(crate) fn persist_inspection(path: &Path, inspection: &Inspection) -> Result
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
     connection.pragma_update(None, "synchronous", "FULL")?;
-    connection.execute_batch(
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
         "
-        CREATE TABLE IF NOT EXISTS workspace_meta (
+        DROP TABLE IF EXISTS documents;
+        DROP TABLE IF EXISTS files;
+        DROP TABLE IF EXISTS snapshots;
+        DROP TABLE IF EXISTS workspace_meta;
+        CREATE TABLE workspace_meta (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS snapshots (
+        CREATE TABLE snapshots (
             snapshot_id TEXT PRIMARY KEY,
             source_id TEXT NOT NULL,
             source_kind TEXT NOT NULL,
             file_count INTEGER NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS files (
-            file_id TEXT PRIMARY KEY,
+        CREATE TABLE files (
+            file_id TEXT NOT NULL,
             snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
+            original_path TEXT NOT NULL,
             logical_path TEXT NOT NULL,
+            path_encoding TEXT NOT NULL,
             kind TEXT NOT NULL,
             byte_len INTEGER NOT NULL,
             content_hash TEXT NOT NULL,
+            PRIMARY KEY(snapshot_id, file_id),
             UNIQUE(snapshot_id, logical_path)
         );
-        CREATE TABLE IF NOT EXISTS documents (
+        CREATE TABLE documents (
             document_id TEXT PRIMARY KEY,
-            file_id TEXT NOT NULL REFERENCES files(file_id),
+            snapshot_id TEXT NOT NULL,
+            file_id TEXT NOT NULL,
             body_hash TEXT NOT NULL,
             frontmatter_hash TEXT NOT NULL,
-            ir_json BLOB NOT NULL
+            ir_json BLOB NOT NULL,
+            FOREIGN KEY(snapshot_id, file_id) REFERENCES files(snapshot_id, file_id)
         );
         PRAGMA user_version = 1;
         ",
     )?;
-    let transaction = connection.transaction()?;
-    transaction.execute("DELETE FROM documents", [])?;
-    transaction.execute("DELETE FROM files", [])?;
-    transaction.execute("DELETE FROM snapshots", [])?;
-    transaction.execute("DELETE FROM workspace_meta", [])?;
     transaction.execute(
         "INSERT INTO workspace_meta(key, value) VALUES ('schema_version', '1')",
         [],
@@ -93,12 +98,14 @@ pub(crate) fn persist_inspection(path: &Path, inspection: &Inspection) -> Result
                 )
             })?;
             transaction.execute(
-                "INSERT INTO files(file_id, snapshot_id, logical_path, kind, byte_len, content_hash)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO files(file_id, snapshot_id, original_path, logical_path, path_encoding, kind, byte_len, content_hash)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     file.file_id.to_string(),
                     snapshot.snapshot_id.to_string(),
+                    file.original_path,
                     file.logical_path,
+                    "utf8",
                     format!("{:?}", file.kind).to_ascii_lowercase(),
                     byte_len,
                     file.content_hash.hex(),
@@ -108,10 +115,11 @@ pub(crate) fn persist_inspection(path: &Path, inspection: &Inspection) -> Result
     }
     for document in inspection.workspace.documents.values() {
         transaction.execute(
-            "INSERT INTO documents(document_id, file_id, body_hash, frontmatter_hash, ir_json)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO documents(document_id, snapshot_id, file_id, body_hash, frontmatter_hash, ir_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 document.document_id.to_string(),
+                document.source_file.snapshot_id.to_string(),
                 document.source_file.file_id.to_string(),
                 document.body_hash.hex(),
                 document.frontmatter_hash.hex(),

@@ -28,6 +28,15 @@ type ParsedFrontmatter = (
     ContentHash,
 );
 
+const _: () = {
+    assert!(caseless::UNICODE_VERSION.0 == 16);
+    assert!(caseless::UNICODE_VERSION.1 == 0);
+    assert!(caseless::UNICODE_VERSION.2 == 0);
+    assert!(unicode_normalization::UNICODE_VERSION.0 == 17);
+    assert!(unicode_normalization::UNICODE_VERSION.1 == 0);
+    assert!(unicode_normalization::UNICODE_VERSION.2 == 0);
+};
+
 pub(crate) fn parse_file(
     source_file: SourceFile,
     bytes: &[u8],
@@ -35,6 +44,12 @@ pub(crate) fn parse_file(
     workspace: &mut CanonicalWorkspace,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
+    crate::snapshot::validate_source_path_pair(
+        &source_file.original_path,
+        &source_file.logical_path,
+        source_file.path_encoding,
+        policy,
+    )?;
     match source_file.kind {
         FileKind::Markdown => {
             let document = parse_markdown(source_file, bytes, policy, diagnostics)?;
@@ -83,9 +98,15 @@ pub(crate) fn parse_file(
 pub(crate) fn parse_markdown(
     source_file: SourceFile,
     bytes: &[u8],
-    _policy: &CompilerPolicy,
+    policy: &CompilerPolicy,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<Document> {
+    crate::snapshot::validate_source_path_pair(
+        &source_file.original_path,
+        &source_file.logical_path,
+        source_file.path_encoding,
+        policy,
+    )?;
     let text = std::str::from_utf8(bytes).map_err(|error| VaultcError::MalformedInput {
         path: source_file.logical_path.clone(),
         reason: format!("Markdown must be UTF-8: {error}"),
@@ -94,14 +115,23 @@ pub(crate) fn parse_markdown(
     let (frontmatter, aliases, tags, explicit_title, frontmatter_hash) =
         parse_frontmatter(frontmatter_raw, &source_file.logical_path, diagnostics)?;
 
-    let (body, body_offset) = body
-        .strip_prefix('\u{feff}')
-        .map_or((body, body_offset), |without_bom| {
-            (without_bom, body_offset + '\u{feff}'.len_utf8())
-        });
+    let (body, body_offset) = if body_offset == 0 {
+        body.strip_prefix('\u{feff}')
+            .map_or((body, body_offset), |without_bom| {
+                (without_bom, body_offset + '\u{feff}'.len_utf8())
+            })
+    } else {
+        (body, body_offset)
+    };
     let normalized_body = normalize_text(body);
     let options = Options::default();
-    let structural_projection = markdown_to_html(&normalized_body, &options);
+    let mut structural_projection = markdown_to_html(&normalized_body, &options);
+    // Comrak treats a leading U+FEFF as a transport BOM. At this point the
+    // only transport BOM has already been removed at byte offset zero, so a
+    // remaining leading U+FEFF is semantic body text and must stay in N_body.
+    if normalized_body.starts_with('\u{feff}') {
+        structural_projection.insert(0, '\u{feff}');
+    }
     let body_hash =
         ContentHash::from_domain_bytes("vaultc:body:v1\0", structural_projection.as_bytes());
     let document_id = DocumentId::from_parts(
@@ -141,15 +171,17 @@ fn split_frontmatter(text: &str) -> (Option<&str>, &str, usize) {
     let (prefix_len, candidate) = text
         .strip_prefix('\u{feff}')
         .map_or((0, text), |candidate| ('\u{feff}'.len_utf8(), candidate));
-    if !(candidate.starts_with("---\n") || candidate.starts_with("---\r\n")) {
+    let Some(first_line) = raw_lines(candidate).next() else {
+        return (None, text, 0);
+    };
+    let first_line_content = trim_raw_line_ending(first_line);
+    if first_line_content != "---" || first_line_content.len() == first_line.len() {
         return (None, text, 0);
     }
-    let first_line_end = candidate
-        .find('\n')
-        .map_or(candidate.len(), |index| index + 1);
+    let first_line_end = first_line.len();
     let mut offset = prefix_len + first_line_end;
-    for line in text[offset..].split_inclusive('\n') {
-        let trimmed = line.trim_end_matches(['\r', '\n']);
+    for line in raw_lines(&text[offset..]) {
+        let trimmed = trim_raw_line_ending(line);
         if trimmed == "---" || trimmed == "..." {
             let body_offset = offset + line.len();
             return (
@@ -270,6 +302,44 @@ fn normalize_text(value: &str) -> String {
         .collect()
 }
 
+struct RawLines<'a> {
+    text: &'a str,
+    offset: usize,
+}
+
+impl<'a> Iterator for RawLines<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.offset >= self.text.len() {
+            return None;
+        }
+        let start = self.offset;
+        let bytes = self.text.as_bytes();
+        while self.offset < bytes.len() && !matches!(bytes[self.offset], b'\r' | b'\n') {
+            self.offset += 1;
+        }
+        if self.offset < bytes.len() {
+            if bytes[self.offset] == b'\r' && bytes.get(self.offset + 1) == Some(&b'\n') {
+                self.offset += 2;
+            } else {
+                self.offset += 1;
+            }
+        }
+        Some(&self.text[start..self.offset])
+    }
+}
+
+fn raw_lines(text: &str) -> RawLines<'_> {
+    RawLines { text, offset: 0 }
+}
+
+fn trim_raw_line_ending(line: &str) -> &str {
+    line.strip_suffix("\r\n")
+        .or_else(|| line.strip_suffix(['\r', '\n']))
+        .unwrap_or(line)
+}
+
 fn scan_blocks(
     document_id: DocumentId,
     body: &str,
@@ -297,7 +367,7 @@ fn scan_blocks(
         }
     };
 
-    for line in body.split_inclusive('\n') {
+    for line in raw_lines(body) {
         let line_start = offset;
         let line_end = offset + line.len();
         let trimmed = line.trim_end_matches(['\r', '\n']);
@@ -402,7 +472,8 @@ fn push_block(
 }
 
 fn explicit_block_id(block: &str) -> Option<String> {
-    let candidate = block
+    let normalized = normalize_text(block);
+    let candidate = normalized
         .lines()
         .rev()
         .find(|line| !line.trim().is_empty())?
@@ -420,8 +491,8 @@ fn scan_links(document_id: DocumentId, text: &str, base_offset: usize) -> Vec<Li
     let mut links = Vec::new();
     let mut line_offset = base_offset;
     let mut fence: Option<(u8, usize)> = None;
-    for line_with_ending in text.split_inclusive('\n') {
-        let line = line_with_ending.trim_end_matches(['\r', '\n']);
+    for line_with_ending in raw_lines(text) {
+        let line = trim_raw_line_ending(line_with_ending);
         if let Some((marker, minimum)) = fence {
             if is_closing_fence(line, marker, minimum) {
                 fence = None;
@@ -1016,7 +1087,12 @@ pub(crate) fn lookup_keys(document: &Document) -> BTreeSet<String> {
 }
 
 pub(crate) fn normalize_lookup_key(value: &str) -> String {
-    value.trim().to_lowercase().nfc().collect()
+    full_casefold_nfc(value.trim())
+}
+
+pub(crate) fn full_casefold_nfc(value: &str) -> String {
+    let normalized: String = value.nfc().collect();
+    caseless::default_case_fold_str(&normalized)
 }
 
 #[cfg(test)]
@@ -1031,7 +1107,9 @@ mod tests {
             source_id: SourceId::new("fixture").expect("source ID"),
             snapshot_id: SnapshotId::from_parts("fixture\0", &[b"snapshot"]),
             file_id: SourceFileId::from_parts("fixture\0", &[path.as_bytes(), hash.as_bytes()]),
+            original_path: path.into(),
             logical_path: path.into(),
+            path_encoding: crate::ir::SourcePathEncoding::Utf8,
             kind: FileKind::Markdown,
             byte_len: bytes.len() as u64,
             content_hash: hash,

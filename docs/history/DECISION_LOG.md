@@ -3,7 +3,7 @@ title: Decision Log
 status: historical
 owners:
   - release-maintainer
-last_updated: 2026-08-16
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -216,4 +216,29 @@ Append-only. Normative details live in specifications and accepted ADRs.
 - Added 14 SDK augmentation/replay tests and 3 CLI replay tests and migrated all
   proposal-bearing fixtures to canonical transcripts. The macOS arm64 suite
   increased from 87 to 105 tests and passes workspace tests, all-target
+  warning-free Clippy, rustfmt, and diff checks.
+
+## 2026-08-18 — Original source spelling and Unicode normalization boundary
+
+- Accepted ADR-0012 and completed the unpublished schema-1 `SourceFile` with a
+  required exact portable UTF-8 `original_path`, NFC `logical_path`, and tagged
+  UTF-8 encoding. Semantic file/snapshot identities remain logical-path based;
+  Plan, workspace projection, and typed provenance identities bind the observed
+  spelling, so a spelling-only source rename invalidates a sealed plan.
+- Replaced lowercase lookup with pinned full Unicode case folding after NFC and
+  classified cross-source exact, Unicode-normalization, and case-fold
+  collisions from their actual allocation spellings. The compiler asserts
+  Unicode 17.0.0 NFC data and Unicode 16.0.0 case-fold data.
+- Made directory, ZIP, tar, and PAX names strict UTF-8 portable paths. ZIP raw
+  central-directory names are scanned and bound to the reader entry before any
+  Unicode-extra/CP437 behavior; tar rejects malformed, duplicate, invalid UTF-8,
+  or disagreeing PAX/GNU path carriers.
+- Bound source archive container size, every effective member, declared
+  aggregate size, and the complete `tar.zst` decompressed stream. Excluded,
+  directory, link, metadata, and trailing bytes cannot evade resource budgets.
+- Froze BOM-at-byte-zero, frontmatter-adjacent BOM, CRLF/lone-CR, Markdown span,
+  Canvas raw-value, and preserved-reference containment behavior. Human CLI
+  provenance sanitizes untrusted original spellings while JSON remains exact.
+- Added 22 normalization/archive tests and two CLI regressions. The macOS arm64
+  suite increased from 105 to 129 tests and passes workspace tests, all-target
   warning-free Clippy, rustfmt, and diff checks.

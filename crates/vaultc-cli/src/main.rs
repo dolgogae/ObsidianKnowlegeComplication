@@ -1214,8 +1214,7 @@ fn print_provenance(
             }
             println!("records: {}", page.records.len());
             for (index, record) in page.records.iter().enumerate() {
-                let record = serde_json::to_string(record)
-                    .map_err(|error| CliFailure::from_error(EXIT_INTERNAL, error))?;
+                let record = human_safe_json(record)?;
                 let number = index + 1;
                 println!("record {number}: {record}");
             }
@@ -1227,6 +1226,12 @@ fn print_provenance(
             Ok(())
         }
     }
+}
+
+fn human_safe_json<T: Serialize>(value: &T) -> CliResult<String> {
+    serde_json::to_string(value)
+        .map(|encoded| sanitize_terminal(&encoded))
+        .map_err(|error| CliFailure::from_error(EXIT_INTERNAL, error))
 }
 
 fn print_json<T: Serialize>(value: &T) -> CliResult<()> {
@@ -1291,6 +1296,28 @@ mod tests {
             sanitize_terminal("bad\n\u{1b}[31m\u{202e}name"),
             "bad  [31m name"
         );
+    }
+
+    #[test]
+    fn human_provenance_record_sanitizes_untrusted_original_path() {
+        let record = serde_json::json!({
+            "kind": {
+                "type": "source",
+                "value": {
+                    "type": "vault_file",
+                    "value": {
+                        "original_source_path": "notes/safe\u{202e}txt\u{1b}.md",
+                        "source_path": "notes/safe.txt.md",
+                        "path_encoding": "utf8"
+                    }
+                }
+            }
+        });
+
+        let rendered = human_safe_json(&record).expect("render untrusted provenance record");
+        assert!(!rendered.contains('\u{202e}'));
+        assert!(!rendered.contains('\u{1b}'));
+        assert!(rendered.contains("notes/safe txt\\u001b.md"));
     }
 
     #[test]

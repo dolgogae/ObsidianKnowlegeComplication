@@ -40,6 +40,9 @@ The framework is the policy and integrity boundary between untrusted source
 Vaults and a publishable result. It:
 
 - seals directory, ZIP, and `tar.zst` inputs without changing them;
+- retains each accepted UTF-8 source path both as its exact pre-NFC spelling
+  and as its canonical NFC logical path, with host-independent archive-name
+  validation and full-Unicode case-fold collision checks;
 - parses Markdown/frontmatter/Obsidian links, resolves and rewrites typed Canvas
   file references, and inventories Bases and attachments in a canonical IR;
 - plans exact deduplication, link rewrites, portable output paths, and typed

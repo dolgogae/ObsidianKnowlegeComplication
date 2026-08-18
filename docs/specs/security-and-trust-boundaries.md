@@ -3,7 +3,7 @@ title: Security and Trust Boundaries
 status: normative-v1
 owners:
   - qa-security-engineer
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0003
   - ADR-0004
@@ -77,7 +77,9 @@ Verification failures are fail-closed. Logs identify diagnostic codes and conten
 
 The implemented scanner rejects/excludes unsafe logical paths, symlinks,
 special files, named secret files, executable extensions, duplicate archive
-members, per-file/total/count limits, and source ZIP expansion-ratio breaches.
+members, strict raw ZIP/tar/PAX names, per-file/total/every-member limits,
+source container bounds, and ZIP or complete-stream `tar.zst` expansion-ratio
+breaches.
 VaultPack extraction rejects non-regular outer files and members, bounds the
 outer compressed size, prechecks declared expansion, and rechecks streamed
 expanded bytes against the ratio and aggregate limits before publication. It
@@ -104,9 +106,9 @@ This is not yet the full release threat model:
 
 - source files are not opened through a portable handle-relative/no-follow API,
   so filesystem race hardening remains incomplete;
-- source archive compressed-byte size and total visited-member count, including
-  excluded and non-file entries, are not separately bounded; nested archives
-  are opaque assets, so extraction nesting depth is zero rather than recursive;
+- accepted source entries are still buffered before sealing, and nested
+  archives are opaque assets, so extraction nesting depth is zero rather than
+  recursive;
 - a no-clobber destination check followed by a directory rename is not proven
   race-free on every supported platform;
 - the public SDK pack writer writes directly to its destination; only the CLI

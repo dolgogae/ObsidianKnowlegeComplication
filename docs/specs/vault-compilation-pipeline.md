@@ -3,7 +3,7 @@ title: Vault Compilation Pipeline
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0003
   - ADR-0005
@@ -49,10 +49,11 @@ path forms as well as the content identity.
 Archive extraction is virtual/streamed when possible. Limits MUST cover compressed bytes, expanded bytes, file count, per-file size, path length, nesting, and compression ratio. The planner does not need to execute or import uploaded plugin JavaScript.
 
 The current scanner retains every accepted entry's bytes in memory before
-sealing/parsing, does not separately cap the compressed source archive byte
-length or all visited members, and treats nested archives as opaque assets.
-Those are implementation gaps against the streaming and complete accounting
-contract, not alternate V1 behavior.
+sealing/parsing and treats nested archives as opaque assets. ZIP and `tar.zst`
+containers are bounded before parser construction, all effective members count
+toward limits, and the complete `tar.zst` decoder stream is expansion-bounded.
+Streaming accepted-file storage and recursive archive policy remain
+implementation gaps, not alternate V1 behavior.
 
 ## Analysis policy
 

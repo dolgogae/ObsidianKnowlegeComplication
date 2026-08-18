@@ -3,7 +3,7 @@ title: ALG-NRM-001 — Markdown, Canvas, and Link Normalization
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0008
   - ADR-0012
@@ -52,6 +52,11 @@ the ALG-SNP-001 semantic identity formulas.
 | `N_body` | canonical AST projection | canonical bytes | schema v1 |
 | `N_fm` | normalized frontmatter map | canonical bytes | schema v1 |
 | `O_path` | accepted pre-NFC component spelling | UTF-8 slash path | required |
+
+The V1 implementation pins NFC data to Unicode 17.0.0 and default full case
+fold data to Unicode 16.0.0. Dependency upgrades MUST NOT silently change
+`N_path` or `N_key`; they require golden-vector review and explicit
+normalization-version handling.
 
 ## Link parsing and rewriting
 

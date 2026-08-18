@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - qa-security-engineer
   - core-rust-engineer
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0004
   - ADR-0007
@@ -31,7 +31,7 @@ source_refs:
 
 ## Current `0.1.0` evidence
 
-Local macOS arm64 execution with Rust 1.97.1 has 105 passing tests plus passing
+Local macOS arm64 execution with Rust 1.97.1 has 129 passing tests plus passing
 doctest harnesses, warning-free workspace Clippy, and a clean rustfmt check.
 This evidence does not make the full release gates green:
 
@@ -114,10 +114,13 @@ validation, policy-and-consent preflight, provider-free byte-identical replay,
 canonical JSONL, nested unknown/duplicate-field rejection, header binding,
 SDK/CLI parity, cancellation, stale/cross-plan attacks, and replay no-clobber.
 
+The normalization/original-path and archive-accounting regressions are now
+implemented, including
+`cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path` and
+`archive_declared_member_count_and_compressed_bytes_are_bounded`.
+
 The following required regressions remain:
 
-- `cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path`;
-- `archive_declared_member_count_and_compressed_bytes_are_bounded`;
 - `sdk_pack_failure_does_not_leave_partial_destination`;
 - supported-platform concurrent destination creation/no-clobber tests.
 

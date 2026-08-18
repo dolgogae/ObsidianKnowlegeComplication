@@ -5,7 +5,7 @@ owners:
   - architect
   - core-rust-engineer
   - qa-security-engineer
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 decision_refs:
   - ADR-0003
   - ADR-0007
@@ -109,7 +109,11 @@ request's original spelling:
 case fold after NFC. Simple lowercase conversion is not conformant: vectors
 include `Straße`/`STRASSE` and final/non-final Greek sigma. Folding is lookup
 and collision data only; it never rewrites a displayed title, raw link, or
-source spelling.
+source spelling. V1 pins `unicode-normalization` data to Unicode 17.0.0 for NFC
+and `caseless` data to Unicode 16.0.0 for default full case folding. The two
+versions are independently asserted in the compiler and frozen by golden
+vectors; changing either table is a semantic policy change requiring explicit
+compatibility review.
 
 The output path remains canonical NFC and any suffix remains identity-derived.
 Both original and normalized source paths plus the `utf8` encoding tag are
@@ -171,4 +175,3 @@ recorded.
 - Whole-artifact byte equality across hosts requires the source boundary to
   expose the same original UTF-8 spelling. Cross-platform semantic-ID tests
   use archives or fixtures whose raw path spelling is fixed.
-

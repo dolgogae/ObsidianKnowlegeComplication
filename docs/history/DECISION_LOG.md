@@ -309,3 +309,18 @@ Append-only. Normative details live in specifications and accepted ADRs.
 - This local evidence does not qualify Linux/Windows filesystems, Windows
   reparse points, descriptor-relative ancestor swaps, process crashes, or
   physical power-loss durability. Those remain explicit release work.
+
+## 2026-09-01 — Cross-platform CI evidence baseline
+
+- Selected the ADR-0007 host matrix as Linux x86_64, Windows x86_64, macOS
+  x86_64, and macOS arm64, all running the repository-pinned Rust toolchain,
+  locked dependencies, and the complete all-feature workspace suite.
+- Required a literal full-VaultPack SHA-256 golden on every host so independent
+  jobs prove byte equality against one shared identity instead of merely
+  proving two runs agree with themselves.
+- Required a separate warning-free format/Clippy/documentation-integrity job,
+  read-only workflow permissions, full commit pinning for reusable actions, and
+  `fail-fast: false` for complete platform evidence.
+- A workflow file is implementation, not verification evidence. Until remote
+  jobs complete, Linux/Windows/macOS x86_64 status remains explicitly
+  unverified in current-state and traceability documents.

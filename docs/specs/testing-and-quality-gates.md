@@ -52,6 +52,29 @@ The authoritative live status and exact limitations are in
 [`../CURRENT_STATE.md`](../CURRENT_STATE.md); the mapping to code/tests is in
 [`../TRACEABILITY.md`](../TRACEABILITY.md).
 
+## Cross-platform CI contract
+
+The required hosted baseline has four host-native jobs: Linux x86_64, Windows
+x86_64, macOS x86_64, and macOS arm64. Each job MUST use the repository-pinned
+Rust toolchain and `Cargo.lock`, report its actual Rust host triple, and run the
+complete workspace test suite with all features. The matrix MUST use
+`fail-fast: false` so one platform failure does not erase evidence from the
+others.
+
+At least one job MUST additionally enforce workspace rustfmt, all-feature
+all-target Clippy with warnings denied, and repository-relative Markdown link
+integrity. A canonical basic-Vault build MUST compare its complete VaultPack
+bytes against a literal raw-SHA-256 golden on every host; same-run equality
+alone is not cross-platform evidence.
+
+Workflow permissions MUST be read-only unless a separate reviewed publication
+workflow requires more. Third-party or GitHub-maintained actions MUST be pinned
+to reviewed full commit identities, with the human-readable release recorded
+in a comment. The workflow definition being present or compiling locally is
+not a passed platform gate: only completed remote jobs on the named hosts count
+as Linux, Windows, or macOS CI evidence. Symlink/reparse-point skips MUST state
+the missing runner capability rather than silently count as coverage.
+
 ## Test layers
 
 ### Unit and golden tests

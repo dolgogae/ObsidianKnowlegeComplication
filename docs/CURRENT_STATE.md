@@ -3,7 +3,7 @@ title: Current State
 status: normative-v1
 owners:
   - release-maintainer
-last_updated: 2026-08-18
+last_updated: 2026-09-01
 decision_refs:
   - ADR-0001
   - ADR-0003
@@ -13,13 +13,14 @@ decision_refs:
   - ADR-0011
   - ADR-0012
   - ADR-0013
+  - ADR-0014
 source_refs:
   - HIST-CURRENT-PLAN
 ---
 
 # Current State
 
-## Snapshot: 2026-08-18
+## Snapshot: 2026-09-01
 
 The repository now contains a working `0.1.0` Rust framework and CLI. The
 implemented vertical slice covers deterministic inspection through independent
@@ -33,8 +34,9 @@ Implemented production packages:
   full-Unicode case-fold lookup, exact and review-only near deduplication,
   conflict/path planning, source-aware
   Markdown rewrites with sealed output commitments and reverse verification,
-  typed Canvas reference resolution and rewriting, immutable approvals, atomic
-  compilation, provider-neutral augmentation request/authorization/recording
+  typed Canvas reference resolution and rewriting, immutable approvals,
+  verified sibling-staged compilation with native atomic no-replace directory
+  publication, provider-neutral augmentation request/authorization/recording
   and offline replay, typed content-addressed provenance with a non-circular
   audit envelope, deterministic packing with verified atomic no-clobber pack
   publication, independent verification, and SQLite workspace state;
@@ -68,16 +70,17 @@ All commands below passed on macOS arm64 with Rust 1.97.1:
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 148 tests and all doctests passed |
+| `cargo test --workspace --all-features --no-fail-fast` | 172 tests and all doctests passed |
 | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
 
-The 148 tests comprise 18 `vaultc` unit tests, 5 Canvas integration tests, 4
-generated-provenance tests, 22 normalization/archive tests, 5 pack integration
-tests, 11 atomic-pack-publication tests, 8 pipeline tests, 5 provider/approval
-tests, 14 SDK augmentation/replay tests, 18 security tests, 9 typed-provenance
-tests, 13 CLI unit tests, 3 CLI replay tests, 11 CLI lifecycle tests, and 2
-protocol tests. They cover, among other cases:
+The 172 tests comprise 27 `vaultc` unit tests, 5 Canvas integration tests, 10
+atomic-directory-publication tests, 4 generated-provenance tests, 22
+normalization/archive tests, 5 pack integration tests, 11
+atomic-pack-publication tests, 8 pipeline tests, 5 provider/approval tests, 14
+SDK augmentation/replay tests, 18 security tests, 9 typed-provenance tests, 13
+CLI unit tests, 3 CLI replay tests, 16 CLI lifecycle tests, and 2 protocol
+tests. They cover, among other cases:
 
 - source immutability, deterministic plan/output, absolute-source-location
   independence, and byte-identical VaultPacks on one supported host;
@@ -118,6 +121,12 @@ protocol tests. They cover, among other cases:
   publication, existing file/directory/live-or-dangling-symlink preservation,
   bidirectional containment and portable alias rejection, deterministic
   concurrent single-winner publication, and injected pre/post-commit faults;
+- SDK/CLI Compiled Vault sibling staging, full-tree synchronization and
+  independent staged verification, native no-replace publication, late
+  file/directory/live-or-dangling-symlink race winners, concurrent distinct
+  build isolation, source/output/pack disjointness, explicit cleanup or marked
+  retention, unsupported-primitive fail-closed behavior, and post-commit
+  durability uncertainty without starting the optional pack;
 - CLI/SDK plan parity and the full plan → approve → compile → pack → verify →
   explain lifecycle, including stable plan input/decision/internal exit families
   and fail-closed pre-output-hash plan rejection;
@@ -139,7 +148,7 @@ The exact requirement-to-test mapping is in
 | QG-001 Functional | implemented on macOS arm64 | current automated suite is green; the complete Markdown/Canvas golden corpus and supported-platform matrix are not complete |
 | QG-002 Determinism | implemented on one platform | same-host bytes and absolute-location independence pass; Linux/Windows/toolchain comparison remains |
 | QG-003 Provenance | implemented and locally verified | typed stored graph, virtual audit envelope, RecordIds, decisions/approvals, frontmatter attribution, pagination, exact reconstruction, and adversarial reseal tests pass on macOS arm64; platform matrix remains |
-| QG-004 Safety | implemented corpus green | current hostile-input, control-file, pack-publication race, and pack fault-seam tests pass; fuzz/property campaigns remain |
+| QG-004 Safety | implemented corpus green | current hostile-input, control-file, directory/pack publication race, and fault-seam tests pass; fuzz/property campaigns remain |
 | QG-005 Compatibility | documented | no migration/version compatibility matrix is implemented yet |
 | QG-006 Performance | not verified | the 100,000-note/20 GB/20-minute/2 GB RSS benchmark has not run |
 | QG-007 Documentation | passed for this change | current state, traceability, specs, and append-only decision log are updated; all repository-relative Markdown links resolve |
@@ -193,10 +202,13 @@ The exact requirement-to-test mapping is in
   `PackPublicationAfterCompile` state and keeps the valid Compiled Vault; a
   post-commit parent-sync failure keeps the complete pack and reports uncertain
   durability.
-- Source opening is rechecked but not yet descriptor-relative/no-follow, and
-  portable no-clobber directory publication is not proven race-free on every
-  platform. VaultPack extraction now bounds the outer file, declared and
-  streamed expansion ratio, member count, per-file size, and aggregate size.
+- Source opening and existing ancestors are rechecked but are not yet fully
+  descriptor-relative/no-follow. Compiled Vault publication now uses a native
+  no-replace directory commit and deterministic late-winner fault barriers on
+  macOS; the Linux and Windows implementations compile behind target-specific
+  backends but still require execution on their supported local filesystems.
+  VaultPack extraction bounds the outer file, declared and streamed expansion
+  ratio, member count, per-file size, and aggregate size.
 - Source archive container size, every effective member (including excluded and
   non-file entries), declared aggregate sizes, ZIP central-directory names, and
   the complete `tar.zst` decoder stream are bounded. Nested archives remain
@@ -209,9 +221,10 @@ The exact requirement-to-test mapping is in
   output is hash-committed; generated bodies/frontmatter source IDs now have an
   equivalent approved-proposal derivation check. An unsigned, wholly resealed
   artifact still has no external authenticity anchor.
-- Pack no-clobber and symlink/race behavior is verified locally on macOS; the
-  Windows reparse-point and full supported-filesystem matrix remain. There is
-  no installer or permission/license/signature display surface.
+- Directory and pack no-clobber plus symlink/race behavior are verified locally
+  on macOS; Linux filesystem execution, Windows reparse-point execution, and
+  the full supported-filesystem matrix remain. There is no installer or
+  permission/license/signature display surface.
 - Typed conflict actions are not modeled yet. `user_resolved` and
   `provider_suggested` remain reserved states; V1 only accepts an explicit
   policy waiver overlay for a required conflict.
@@ -222,8 +235,8 @@ The exact requirement-to-test mapping is in
 
 ## Next implementation slices
 
-1. Close portable atomic no-replace Compiled Vault directory publication and
-   add Linux, Windows, and macOS matrix CI for path, race, and determinism cases.
+1. Add Linux, Windows, and macOS matrix CI for native directory publication,
+   reparse/symlink behavior, path normalization, race, and determinism cases.
 2. Define schema migrations and run property/fuzz plus process-crash suites.
 3. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
    ADR before calling a pack signed or marketplace-ready.

@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - qa-security-engineer
   - core-rust-engineer
-last_updated: 2026-08-18
+last_updated: 2026-09-01
 decision_refs:
   - ADR-0004
   - ADR-0007
@@ -33,7 +33,7 @@ source_refs:
 
 ## Current `0.1.0` evidence
 
-Local macOS arm64 execution with Rust 1.97.1 has 148 passing tests plus passing
+Local macOS arm64 execution with Rust 1.97.1 has 172 passing tests plus passing
 doctest harnesses, warning-free workspace Clippy, and a clean rustfmt check.
 This evidence does not make the full release gates green:
 
@@ -142,7 +142,7 @@ write-to-parent-sync order and all pre/post-commit states. Supported-platform
 concurrent destination and Windows reparse-point tests remain release-matrix
 requirements even after local acceptance passes.
 
-The atomic-directory acceptance targets are
+The locally implemented atomic-directory acceptance includes
 `sdk_directory_concurrent_creators_have_exactly_one_winner`,
 `sdk_directory_distinct_concurrent_builds_never_mix_or_replace_winner`,
 `sdk_directory_existing_file_and_directory_are_preserved`,
@@ -160,8 +160,10 @@ Normal concurrent builds are supplemental; the
 private before-publish barrier is required to prove that a late empty-directory
 or symlink winner is not replaced.
 
-These names are acceptance targets. Do not mark their parent requirements
-verified by substituting a checksum-only or helper-unit assertion.
+These behaviors have both public SDK/CLI coverage and a private deterministic
+barrier/fault seam. They are locally verified on macOS arm64; Linux, Windows,
+reparse-point, filesystem, and process-crash evidence remains mandatory before
+the parent release requirement is called cross-platform verified.
 
 ## Algorithm status gates
 

@@ -286,3 +286,26 @@ Append-only. Normative details live in specifications and accepted ADRs.
 - Kept public compile return types and serialized artifacts unchanged. This
   entry records the accepted contract; implementation and platform evidence
   are reported separately after the feature gates pass.
+
+## 2026-09-01 — Atomic Compiled Vault directory publication implementation
+
+- Replaced the final check-plus-rename boundary with target-native no-replace
+  publication: `rustix` `NOREPLACE` on Linux/macOS and a non-replacing
+  `MoveFileExW` wrapper on Windows. Unsupported primitives fail closed; there
+  is no replace-capable fallback.
+- Kept the restrictive sibling stage alive through materialization, recursive
+  synchronization, independent verification, and the final namespace commit.
+  A late file, directory, live symlink, dangling symlink, or concurrent
+  compiler winner is preserved and reported as `OutputExists`.
+- Added source/output/integrated-pack disjointness checks before staging,
+  explicit remove-or-mark-and-retain disposition, and
+  `StagingDispositionFailed` so the original error and cleanup/retention error
+  are both observable. Post-commit parent-sync failure retains a verified Vault
+  as `PublishedButDurabilityUncertain` and does not begin optional packing.
+- Added 10 public SDK directory-publication cases, 9 deterministic private
+  checkpoint/race/fault cases, and 5 CLI lifecycle cases. The macOS arm64 local
+  suite increased from 148 to 172 tests; workspace tests, all-target Clippy
+  with warnings denied, rustfmt, and diff checks pass.
+- This local evidence does not qualify Linux/Windows filesystems, Windows
+  reparse points, descriptor-relative ancestor swaps, process crashes, or
+  physical power-loss durability. Those remain explicit release work.

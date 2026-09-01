@@ -236,9 +236,10 @@ impl CliFailure {
 fn vaultc_error_contains_internal(error: &VaultcError) -> bool {
     match error {
         VaultcError::Internal(_) => true,
-        VaultcError::PackPublicationAfterCompile { source, .. } => {
-            vaultc_error_contains_internal(source)
-        }
+        VaultcError::PackPublicationAfterCompile { source: nested, .. }
+        | VaultcError::StagingDispositionFailed {
+            original: nested, ..
+        } => vaultc_error_contains_internal(nested),
         _ => false,
     }
 }
@@ -1390,6 +1391,30 @@ mod tests {
         };
         assert_eq!(
             CliFailure::from_vaultc(EXIT_OUTPUT, durability).code,
+            EXIT_OUTPUT
+        );
+
+        let staging_internal = VaultcError::StagingDispositionFailed {
+            staging: PathBuf::from(".vaultc-staging-failed"),
+            action: vaultc::StagingDispositionAction::Remove,
+            original: Box::new(VaultcError::Internal(
+                "broken directory publication invariant".into(),
+            )),
+            disposition_error: std::io::Error::other("staging cleanup failed"),
+        };
+        assert_eq!(
+            CliFailure::from_vaultc(EXIT_OUTPUT, staging_internal).code,
+            EXIT_INTERNAL
+        );
+
+        let staging_runtime = VaultcError::StagingDispositionFailed {
+            staging: PathBuf::from(".vaultc-staging-failed"),
+            action: vaultc::StagingDispositionAction::MarkIncompleteAndRetain,
+            original: Box::new(VaultcError::OutputExists(PathBuf::from("compiled"))),
+            disposition_error: std::io::Error::other("staging marker failed"),
+        };
+        assert_eq!(
+            CliFailure::from_vaultc(EXIT_OUTPUT, staging_runtime).code,
             EXIT_OUTPUT
         );
     }

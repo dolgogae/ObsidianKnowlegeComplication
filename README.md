@@ -81,6 +81,11 @@ cargo test --workspace --all-features
 The toolchain is pinned by [`rust-toolchain.toml`](rust-toolchain.toml). The
 framework is dual-licensed under MIT OR Apache-2.0.
 
+[`CI`](.github/workflows/ci.yml) defines locked, host-native test jobs for Linux
+x86_64, Windows x86_64, macOS x86_64, and macOS arm64, plus formatting and
+warning-free Clippy. Its VaultPack test compares the complete archive against a
+single literal SHA-256 golden on every host.
+
 ## Rust SDK example
 
 The API makes each state transition visible. A deterministic build without AI

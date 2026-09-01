@@ -324,3 +324,21 @@ Append-only. Normative details live in specifications and accepted ADRs.
 - A workflow file is implementation, not verification evidence. Until remote
   jobs complete, Linux/Windows/macOS x86_64 status remains explicitly
   unverified in current-state and traceability documents.
+
+## 2026-09-01 — Cross-platform CI implementation
+
+- Added a read-only GitHub Actions workflow for Ubuntu 24.04 x86_64, Windows
+  2025 x86_64, macOS 15 x86_64, and macOS 15 arm64. Every host runs the pinned
+  Rust 1.97.1 toolchain, locked dependencies, and the complete all-feature
+  workspace suite with matrix fail-fast disabled.
+- Added a separate Linux quality job for rustfmt and all-target warning-free
+  Clippy. The only reusable action is GitHub's checkout v6.0.2, pinned to the
+  reviewed full commit `de0fac2e4500dabe0009e67214ff5f5447ce83dd` with stored
+  credentials disabled.
+- Added LF checkout normalization, a direct repository-relative Markdown-link
+  regression, and the literal basic-Vault VaultPack SHA-256
+  `e017fa28359eb9d49458fecda42b27a759c58a7546ecbd7c272d58eb8b230890`.
+- The local macOS arm64 suite increased from 172 to 173 tests and remains green
+  with locked workspace tests, Clippy, rustfmt, workflow YAML parsing, and diff
+  checks. No remote is configured in this checkout, so the four hosted jobs are
+  implemented but not yet execution evidence.

@@ -33,6 +33,12 @@ vaultc-protocol = { path = "../vaultc-protocol" }
 zip = { workspace = true, optional = true }
 zstd = { workspace = true, optional = true }
 
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+atomicwrites.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

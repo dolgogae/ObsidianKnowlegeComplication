@@ -3,7 +3,7 @@ title: Requirements Traceability Matrix
 status: normative-v1
 owners:
   - qa-security-engineer
-last_updated: 2026-08-18
+last_updated: 2026-09-01
 decision_refs:
   - ADR-0001
   - ADR-0004
@@ -12,6 +12,7 @@ decision_refs:
   - ADR-0011
   - ADR-0012
   - ADR-0013
+  - ADR-0014
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -37,10 +38,10 @@ called out explicitly. Broader release gates remain in
 | REQ-AI-001 provider-neutral interfaces | [`ai-provider-and-augmentation.md`](specs/ai-provider-and-augmentation.md), ADR-0004, ADR-0011 | traits in `vaultc::provider`; projection, preflight, recording, and replay in `vaultc::augmentation`; schemas in `vaultc-protocol`; CLI `CommandProvider` | `capabilities_round_trip`; SDK live/local/remote/cancellation cases; strict subprocess schema and pre-disclosure tests | implemented; named multi-provider conformance suite pending |
 | REQ-AI-002 explicit proposal approval | [`ai-provider-and-augmentation.md`](specs/ai-provider-and-augmentation.md), ADR-0004, ADR-0011 | `vaultc::{provider,augmentation,approval,compile}` | explicit approval, stale/forged proposal, post-approval mutation, generated YAML injection, exact file/block evidence, empty-transcript rejection, and direct forged-validation rejection | implemented and locally verified for V1 proposal kinds |
 | REQ-AI-003 record/replay determinism | [`ai-provider-and-augmentation.md`](specs/ai-provider-and-augmentation.md), ADR-0004, ADR-0011 | canonical record codec, redaction/hydration, fresh replay validation, and transport preflight in `vaultc::augmentation`; CLI consumes the same owner; audit comparison in `vaultc::verify` | all 14 [`sdk_augmentation_replay_contract.rs`](../crates/vaultc/tests/sdk_augmentation_replay_contract.rs) cases; all 3 CLI replay cases; transcript reseal security test; SDK/CLI approved artifact and VaultPack byte parity | implemented and locally verified on macOS arm64; vendor conformance/platform matrix pending |
-| REQ-CMP-001 atomic new-output compile | [`compiled-vault-and-vaultpack.md`](specs/compiled-vault-and-vaultpack.md), ALG-CNF-001, ADR-0003, ADR-0013 | sibling-staged directory compilation; verified sibling-staged pack, atomic no-replace file publication, explicit post-commit states, and `compile_with_options` in `vaultc::{compile,pack}` | existing/stale/tamper cases; 11 SDK atomic-pack cases; 3 pack fault-order unit cases; 11 CLI lifecycle cases | pack-file boundary locally verified; portable race-free directory publication and process-crash matrix pending |
+| REQ-CMP-001 atomic new-output compile | [`compiled-vault-and-vaultpack.md`](specs/compiled-vault-and-vaultpack.md), ALG-CNF-001, ADR-0003, ADR-0013, ADR-0014 | sibling-staged and independently verified directory compilation with target-native no-replace commit; verified sibling-staged pack publication; explicit cleanup/retention and post-commit states; `compile_with_options` in `vaultc::{compile,pack}` | 10 SDK atomic-directory cases; 9 directory fault/race unit cases; 11 SDK atomic-pack cases; 3 pack fault-order unit cases; 16 CLI lifecycle cases | directory and pack publication locally verified on macOS arm64; Linux/Windows execution and process-crash matrix pending |
 | REQ-CMP-002 deterministic VaultPack | [`compiled-vault-and-vaultpack.md`](specs/compiled-vault-and-vaultpack.md), ADR-0004, ADR-0010, ADR-0013 | deterministic tar/zstd writer, canonical outer-byte recreation/stream comparison, and atomic publisher in `vaultc::pack` | 5 pack-format tests plus `separate_and_compile_with_options_publish_byte_identical_results` and concurrent single-winner verification | verified on current host/toolchain; cross-version/platform contract pending |
-| REQ-SEC-001 hostile input isolation | [`security-and-trust-boundaries.md`](specs/security-and-trust-boundaries.md), ADR-0003, ADR-0012, ADR-0013 | `vaultc::{snapshot,parse,plan,provider,approval,compile,pack,verify}` and CLI guards; strict raw archives, complete accounting, verified no-clobber pack publication | 18 security, 22 normalization/archive, 11 atomic-pack, and 3 pack fault-order cases; symlink, alias, race, provenance, Canvas, provider, and archive attacks | implemented; fuzz/property campaigns, Windows reparse evidence, and platform matrix pending |
-| REQ-SDK-001 inspect-to-explain workflow | [`public-sdk-and-cli.md`](specs/public-sdk-and-cli.md), ADR-0001, ADR-0011, ADR-0013 | `vaultc::VaultCompiler`, `compile_with_options`, `vaultc::augmentation`, `vaultc-cli`, `vaultc-protocol`; exhaustive nested error-family mapping | CLI full lifecycle/exits; 14 SDK augmentation/replay cases; 3 CLI replay cases; SDK/CLI plan, recording, approved artifact, and atomic VaultPack parity | implemented for the Rust/CLI V1 surface on macOS arm64; other language bindings and platform matrix pending |
+| REQ-SEC-001 hostile input isolation | [`security-and-trust-boundaries.md`](specs/security-and-trust-boundaries.md), ADR-0003, ADR-0012, ADR-0013, ADR-0014 | `vaultc::{snapshot,parse,plan,provider,approval,compile,pack,verify}` and CLI guards; strict raw archives, complete accounting, verified no-clobber directory and pack publication | 18 security, 22 normalization/archive, 10 atomic-directory, 9 directory fault/race unit, 11 atomic-pack, and 3 pack fault-order cases; symlink, alias, race, provenance, Canvas, provider, and archive attacks | implemented; fuzz/property campaigns, Windows reparse evidence, and platform matrix pending |
+| REQ-SDK-001 inspect-to-explain workflow | [`public-sdk-and-cli.md`](specs/public-sdk-and-cli.md), ADR-0001, ADR-0011, ADR-0013, ADR-0014 | `vaultc::VaultCompiler`, `compile_with_options`, `vaultc::augmentation`, `vaultc-cli`, `vaultc-protocol`; exhaustive nested error-family mapping | 16 CLI lifecycle/exits; 14 SDK augmentation/replay cases; 3 CLI replay cases; SDK/CLI plan, recording, approved artifact, atomic directory state, and VaultPack parity | implemented for the Rust/CLI V1 surface on macOS arm64; other language bindings and platform matrix pending |
 | REQ-MCP-001 thin MCP adapter | [`mcp-adapter.md`](specs/mcp-adapter.md), ADR-0002 | future `vaultc-mcp` | future MCP contract tests | documented |
 | REQ-OBS-001 generic review/install plugin | [`obsidian-plugin.md`](specs/obsidian-plugin.md), ADR-0002 | future generic plugin | future plugin E2E and permission tests | documented |
 | REQ-PERF-001 bounded V1 workload | [`testing-and-quality-gates.md`](specs/testing-and-quality-gates.md), ADR-0005 | hard limits, bounded candidate sets, SQLite workspace; large blobs still buffered | resource-limit and compression-ratio tests | implemented machinery; 100k-note/20 GB benchmark and RSS target unverified |
@@ -48,10 +49,11 @@ called out explicitly. Broader release gates remain in
 
 ## Current suite inventory
 
-- `vaultc`: 18 unit, 5 Canvas, 4 generated-provenance, 22
-  normalization/archive, 5 pack, 11 atomic-pack-publication, 8 pipeline, 5 provider/approval, 14 SDK
+- `vaultc`: 27 unit, 5 Canvas, 10 atomic-directory-publication, 4
+  generated-provenance, 22 normalization/archive, 5 pack, 11
+  atomic-pack-publication, 8 pipeline, 5 provider/approval, 14 SDK
   augmentation/replay, 18 security, and 9 typed-provenance tests;
-- `vaultc-cli`: 13 unit, 3 augmentation/replay, and 11 lifecycle tests;
+- `vaultc-cli`: 13 unit, 3 augmentation/replay, and 16 lifecycle tests;
 - `vaultc-protocol`: 2 unit tests;
 - doctests: 0 examples, all harnesses pass.
 

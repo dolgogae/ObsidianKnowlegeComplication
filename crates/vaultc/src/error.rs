@@ -4,6 +4,21 @@ use thiserror::Error;
 
 pub type Result<T, E = VaultcError> = std::result::Result<T, E>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StagingDispositionAction {
+    Remove,
+    MarkIncompleteAndRetain,
+}
+
+impl std::fmt::Display for StagingDispositionAction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Remove => formatter.write_str("remove"),
+            Self::MarkIncompleteAndRetain => formatter.write_str("mark incomplete and retain"),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum VaultcError {
@@ -43,6 +58,16 @@ pub enum VaultcError {
         pack: PathBuf,
         #[source]
         source: Box<VaultcError>,
+    },
+    #[error(
+        "failed to {action} staging directory `{staging}` after compilation failed ({original}): {disposition_error}"
+    )]
+    StagingDispositionFailed {
+        staging: PathBuf,
+        action: StagingDispositionAction,
+        original: Box<VaultcError>,
+        #[source]
+        disposition_error: std::io::Error,
     },
     #[error("verification failed: {0}")]
     VerificationFailed(String),

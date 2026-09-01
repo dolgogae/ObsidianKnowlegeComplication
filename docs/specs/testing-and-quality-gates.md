@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - qa-security-engineer
   - core-rust-engineer
-last_updated: 2026-08-18
+last_updated: 2026-09-01
 decision_refs:
   - ADR-0004
   - ADR-0007
@@ -13,6 +13,7 @@ decision_refs:
   - ADR-0011
   - ADR-0012
   - ADR-0013
+  - ADR-0014
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -32,7 +33,7 @@ source_refs:
 
 ## Current `0.1.0` evidence
 
-Local macOS arm64 execution with Rust 1.97.1 has 148 passing tests plus passing
+Local macOS arm64 execution with Rust 1.97.1 has 172 passing tests plus passing
 doctest harnesses, warning-free workspace Clippy, and a clean rustfmt check.
 This evidence does not make the full release gates green:
 
@@ -95,6 +96,9 @@ unchanged.
   transcripts, remote policy plus per-call consent, cooperative cancellation,
   and byte-identical SDK/CLI canonical recordings.
 - Compile interruption never publishes partial output.
+- Compiled Vault publication preserves every existing file, directory,
+  symlink/reparse point, and deterministic pre-commit race winner; concurrent
+  SDK/CLI creators have exactly one complete verified winner.
 - Public SDK/CLI pack creation never exposes a partial requested destination,
   never overwrites an existing entry or symlink referent, and has exactly one
   winner under concurrent publication.
@@ -138,8 +142,28 @@ write-to-parent-sync order and all pre/post-commit states. Supported-platform
 concurrent destination and Windows reparse-point tests remain release-matrix
 requirements even after local acceptance passes.
 
-These names are acceptance targets. Do not mark their parent requirements
-verified by substituting a checksum-only or helper-unit assertion.
+The locally implemented atomic-directory acceptance includes
+`sdk_directory_concurrent_creators_have_exactly_one_winner`,
+`sdk_directory_distinct_concurrent_builds_never_mix_or_replace_winner`,
+`sdk_directory_existing_file_and_directory_are_preserved`,
+`sdk_directory_live_and_dangling_symlinks_are_rejected_without_following_referents`,
+`directory_publish_barrier_preserves_external_file_directory_and_symlink_winners`,
+`directory_precommit_faults_cleanup_staging_by_default`,
+`directory_retain_policy_marks_only_the_exact_failed_stage`,
+`directory_cleanup_failure_reports_residue`,
+`directory_parent_sync_failure_retains_verified_output`, and
+`directory_unsupported_primitive_never_falls_back_to_replacing_rename`.
+The source/publication disjointness matrix covers the Compiled Vault and
+integrated Pack, equality, both containment directions, lexical `..`,
+existing-ancestor symlink aliases, and portable case/normalization aliases.
+Normal concurrent builds are supplemental; the
+private before-publish barrier is required to prove that a late empty-directory
+or symlink winner is not replaced.
+
+These behaviors have both public SDK/CLI coverage and a private deterministic
+barrier/fault seam. They are locally verified on macOS arm64; Linux, Windows,
+reparse-point, filesystem, and process-crash evidence remains mandatory before
+the parent release requirement is called cross-platform verified.
 
 ## Algorithm status gates
 

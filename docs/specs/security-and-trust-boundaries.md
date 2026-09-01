@@ -12,6 +12,7 @@ decision_refs:
   - ADR-0010
   - ADR-0012
   - ADR-0013
+  - ADR-0014
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-ONPREM-STACK
@@ -51,6 +52,11 @@ Primary threats include path traversal, symlink escapes, archive bombs, parser d
 
 - Write only into a validated sibling staging directory and publish atomically.
 - Reject existing destinations by default.
+- Reject a Compiled Vault or integrated Pack equal to, containing, or nested
+  within an immutable source before creating its parent or staging entry.
+- Publish Compiled Vault directories with the supported platform's atomic
+  no-replace primitive. Preserve every file, directory, symlink/reparse point,
+  and race winner; never fall back to a replacing rename.
 - For VaultPack files, verify the source and staged pack, publish with an
   atomic no-replace primitive, never follow an existing leaf symlink, and
   report post-commit durability failure separately from pre-commit absence.
@@ -109,7 +115,10 @@ SDK and CLI now use one Pack publisher that validates portable path aliases,
 rejects either containment direction, verifies the source and staged archive,
 and commits a synchronized sibling file without replacement. Its deterministic
 fault seam distinguishes an absent pre-commit failure from a complete retained
-publication whose parent-directory durability is uncertain.
+publication whose parent-directory durability is uncertain. ADR-0014 applies
+the same exclusive-commit principle to Compiled Vault directories, requires
+source/output disjointness before staging, and requires explicit staging
+disposition errors rather than ignored cleanup failures.
 
 This is not yet the full release threat model:
 
@@ -118,8 +127,9 @@ This is not yet the full release threat model:
 - accepted source entries are still buffered before sealing, and nested
   archives are opaque assets, so extraction nesting depth is zero rather than
   recursive;
-- a no-clobber destination check followed by a directory rename is not proven
-  race-free on every supported platform;
+- final-leaf no-replace directory publication is specified for Linux, macOS,
+  and Windows, but its full supported-platform/filesystem CI evidence and
+  descriptor-relative ancestor-race hardening remain incomplete;
 - pack-file publication is locally verified on macOS, but Windows reparse
   points and the full supported-filesystem concurrency matrix are not yet;
 - there is no fuzz/property campaign, malware scanner, PII/secret content

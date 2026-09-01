@@ -268,3 +268,44 @@ Append-only. Normative details live in specifications and accepted ADRs.
   fault checkpoints. Added 11 SDK publication cases, 3 fault-order unit cases,
   and 4 CLI lifecycle/unit cases; the macOS arm64 suite increased from 129 to
   148 tests with workspace tests, Clippy, rustfmt, and diff checks green.
+
+## 2026-08-18 — Atomic Compiled Vault directory publication contract
+
+- Accepted ADR-0014 to replace the destination check plus replace-capable
+  directory rename with a single native no-replace commit on Linux, macOS, and
+  Windows. Unsupported primitives and filesystems must fail closed without a
+  weaker fallback.
+- Required every existing file, directory, live/dangling symlink or reparse
+  point, and late publication-race winner to remain untouched. A private
+  immediately-before-publish barrier is the required regression boundary.
+- Required Compiled Vault/source and integrated Pack/source disjointness before
+  staging so requested publications cannot place temporary or final compiler
+  state inside an immutable source.
+- Required explicit cleanup or synchronized marked retention of failed stages,
+  with a structured error retaining both the original and disposition failure.
+- Kept public compile return types and serialized artifacts unchanged. This
+  entry records the accepted contract; implementation and platform evidence
+  are reported separately after the feature gates pass.
+
+## 2026-09-01 — Atomic Compiled Vault directory publication implementation
+
+- Replaced the final check-plus-rename boundary with target-native no-replace
+  publication: `rustix` `NOREPLACE` on Linux/macOS and a non-replacing
+  `MoveFileExW` wrapper on Windows. Unsupported primitives fail closed; there
+  is no replace-capable fallback.
+- Kept the restrictive sibling stage alive through materialization, recursive
+  synchronization, independent verification, and the final namespace commit.
+  A late file, directory, live symlink, dangling symlink, or concurrent
+  compiler winner is preserved and reported as `OutputExists`.
+- Added source/output/integrated-pack disjointness checks before staging,
+  explicit remove-or-mark-and-retain disposition, and
+  `StagingDispositionFailed` so the original error and cleanup/retention error
+  are both observable. Post-commit parent-sync failure retains a verified Vault
+  as `PublishedButDurabilityUncertain` and does not begin optional packing.
+- Added 10 public SDK directory-publication cases, 9 deterministic private
+  checkpoint/race/fault cases, and 5 CLI lifecycle cases. The macOS arm64 local
+  suite increased from 148 to 172 tests; workspace tests, all-target Clippy
+  with warnings denied, rustfmt, and diff checks pass.
+- This local evidence does not qualify Linux/Windows filesystems, Windows
+  reparse points, descriptor-relative ancestor swaps, process crashes, or
+  physical power-loss durability. Those remain explicit release work.

@@ -1,9 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use vaultc::config::CompilerPolicy;
 use vaultc::plan::DraftPlan;
 use vaultc::{SourceSpec, VaultCompiler};
 
@@ -29,6 +31,44 @@ fn run(arguments: &[&str]) -> Output {
         .args(arguments)
         .output()
         .unwrap_or_else(|error| panic!("run vaultc {arguments:?}: {error}"))
+}
+
+fn run_compile(approved: &Path, output: &Path, pack: Option<&Path>) -> Output {
+    let mut command = Command::new(binary());
+    command
+        .arg("compile")
+        .arg(approved)
+        .arg("--output")
+        .arg(output);
+    if let Some(pack) = pack {
+        command.arg("--pack").arg(pack);
+    }
+    command
+        .output()
+        .unwrap_or_else(|error| panic!("run vaultc compile: {error}"))
+}
+
+fn staging_entries(parent: &Path) -> Vec<PathBuf> {
+    let mut entries: Vec<_> = fs::read_dir(parent)
+        .unwrap_or_else(|error| panic!("read publication parent {}: {error}", parent.display()))
+        .map(|entry| entry.expect("read publication-parent entry").path())
+        .filter(|path| {
+            path.file_name().is_some_and(|name| {
+                let name = name.to_string_lossy();
+                name.starts_with(".vaultc-staging-") || name.starts_with(".vaultc-pack-")
+            })
+        })
+        .collect();
+    entries.sort();
+    entries
+}
+
+fn assert_no_staging_entries(parent: &Path) {
+    assert_eq!(
+        staging_entries(parent),
+        Vec::<PathBuf>::new(),
+        "caught publication failures must not leave default-policy staging entries"
+    );
 }
 
 fn assert_exit(output: &Output, expected: i32) {
@@ -415,6 +455,300 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
         &run(&["explain", as_utf8(&compiled_vault), "knowledge/Index.md"]),
         EXIT_VERIFY,
     );
+}
+
+#[test]
+fn cli_compile_preserves_existing_file_and_directories() {
+    let temporary = tempfile::tempdir().expect("temporary existing-output workspace");
+    let approved = write_basic_approved_plan(temporary.path());
+
+    let existing_file = temporary.path().join("existing-file");
+    let file_sentinel = b"owned regular file\n";
+    fs::write(&existing_file, file_sentinel).expect("write existing-file sentinel");
+    assert_exit(&run_compile(&approved, &existing_file, None), EXIT_OUTPUT);
+    assert_eq!(
+        fs::read(&existing_file).expect("read preserved regular file"),
+        file_sentinel
+    );
+
+    let empty_directory = temporary.path().join("existing-empty-directory");
+    fs::create_dir(&empty_directory).expect("create empty destination directory");
+    assert_exit(&run_compile(&approved, &empty_directory, None), EXIT_OUTPUT);
+    assert_eq!(
+        fs::read_dir(&empty_directory)
+            .expect("read preserved empty directory")
+            .count(),
+        0
+    );
+
+    let nonempty_directory = temporary.path().join("existing-nonempty-directory");
+    fs::create_dir(&nonempty_directory).expect("create nonempty destination directory");
+    let directory_sentinel = b"owned directory entry\n";
+    fs::write(nonempty_directory.join("sentinel.txt"), directory_sentinel)
+        .expect("write directory sentinel");
+    assert_exit(
+        &run_compile(&approved, &nonempty_directory, None),
+        EXIT_OUTPUT,
+    );
+    assert_eq!(
+        fs::read(nonempty_directory.join("sentinel.txt"))
+            .expect("read preserved directory sentinel"),
+        directory_sentinel
+    );
+    assert_no_staging_entries(temporary.path());
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_compile_preserves_live_and_dangling_output_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let temporary = tempfile::tempdir().expect("temporary output-symlink workspace");
+    let approved = write_basic_approved_plan(temporary.path());
+
+    let live_target = temporary.path().join("live-target");
+    fs::create_dir(&live_target).expect("create live output-link target");
+    let live_sentinel = b"owned link referent\n";
+    fs::write(live_target.join("sentinel.txt"), live_sentinel).expect("write live-link sentinel");
+    let live_link = temporary.path().join("live-output-link");
+    symlink(&live_target, &live_link).expect("create live output symlink");
+
+    assert_exit(&run_compile(&approved, &live_link, None), EXIT_OUTPUT);
+    assert!(
+        fs::symlink_metadata(&live_link)
+            .expect("live output link remains")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read(live_target.join("sentinel.txt")).expect("read live-link sentinel"),
+        live_sentinel
+    );
+
+    let dangling_target = temporary.path().join("must-not-be-created");
+    let dangling_link = temporary.path().join("dangling-output-link");
+    symlink(&dangling_target, &dangling_link).expect("create dangling output symlink");
+
+    assert_exit(&run_compile(&approved, &dangling_link, None), EXIT_OUTPUT);
+    assert!(
+        fs::symlink_metadata(&dangling_link)
+            .expect("dangling output link remains")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_link(&dangling_link).expect("read dangling output link"),
+        dangling_target
+    );
+    assert!(!dangling_target.exists());
+    assert_no_staging_entries(temporary.path());
+}
+
+#[cfg(windows)]
+#[test]
+fn cli_compile_preserves_live_and_dangling_output_symlinks() {
+    use std::io::ErrorKind;
+    use std::os::windows::fs::symlink_dir;
+
+    let temporary = tempfile::tempdir().expect("temporary output-symlink workspace");
+    let approved = write_basic_approved_plan(temporary.path());
+    let live_target = temporary.path().join("live-target");
+    fs::create_dir(&live_target).expect("create live output-link target");
+    let live_sentinel = b"owned link referent\n";
+    fs::write(live_target.join("sentinel.txt"), live_sentinel).expect("write live-link sentinel");
+    let live_link = temporary.path().join("live-output-link");
+    if let Err(error) = symlink_dir(&live_target, &live_link) {
+        if error.kind() == ErrorKind::PermissionDenied {
+            eprintln!(
+                "skipping Windows output-symlink contract: runner cannot create symlinks: {error}"
+            );
+            return;
+        }
+        panic!("create live output symlink: {error}");
+    }
+
+    assert_exit(&run_compile(&approved, &live_link, None), EXIT_OUTPUT);
+    assert!(
+        fs::symlink_metadata(&live_link)
+            .expect("live output link remains")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read(live_target.join("sentinel.txt")).expect("read live-link sentinel"),
+        live_sentinel
+    );
+
+    let dangling_target = temporary.path().join("must-not-be-created");
+    let dangling_link = temporary.path().join("dangling-output-link");
+    symlink_dir(&dangling_target, &dangling_link).expect("create dangling output symlink");
+    assert_exit(&run_compile(&approved, &dangling_link, None), EXIT_OUTPUT);
+    assert!(
+        fs::symlink_metadata(&dangling_link)
+            .expect("dangling output link remains")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_link(&dangling_link).expect("read dangling output link"),
+        dangling_target
+    );
+    assert!(!dangling_target.exists());
+    assert_no_staging_entries(temporary.path());
+}
+
+#[test]
+fn cli_directory_concurrent_creators_have_exactly_one_verified_winner() {
+    const CREATORS: usize = 4;
+
+    let temporary = tempfile::tempdir().expect("temporary concurrent-output workspace");
+    let approved = write_basic_approved_plan(temporary.path());
+    let output = temporary.path().join("concurrent-output");
+    let barrier = Arc::new(Barrier::new(CREATORS));
+    let workers: Vec<_> = (0..CREATORS)
+        .map(|_| {
+            let approved = approved.clone();
+            let output = output.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                run_compile(&approved, &output, None)
+            })
+        })
+        .collect();
+    let results: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().expect("join concurrent compiler"))
+        .collect();
+
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.status.code() == Some(0))
+            .count(),
+        1,
+        "exactly one CLI publisher must win: {results:#?}"
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.status.code() == Some(EXIT_OUTPUT))
+            .count(),
+        CREATORS - 1,
+        "all CLI race losers must report output exit 6: {results:#?}"
+    );
+    assert_exit(&run(&["verify", as_utf8(&output)]), 0);
+    assert_no_staging_entries(temporary.path());
+}
+
+#[test]
+fn cli_directory_race_losers_do_not_publish_distinct_packs() {
+    const CREATORS: usize = 4;
+
+    let temporary = tempfile::tempdir().expect("temporary concurrent-pack workspace");
+    let approved = write_basic_approved_plan(temporary.path());
+    let output = temporary.path().join("concurrent-output-with-pack");
+    let barrier = Arc::new(Barrier::new(CREATORS));
+    let workers: Vec<_> = (0..CREATORS)
+        .map(|index| {
+            let approved = approved.clone();
+            let output = output.clone();
+            let pack = temporary
+                .path()
+                .join(format!("candidate-{index}.vaultpack"));
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                let result = run_compile(&approved, &output, Some(&pack));
+                (pack, result)
+            })
+        })
+        .collect();
+    let results: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().expect("join concurrent pack compiler"))
+        .collect();
+
+    let winners: Vec<_> = results
+        .iter()
+        .filter(|(_, result)| result.status.code() == Some(0))
+        .collect();
+    assert_eq!(winners.len(), 1, "exactly one compile-plus-pack must win");
+    for (pack, result) in &results {
+        if result.status.code() == Some(0) {
+            assert!(pack.is_file(), "winner must publish its requested pack");
+            assert_exit(&run(&["verify", as_utf8(pack)]), 0);
+        } else {
+            assert_exit(result, EXIT_OUTPUT);
+            assert!(
+                fs::symlink_metadata(pack).is_err(),
+                "directory race loser must not begin pack publication: {}",
+                pack.display()
+            );
+        }
+    }
+    assert_exit(&run(&["verify", as_utf8(&output)]), 0);
+    assert_no_staging_entries(temporary.path());
+}
+
+#[test]
+fn cli_compile_rejects_source_overlapping_outputs_and_packs_without_staging() {
+    let temporary = tempfile::tempdir().expect("temporary source-output workspace");
+    let source = temporary.path().join("immutable-source");
+    fs::create_dir(&source).expect("create immutable source");
+    let source_bytes = b"# Immutable source\n";
+    fs::write(source.join("Index.md"), source_bytes).expect("write immutable source note");
+
+    let mut policy = CompilerPolicy::default();
+    policy.output.retain_failed_staging = true;
+    let compiler = VaultCompiler::builder()
+        .policy(policy)
+        .build()
+        .expect("build retained-stage compiler");
+    let inspection = compiler
+        .inspect(
+            [SourceSpec::directory("immutable", &source).expect("immutable source descriptor")],
+        )
+        .expect("inspect immutable source");
+    let plan = compiler.plan(&inspection).expect("plan immutable source");
+    let approved = compiler
+        .approve_without_augmentation(plan)
+        .expect("approve immutable source plan");
+    let approved_path = temporary.path().join("source-approved.json");
+    fs::write(
+        &approved_path,
+        vaultc::canonical::to_canonical_json_pretty(&approved)
+            .expect("encode source-overlap approved plan"),
+    )
+    .expect("write source-overlap approved plan");
+
+    let output = source.join("nested-output");
+    let pack = temporary.path().join("must-not-publish.vaultpack");
+    assert_exit(
+        &run_compile(&approved_path, &output, Some(&pack)),
+        EXIT_OUTPUT,
+    );
+    assert!(fs::symlink_metadata(&output).is_err());
+    assert!(fs::symlink_metadata(&pack).is_err());
+    assert_eq!(
+        fs::read(source.join("Index.md")).expect("read preserved immutable source"),
+        source_bytes
+    );
+
+    let outside_output = temporary.path().join("outside-output");
+    let pack_inside_source = source.join("nested.vaultpack");
+    assert_exit(
+        &run_compile(&approved_path, &outside_output, Some(&pack_inside_source)),
+        EXIT_OUTPUT,
+    );
+    assert!(fs::symlink_metadata(&outside_output).is_err());
+    assert!(fs::symlink_metadata(&pack_inside_source).is_err());
+    assert_eq!(
+        fs::read(source.join("Index.md")).expect("read immutable source after pack preflight"),
+        source_bytes
+    );
+    assert_no_staging_entries(&source);
+    assert_no_staging_entries(temporary.path());
 }
 
 #[test]

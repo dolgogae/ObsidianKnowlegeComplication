@@ -1,8 +1,10 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
-use std::fs::{self, File};
+use std::fs;
+#[cfg(unix)]
+use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use vaultc_protocol::ProposalKind;
@@ -10,7 +12,7 @@ use vaultc_protocol::ProposalKind;
 use crate::approval::ApprovedPlan;
 use crate::canonical::{to_canonical_json, to_canonical_json_pretty};
 use crate::config::CompilerPolicy;
-use crate::error::{Result, VaultcError};
+use crate::error::{Result, StagingDispositionAction, VaultcError};
 use crate::identity::ContentHash;
 use crate::plan::OutputOperation;
 use crate::snapshot::{read_source_entry, validate_output_logical_path};
@@ -50,6 +52,43 @@ pub struct ArtifactManifest {
     pub files: Vec<ManifestFile>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectoryPublicationStep {
+    StageCreated,
+    MaterializedAndFilesSynced,
+    TreeSynced,
+    StagedVerified,
+    BeforePublish,
+    Published,
+    ParentSynchronized,
+}
+
+trait DirectoryPublicationHook {
+    fn checkpoint(&self, _step: DirectoryPublicationStep, _path: &Path) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn publish_noreplace(&self, staging: &Path, destination: &Path) -> std::io::Result<()> {
+        publish_directory_noreplace(staging, destination)
+    }
+
+    fn sync_parent(&self, parent: &Path) -> std::io::Result<()> {
+        sync_directory(parent)
+    }
+
+    fn remove_staging(&self, staging: tempfile::TempDir) -> std::io::Result<()> {
+        staging.close()
+    }
+
+    fn write_incomplete_marker(&self, staging: &Path, error: &VaultcError) -> std::io::Result<()> {
+        write_incomplete_marker(staging, error)
+    }
+}
+
+struct ProductionDirectoryPublicationHook;
+
+impl DirectoryPublicationHook for ProductionDirectoryPublicationHook {}
+
 pub fn compile_plan(
     approved: &ApprovedPlan,
     destination: &Path,
@@ -64,12 +103,29 @@ pub fn compile_plan_with_options(
     policy: &CompilerPolicy,
     options: &CompileOptions,
 ) -> Result<CompiledArtifact> {
+    compile_plan_with_options_and_hook(
+        approved,
+        destination,
+        policy,
+        options,
+        &ProductionDirectoryPublicationHook,
+    )
+}
+
+fn compile_plan_with_options_and_hook(
+    approved: &ApprovedPlan,
+    destination: &Path,
+    policy: &CompilerPolicy,
+    options: &CompileOptions,
+    hook: &impl DirectoryPublicationHook,
+) -> Result<CompiledArtifact> {
     validate_compile_request(approved, destination, policy)?;
     if let Some(pack) = &options.create_pack {
+        validate_source_output_disjoint(approved, pack)?;
         crate::pack::preflight_pack_destination(destination, pack)?;
     }
 
-    let artifact = compile_validated_plan(approved, destination, policy)?;
+    let artifact = compile_validated_plan(approved, destination, policy, hook)?;
     if let Some(pack) = &options.create_pack
         && let Err(source) = crate::pack::create_pack(destination, pack, policy.output.zstd_level)
     {
@@ -87,14 +143,6 @@ fn validate_compile_request(
     destination: &Path,
     policy: &CompilerPolicy,
 ) -> Result<()> {
-    // Publishing over an existing destination is never safe: on some platforms
-    // `rename` may replace an existing directory. Keep the policy field for
-    // schema compatibility, but V1 compilation is unconditionally create-new.
-    match fs::symlink_metadata(destination) {
-        Ok(_) => return Err(VaultcError::OutputExists(destination.to_path_buf())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(VaultcError::io(destination, error)),
-    }
     crate::approval::validate_approved_plan(approved, policy)?;
     if !approved.conflict_decisions_complete {
         return Err(VaultcError::ApprovalStale(
@@ -117,6 +165,15 @@ fn validate_compile_request(
             "approved plan policy does not match compiler policy".into(),
         ));
     }
+    validate_source_output_disjoint(approved, destination)?;
+
+    // This fast check produces a useful error but is not the exclusivity
+    // primitive. The native no-replace publish below closes the late race.
+    match fs::symlink_metadata(destination) {
+        Ok(_) => return Err(VaultcError::OutputExists(destination.to_path_buf())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(VaultcError::io(destination, error)),
+    }
     Ok(())
 }
 
@@ -124,58 +181,88 @@ fn compile_validated_plan(
     approved: &ApprovedPlan,
     destination: &Path,
     policy: &CompilerPolicy,
+    hook: &impl DirectoryPublicationHook,
 ) -> Result<CompiledArtifact> {
-    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let parent = destination_parent(destination);
     fs::create_dir_all(parent).map_err(|error| VaultcError::io(parent, error))?;
     let staging = tempfile::Builder::new()
         .prefix(".vaultc-staging-")
         .tempdir_in(parent)
         .map_err(|error| VaultcError::io(parent, error))?;
     let staging_path = staging.path().to_path_buf();
+    if let Err(source) = restrict_staging_permissions(&staging_path) {
+        let error = VaultcError::io(&staging_path, source);
+        return Err(dispose_failed_staging(
+            staging,
+            error,
+            policy.output.retain_failed_staging,
+            hook,
+        ));
+    }
+    if let Err(error) = checkpoint(hook, DirectoryPublicationStep::StageCreated, &staging_path) {
+        return Err(dispose_failed_staging(
+            staging,
+            error,
+            policy.output.retain_failed_staging,
+            hook,
+        ));
+    }
 
-    let result = compile_into(approved, &staging_path, policy);
-    let artifact = match result {
+    let artifact = match compile_into(approved, &staging_path, policy) {
         Ok(artifact) => artifact,
         Err(error) => {
-            if policy.output.retain_failed_staging {
-                mark_incomplete(&staging_path, &error);
-                let _retained = staging.keep();
-            }
-            return Err(error);
+            return Err(dispose_failed_staging(
+                staging,
+                error,
+                policy.output.retain_failed_staging,
+                hook,
+            ));
         }
     };
-    let kept = staging.keep();
-    match fs::symlink_metadata(destination) {
-        Ok(_) => {
-            let error = VaultcError::OutputExists(destination.to_path_buf());
-            if policy.output.retain_failed_staging {
-                mark_incomplete(&kept, &error);
-            } else {
-                let _ = fs::remove_dir_all(&kept);
+    for step in [
+        DirectoryPublicationStep::MaterializedAndFilesSynced,
+        DirectoryPublicationStep::TreeSynced,
+        DirectoryPublicationStep::StagedVerified,
+        DirectoryPublicationStep::BeforePublish,
+    ] {
+        let result = match step {
+            DirectoryPublicationStep::TreeSynced => sync_directory_tree(&staging_path),
+            DirectoryPublicationStep::StagedVerified => {
+                crate::verify::verify_directory(&staging_path).map(|_| ())
             }
-            return Err(error);
+            _ => Ok(()),
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(source) => {
-            let error = VaultcError::io(destination, source);
-            if policy.output.retain_failed_staging {
-                mark_incomplete(&kept, &error);
-            } else {
-                let _ = fs::remove_dir_all(&kept);
-            }
-            return Err(error);
+        .and_then(|()| checkpoint(hook, step, &staging_path));
+        if let Err(error) = result {
+            return Err(dispose_failed_staging(
+                staging,
+                error,
+                policy.output.retain_failed_staging,
+                hook,
+            ));
         }
     }
-    if let Err(error) = fs::rename(&kept, destination) {
-        let error = VaultcError::io(destination, error);
-        if policy.output.retain_failed_staging {
-            mark_incomplete(&kept, &error);
-        } else {
-            let _ = fs::remove_dir_all(&kept);
-        }
-        return Err(error);
+
+    if let Err(source) = hook.publish_noreplace(&staging_path, destination) {
+        let error = classify_publish_error(destination, source);
+        return Err(dispose_failed_staging(
+            staging,
+            error,
+            policy.output.retain_failed_staging,
+            hook,
+        ));
     }
-    if let Err(source) = sync_parent(parent) {
+    let _published_stage = staging.keep();
+    if let Err(source) = hook.checkpoint(DirectoryPublicationStep::Published, destination) {
+        return Err(VaultcError::PublishedButDurabilityUncertain {
+            path: destination.to_path_buf(),
+            source,
+        });
+    }
+    if let Err(source) = hook
+        .sync_parent(parent)
+        .and_then(|()| hook.checkpoint(DirectoryPublicationStep::ParentSynchronized, destination))
+    {
         return Err(VaultcError::PublishedButDurabilityUncertain {
             path: destination.to_path_buf(),
             source,
@@ -495,7 +582,6 @@ fn compile_into(
     }
     write_new_file(root, ".vaultc/checksums.txt", checksum_text.as_bytes())?;
 
-    crate::verify::verify_directory(root)?;
     Ok(CompiledArtifact {
         path: root.to_path_buf(),
         artifact_id,
@@ -583,12 +669,284 @@ fn apply_replacements(
     Ok(bytes)
 }
 
-fn mark_incomplete(staging: &Path, error: &VaultcError) {
+fn checkpoint(
+    hook: &impl DirectoryPublicationHook,
+    step: DirectoryPublicationStep,
+    path: &Path,
+) -> Result<()> {
+    hook.checkpoint(step, path)
+        .map_err(|error| VaultcError::io(path, error))
+}
+
+fn dispose_failed_staging(
+    staging: tempfile::TempDir,
+    original: VaultcError,
+    retain: bool,
+    hook: &impl DirectoryPublicationHook,
+) -> VaultcError {
+    let staging_path = staging.path().to_path_buf();
+    if !retain {
+        return match hook.remove_staging(staging) {
+            Ok(()) => original,
+            Err(disposition_error) => VaultcError::StagingDispositionFailed {
+                staging: staging_path,
+                action: StagingDispositionAction::Remove,
+                original: Box::new(original),
+                disposition_error,
+            },
+        };
+    }
+
+    match hook.write_incomplete_marker(&staging_path, &original) {
+        Ok(()) => {
+            let _retained = staging.keep();
+            original
+        }
+        Err(marker_error) => match hook.remove_staging(staging) {
+            Ok(()) => VaultcError::StagingDispositionFailed {
+                staging: staging_path,
+                action: StagingDispositionAction::MarkIncompleteAndRetain,
+                original: Box::new(original),
+                disposition_error: marker_error,
+            },
+            Err(cleanup_error) => VaultcError::StagingDispositionFailed {
+                staging: staging_path,
+                action: StagingDispositionAction::MarkIncompleteAndRetain,
+                original: Box::new(original),
+                disposition_error: std::io::Error::new(
+                    cleanup_error.kind(),
+                    format!(
+                        "incomplete marker failed: {marker_error}; fallback cleanup failed: {cleanup_error}"
+                    ),
+                ),
+            },
+        },
+    }
+}
+
+fn write_incomplete_marker(staging: &Path, error: &VaultcError) -> std::io::Result<()> {
     let marker = staging.join(".vaultc-INCOMPLETE");
     let message = format!(
         "This directory is an incomplete Vault Compiler staging artifact.\nReason: {error}\n"
     );
-    let _ = fs::write(marker, message);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut file = options.open(marker)?;
+    file.write_all(message.as_bytes())?;
+    file.sync_all()?;
+    sync_directory(staging)
+}
+
+#[cfg(unix)]
+fn restrict_staging_permissions(staging: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    fs::set_permissions(staging, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn restrict_staging_permissions(_staging: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+fn sync_directory_tree(root: &Path) -> Result<()> {
+    let mut directories = Vec::new();
+    for entry in ignore::WalkBuilder::new(root)
+        .hidden(false)
+        .follow_links(false)
+        .git_ignore(false)
+        .build()
+    {
+        let entry = entry.map_err(|error| {
+            VaultcError::VerificationFailed(format!(
+                "unable to traverse staged directory before publication: {error}"
+            ))
+        })?;
+        let kind = entry.file_type().ok_or_else(|| {
+            VaultcError::VerificationFailed(format!(
+                "staged entry `{}` has no file type",
+                entry.path().display()
+            ))
+        })?;
+        if kind.is_dir() {
+            directories.push(entry.path().to_path_buf());
+        } else if !kind.is_file() {
+            return Err(VaultcError::VerificationFailed(format!(
+                "staged entry `{}` is neither a regular file nor directory",
+                entry.path().display()
+            )));
+        }
+    }
+    directories.sort_by(|left, right| {
+        right
+            .components()
+            .count()
+            .cmp(&left.components().count())
+            .then_with(|| left.as_os_str().cmp(right.as_os_str()))
+    });
+    for directory in directories {
+        sync_directory(&directory).map_err(|error| VaultcError::io(&directory, error))?;
+    }
+    Ok(())
+}
+
+fn validate_source_output_disjoint(approved: &ApprovedPlan, destination: &Path) -> Result<()> {
+    let output = resolve_existing_ancestor(destination)?;
+    let output_key = portable_host_path_key(&output)?;
+    for snapshot in &approved.plan.snapshots {
+        let source = resolve_existing_ancestor(snapshot.source.path())?;
+        let source_key = portable_host_path_key(&source)?;
+        if source_key == output_key
+            || source_key.starts_with(&output_key)
+            || output_key.starts_with(&source_key)
+        {
+            return Err(VaultcError::UnsafePath {
+                path: destination.display().to_string(),
+                reason: format!(
+                    "publication destination and source `{}` must be disjoint in both containment directions",
+                    snapshot.source.path().display()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| VaultcError::io(path, error))?
+            .join(path)
+    };
+    for ancestor in absolute.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(_) => match fs::canonicalize(ancestor) {
+                Ok(resolved) => {
+                    let suffix = absolute.strip_prefix(ancestor).map_err(|_| {
+                        VaultcError::Internal(
+                            "existing publication ancestor was not a lexical prefix".into(),
+                        )
+                    })?;
+                    return lexical_normalize(&resolved.join(suffix));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(VaultcError::io(ancestor, error)),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(VaultcError::io(ancestor, error)),
+        }
+    }
+    Err(VaultcError::Io {
+        path: path.to_path_buf(),
+        source: std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "publication path has no resolvable existing ancestor",
+        ),
+    })
+}
+
+fn lexical_normalize(path: &Path) -> Result<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(VaultcError::UnsafePath {
+                        path: path.display().to_string(),
+                        reason: "host publication path traverses above its root".into(),
+                    });
+                }
+            }
+            Component::Normal(segment) => normalized.push(segment),
+        }
+    }
+    Ok(normalized)
+}
+
+fn portable_host_path_key(path: &Path) -> Result<Vec<String>> {
+    path.components()
+        .map(|component| match component {
+            Component::RootDir => Ok("root:".to_owned()),
+            Component::Prefix(prefix) => portable_component_key(prefix.as_os_str(), path),
+            Component::Normal(segment) => portable_component_key(segment, path),
+            Component::CurDir | Component::ParentDir => Err(VaultcError::Internal(
+                "portable host path key received a non-normalized path".into(),
+            )),
+        })
+        .collect()
+}
+
+fn portable_component_key(component: &std::ffi::OsStr, path: &Path) -> Result<String> {
+    let component = component.to_str().ok_or_else(|| VaultcError::UnsafePath {
+        path: path.display().to_string(),
+        reason: "publication paths must be valid UTF-8 for portable comparison".into(),
+    })?;
+    Ok(crate::parse::full_casefold_nfc(component))
+}
+
+fn destination_parent(destination: &Path) -> &Path {
+    destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+fn classify_publish_error(destination: &Path, source: std::io::Error) -> VaultcError {
+    if source.kind() == std::io::ErrorKind::AlreadyExists
+        || fs::symlink_metadata(destination).is_ok()
+    {
+        VaultcError::OutputExists(destination.to_path_buf())
+    } else {
+        VaultcError::io(destination, source)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn publish_directory_noreplace(staging: &Path, destination: &Path) -> std::io::Result<()> {
+    let staging_parent = destination_parent(staging);
+    let destination_parent = destination_parent(destination);
+    if staging_parent != destination_parent {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "staging and destination are not siblings",
+        ));
+    }
+    let staging_name = staging.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "staging has no leaf name")
+    })?;
+    let destination_name = destination.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "destination has no leaf name",
+        )
+    })?;
+    let parent = File::open(destination_parent)?;
+    rustix::fs::renameat_with(
+        &parent,
+        staging_name,
+        &parent,
+        destination_name,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(std::io::Error::from)
+}
+
+#[cfg(windows)]
+fn publish_directory_noreplace(staging: &Path, destination: &Path) -> std::io::Result<()> {
+    atomicwrites::move_atomic(staging, destination)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn publish_directory_noreplace(_staging: &Path, _destination: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "atomic no-replace directory publication is unsupported on this platform",
+    ))
 }
 
 fn write_new_file(root: &Path, logical_path: &str, bytes: &[u8]) -> Result<()> {
@@ -659,11 +1017,547 @@ pub(crate) fn raw_sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-fn sync_parent(parent: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        let directory = File::open(parent)?;
-        directory.sync_all()?;
-    }
+#[cfg(unix)]
+fn sync_directory(parent: &Path) -> std::io::Result<()> {
+    let directory = File::open(parent)?;
+    directory.sync_all()?;
     Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_parent: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use super::{
+        CompileOptions, DirectoryPublicationHook, DirectoryPublicationStep,
+        compile_plan_with_options_and_hook, publish_directory_noreplace, sync_directory,
+        write_incomplete_marker,
+    };
+    use crate::config::CompilerPolicy;
+    use crate::error::{StagingDispositionAction, VaultcError};
+    use crate::{ApprovedPlan, SourceSpec, VaultCompiler};
+
+    #[derive(Debug, Clone, Copy)]
+    enum LateWinner {
+        File,
+        Directory,
+        #[cfg(unix)]
+        Symlink,
+        #[cfg(unix)]
+        DanglingSymlink,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum HookFault {
+        UnsupportedPublish,
+        ParentSync,
+        Marker,
+        Remove,
+    }
+
+    #[derive(Default)]
+    struct RecordingHook {
+        steps: RefCell<Vec<DirectoryPublicationStep>>,
+        fail_at: Option<DirectoryPublicationStep>,
+        tamper_at: Option<DirectoryPublicationStep>,
+        winner: Option<(PathBuf, LateWinner)>,
+        faults: Vec<HookFault>,
+    }
+
+    impl RecordingHook {
+        fn observed(&self) -> Vec<DirectoryPublicationStep> {
+            self.steps.borrow().clone()
+        }
+    }
+
+    impl DirectoryPublicationHook for RecordingHook {
+        fn checkpoint(&self, step: DirectoryPublicationStep, path: &Path) -> std::io::Result<()> {
+            self.steps.borrow_mut().push(step);
+            if step == DirectoryPublicationStep::BeforePublish
+                && let Some((destination, kind)) = &self.winner
+            {
+                match kind {
+                    LateWinner::File => fs::write(destination, b"external winner\n")?,
+                    LateWinner::Directory => fs::create_dir(destination)?,
+                    #[cfg(unix)]
+                    LateWinner::Symlink => {
+                        use std::os::unix::fs::symlink;
+
+                        let referent = destination.with_extension("winner-referent");
+                        fs::write(&referent, b"external symlink referent\n")?;
+                        symlink(referent, destination)?;
+                    }
+                    #[cfg(unix)]
+                    LateWinner::DanglingSymlink => {
+                        use std::os::unix::fs::symlink;
+
+                        symlink(destination.with_extension("missing-referent"), destination)?;
+                    }
+                }
+            }
+            if self.tamper_at == Some(step) {
+                fs::write(
+                    path.join("knowledge/Index.md"),
+                    b"tampered after tree synchronization\n",
+                )?;
+            }
+            if self.fail_at == Some(step) {
+                return Err(std::io::Error::other(format!(
+                    "injected directory publication failure at {step:?}"
+                )));
+            }
+            Ok(())
+        }
+
+        fn publish_noreplace(&self, staging: &Path, destination: &Path) -> std::io::Result<()> {
+            if self.faults.contains(&HookFault::UnsupportedPublish) {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "injected unsupported no-replace primitive",
+                ))
+            } else {
+                publish_directory_noreplace(staging, destination)
+            }
+        }
+
+        fn sync_parent(&self, parent: &Path) -> std::io::Result<()> {
+            if self.faults.contains(&HookFault::ParentSync) {
+                Err(std::io::Error::other(
+                    "injected output-parent synchronization failure",
+                ))
+            } else {
+                sync_directory(parent)
+            }
+        }
+
+        fn remove_staging(&self, staging: tempfile::TempDir) -> std::io::Result<()> {
+            if self.faults.contains(&HookFault::Remove) {
+                let _retained = staging.keep();
+                Err(std::io::Error::other("injected staging cleanup failure"))
+            } else {
+                staging.close()
+            }
+        }
+
+        fn write_incomplete_marker(
+            &self,
+            staging: &Path,
+            error: &VaultcError,
+        ) -> std::io::Result<()> {
+            if self.faults.contains(&HookFault::Marker) {
+                Err(std::io::Error::other("injected incomplete-marker failure"))
+            } else {
+                write_incomplete_marker(staging, error)
+            }
+        }
+    }
+
+    fn approved_fixture(retain_failed_staging: bool) -> (VaultCompiler, ApprovedPlan) {
+        let mut policy = CompilerPolicy::default();
+        policy.output.retain_failed_staging = retain_failed_staging;
+        let compiler = VaultCompiler::builder()
+            .policy(policy)
+            .build()
+            .expect("build directory publication test compiler");
+        let source =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/basic_vault");
+        let inspection = compiler
+            .inspect([SourceSpec::directory("directory-publication-unit", source)
+                .expect("directory publication unit source")])
+            .expect("inspect directory publication unit source");
+        let plan = compiler
+            .plan(&inspection)
+            .expect("plan directory publication unit source");
+        let approved = compiler
+            .approve_without_augmentation(plan)
+            .expect("approve directory publication unit source");
+        (compiler, approved)
+    }
+
+    fn staging_paths(parent: &Path) -> Vec<PathBuf> {
+        let mut paths = fs::read_dir(parent)
+            .expect("read directory publication parent")
+            .filter_map(|entry| {
+                let path = entry.expect("directory publication entry").path();
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".vaultc-staging-"))
+                    .then_some(path)
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    }
+
+    #[test]
+    fn directory_publication_checkpoints_follow_the_normative_order() {
+        let temporary = tempfile::tempdir().expect("checkpoint temporary parent");
+        let (compiler, approved) = approved_fixture(false);
+        let destination = temporary.path().join("compiled");
+        let hook = RecordingHook::default();
+
+        compile_plan_with_options_and_hook(
+            &approved,
+            &destination,
+            compiler.policy(),
+            &CompileOptions::default(),
+            &hook,
+        )
+        .expect("publish through every directory checkpoint");
+
+        assert_eq!(
+            hook.observed(),
+            vec![
+                DirectoryPublicationStep::StageCreated,
+                DirectoryPublicationStep::MaterializedAndFilesSynced,
+                DirectoryPublicationStep::TreeSynced,
+                DirectoryPublicationStep::StagedVerified,
+                DirectoryPublicationStep::BeforePublish,
+                DirectoryPublicationStep::Published,
+                DirectoryPublicationStep::ParentSynchronized,
+            ]
+        );
+        assert!(
+            compiler
+                .verify(&destination)
+                .expect("verify checkpoint artifact")
+                .valid
+        );
+    }
+
+    #[test]
+    fn late_race_winners_are_never_replaced_and_staging_is_cleaned() {
+        let (compiler, approved) = approved_fixture(false);
+        let winner_kinds = [LateWinner::File, LateWinner::Directory];
+        for (index, winner) in winner_kinds.into_iter().enumerate() {
+            let temporary = tempfile::tempdir().expect("late-race temporary parent");
+            let destination = temporary.path().join(format!("winner-{index}"));
+            let hook = RecordingHook {
+                winner: Some((destination.clone(), winner)),
+                ..RecordingHook::default()
+            };
+            let error = compile_plan_with_options_and_hook(
+                &approved,
+                &destination,
+                compiler.policy(),
+                &CompileOptions::default(),
+                &hook,
+            )
+            .expect_err("late race winner must reject publication");
+
+            assert!(matches!(error, VaultcError::OutputExists(ref path) if path == &destination));
+            match winner {
+                LateWinner::File => assert_eq!(
+                    fs::read(&destination).expect("read file race winner"),
+                    b"external winner\n"
+                ),
+                LateWinner::Directory => assert!(
+                    fs::read_dir(&destination)
+                        .expect("read directory race winner")
+                        .next()
+                        .is_none()
+                ),
+                #[cfg(unix)]
+                LateWinner::Symlink | LateWinner::DanglingSymlink => unreachable!(),
+            }
+            assert!(staging_paths(temporary.path()).is_empty());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn late_live_and_dangling_symlink_race_winners_are_never_replaced() {
+        let (compiler, approved) = approved_fixture(false);
+        for (index, winner) in [LateWinner::Symlink, LateWinner::DanglingSymlink]
+            .into_iter()
+            .enumerate()
+        {
+            let temporary = tempfile::tempdir().expect("symlink-race temporary parent");
+            let destination = temporary.path().join(format!("symlink-winner-{index}"));
+            let hook = RecordingHook {
+                winner: Some((destination.clone(), winner)),
+                ..RecordingHook::default()
+            };
+
+            let error = compile_plan_with_options_and_hook(
+                &approved,
+                &destination,
+                compiler.policy(),
+                &CompileOptions::default(),
+                &hook,
+            )
+            .expect_err("late symlink winner must reject publication");
+
+            assert!(matches!(error, VaultcError::OutputExists(ref path) if path == &destination));
+            assert!(
+                fs::symlink_metadata(&destination)
+                    .expect("stat symlink winner")
+                    .file_type()
+                    .is_symlink()
+            );
+            if matches!(winner, LateWinner::Symlink) {
+                assert_eq!(
+                    fs::read(destination.with_extension("winner-referent"))
+                        .expect("read live symlink winner referent"),
+                    b"external symlink referent\n"
+                );
+            } else {
+                assert!(!destination.exists(), "dangling winner must stay dangling");
+            }
+            assert!(staging_paths(temporary.path()).is_empty());
+        }
+    }
+
+    #[test]
+    fn every_precommit_checkpoint_failure_cleans_stage_by_default() {
+        let (compiler, approved) = approved_fixture(false);
+        let order = [
+            DirectoryPublicationStep::StageCreated,
+            DirectoryPublicationStep::MaterializedAndFilesSynced,
+            DirectoryPublicationStep::TreeSynced,
+            DirectoryPublicationStep::StagedVerified,
+            DirectoryPublicationStep::BeforePublish,
+        ];
+        for (index, fail_at) in order.into_iter().enumerate() {
+            let temporary = tempfile::tempdir().expect("staging disposition temporary parent");
+            let destination = temporary.path().join(format!("precommit-{index}"));
+            let hook = RecordingHook {
+                fail_at: Some(fail_at),
+                ..RecordingHook::default()
+            };
+
+            let error = compile_plan_with_options_and_hook(
+                &approved,
+                &destination,
+                compiler.policy(),
+                &CompileOptions::default(),
+                &hook,
+            )
+            .expect_err("injected precommit failure must fail");
+
+            assert!(matches!(error, VaultcError::Io { .. }));
+            assert!(!destination.exists());
+            assert!(staging_paths(temporary.path()).is_empty());
+            assert_eq!(hook.observed(), order[..=index]);
+        }
+    }
+
+    #[test]
+    fn independent_staged_verification_rejects_post_sync_tamper_before_publish() {
+        let temporary = tempfile::tempdir().expect("staged-tamper temporary parent");
+        let (compiler, approved) = approved_fixture(false);
+        let destination = temporary.path().join("tampered");
+        let hook = RecordingHook {
+            tamper_at: Some(DirectoryPublicationStep::TreeSynced),
+            ..RecordingHook::default()
+        };
+
+        let error = compile_plan_with_options_and_hook(
+            &approved,
+            &destination,
+            compiler.policy(),
+            &CompileOptions::default(),
+            &hook,
+        )
+        .expect_err("post-sync staged tamper must fail independent verification");
+
+        assert!(matches!(error, VaultcError::VerificationFailed(_)));
+        assert_eq!(
+            hook.observed(),
+            vec![
+                DirectoryPublicationStep::StageCreated,
+                DirectoryPublicationStep::MaterializedAndFilesSynced,
+                DirectoryPublicationStep::TreeSynced,
+            ]
+        );
+        assert!(!destination.exists());
+        assert!(staging_paths(temporary.path()).is_empty());
+    }
+
+    #[test]
+    fn retain_policy_marks_and_keeps_precommit_failure() {
+        let temporary = tempfile::tempdir().expect("retained staging temporary parent");
+        let (compiler, approved) = approved_fixture(true);
+        let destination = temporary.path().join("compiled");
+        let hook = RecordingHook {
+            fail_at: Some(DirectoryPublicationStep::BeforePublish),
+            ..RecordingHook::default()
+        };
+
+        let error = compile_plan_with_options_and_hook(
+            &approved,
+            &destination,
+            compiler.policy(),
+            &CompileOptions::default(),
+            &hook,
+        )
+        .expect_err("retained precommit failure must fail");
+
+        assert!(matches!(error, VaultcError::Io { .. }));
+        assert!(!destination.exists());
+        let stages = staging_paths(temporary.path());
+        assert_eq!(stages.len(), 1);
+        let marker = fs::read_to_string(stages[0].join(".vaultc-INCOMPLETE"))
+            .expect("read synchronized incomplete marker");
+        assert!(marker.contains("injected directory publication failure"));
+    }
+
+    #[test]
+    fn disposition_failures_preserve_original_and_every_disposition_error() {
+        let temporary = tempfile::tempdir().expect("disposition failure temporary parent");
+        let (compiler, approved) = approved_fixture(false);
+        let destination = temporary.path().join("remove-failure");
+        let hook = RecordingHook {
+            fail_at: Some(DirectoryPublicationStep::BeforePublish),
+            faults: vec![HookFault::Remove],
+            ..RecordingHook::default()
+        };
+        let error = compile_plan_with_options_and_hook(
+            &approved,
+            &destination,
+            compiler.policy(),
+            &CompileOptions::default(),
+            &hook,
+        )
+        .expect_err("cleanup failure must be explicit");
+        let retained_remove_stage = match &error {
+            VaultcError::StagingDispositionFailed { staging, .. } => staging.clone(),
+            other => panic!("unexpected cleanup error: {other:?}"),
+        };
+        assert!(matches!(
+            error,
+            VaultcError::StagingDispositionFailed {
+                action: StagingDispositionAction::Remove,
+                ref original,
+                ref disposition_error,
+                ..
+            } if matches!(original.as_ref(), VaultcError::Io { .. })
+                && disposition_error.to_string().contains("cleanup failure")
+        ));
+        assert_eq!(
+            staging_paths(temporary.path()),
+            vec![retained_remove_stage.clone()]
+        );
+        assert!(retained_remove_stage.is_dir());
+
+        let temporary = tempfile::tempdir().expect("combined disposition temporary parent");
+        let (compiler, approved) = approved_fixture(true);
+        let destination = temporary.path().join("combined-failure");
+        let hook = RecordingHook {
+            fail_at: Some(DirectoryPublicationStep::BeforePublish),
+            faults: vec![HookFault::Marker, HookFault::Remove],
+            ..RecordingHook::default()
+        };
+        let error = compile_plan_with_options_and_hook(
+            &approved,
+            &destination,
+            compiler.policy(),
+            &CompileOptions::default(),
+            &hook,
+        )
+        .expect_err("marker and fallback cleanup failures must be explicit");
+        let retained_combined_stage = match &error {
+            VaultcError::StagingDispositionFailed { staging, .. } => staging.clone(),
+            other => panic!("unexpected combined disposition error: {other:?}"),
+        };
+        assert!(matches!(
+            error,
+            VaultcError::StagingDispositionFailed {
+                action: StagingDispositionAction::MarkIncompleteAndRetain,
+                ref original,
+                ref disposition_error,
+                ..
+            } if matches!(original.as_ref(), VaultcError::Io { .. })
+                && disposition_error.to_string().contains("incomplete-marker failure")
+                && disposition_error.to_string().contains("cleanup failure")
+        ));
+        assert_eq!(
+            staging_paths(temporary.path()),
+            vec![retained_combined_stage.clone()]
+        );
+        assert!(retained_combined_stage.is_dir());
+    }
+
+    #[test]
+    fn unsupported_publish_never_falls_back() {
+        let temporary = tempfile::tempdir().expect("unsupported primitive temporary parent");
+        let (compiler, approved) = approved_fixture(false);
+        let unsupported_destination = temporary.path().join("unsupported");
+        let unsupported_hook = RecordingHook {
+            faults: vec![HookFault::UnsupportedPublish],
+            ..RecordingHook::default()
+        };
+        let error = compile_plan_with_options_and_hook(
+            &approved,
+            &unsupported_destination,
+            compiler.policy(),
+            &CompileOptions::default(),
+            &unsupported_hook,
+        )
+        .expect_err("unsupported primitive must not fall back");
+        assert!(matches!(
+            error,
+            VaultcError::Io { ref source, .. }
+                if source.kind() == std::io::ErrorKind::Unsupported
+        ));
+        assert!(!unsupported_destination.exists());
+        assert!(staging_paths(temporary.path()).is_empty());
+    }
+
+    #[test]
+    fn postcommit_faults_retain_verified_output_and_never_start_optional_pack() {
+        let (compiler, approved) = approved_fixture(false);
+        for (index, fail_at_parent_sync) in [false, true].into_iter().enumerate() {
+            let temporary = tempfile::tempdir().expect("postcommit fault temporary parent");
+            let destination = temporary.path().join(format!("uncertain-{index}"));
+            let pack = temporary
+                .path()
+                .join(format!("must-not-start-{index}.vaultpack"));
+            let hook = if fail_at_parent_sync {
+                RecordingHook {
+                    faults: vec![HookFault::ParentSync],
+                    ..RecordingHook::default()
+                }
+            } else {
+                RecordingHook {
+                    fail_at: Some(DirectoryPublicationStep::Published),
+                    ..RecordingHook::default()
+                }
+            };
+
+            let error = compile_plan_with_options_and_hook(
+                &approved,
+                &destination,
+                compiler.policy(),
+                &CompileOptions {
+                    create_pack: Some(pack.clone()),
+                },
+                &hook,
+            )
+            .expect_err("postcommit failure must report uncertain durability");
+            assert!(matches!(
+                error,
+                VaultcError::PublishedButDurabilityUncertain { ref path, .. }
+                    if path == &destination
+            ));
+            assert!(
+                compiler
+                    .verify(&destination)
+                    .expect("verify retained uncertain artifact")
+                    .valid
+            );
+            assert!(
+                !pack.exists(),
+                "optional pack must not start after uncertainty"
+            );
+            assert!(staging_paths(temporary.path()).is_empty());
+        }
+    }
 }

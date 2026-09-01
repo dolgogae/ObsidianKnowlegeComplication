@@ -49,7 +49,9 @@ Vaults and a publishable result. It:
   conflicts before writing anything;
 - accepts optional provider-neutral AI proposals as data, then validates their
   identities, evidence, and approvals;
-- materializes only a sealed `ApprovedPlan` into a new destination;
+- materializes only a sealed `ApprovedPlan` through a verified sibling stage
+  and a native atomic no-replace directory commit, preserving any existing or
+  concurrently created destination;
 - creates deterministic `.vaultpack` archives through one SDK/CLI verified,
   atomic no-clobber publisher and independently verifies their checksums, plan
   linkage, source-derived output commitments, audit files, and provenance.

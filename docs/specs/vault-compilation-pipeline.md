@@ -10,6 +10,7 @@ decision_refs:
   - ADR-0008
   - ADR-0009
   - ADR-0012
+  - ADR-0014
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -29,7 +30,9 @@ source_refs:
 9. **Augment optionally:** ask providers for evidence-bound proposals and capture a transcript.
 10. **Validate and approve:** reject invalid/stale proposals; record explicit decisions.
 11. **Compile:** reverify source hashes, stage output, materialize approved operations, write audit metadata and checksums.
-12. **Publish:** atomically rename the complete sibling staging directory.
+12. **Publish:** atomically commit the complete sibling staging directory with
+    a supported no-replace primitive; never substitute a check followed by a
+    replacing rename.
 13. **Verify:** independently validate paths, hashes, manifests, provenance closure, and resolvable rewrites.
 
 Stages are resumable only when their input identity and semantic configuration hash match.
@@ -104,7 +107,22 @@ approval files without it fail closed.
 
 ## Failure semantics
 
-No partial output may become the requested destination. On failure, the staging directory may be retained only under an explicit debug option and MUST be clearly marked incomplete. The default behavior removes the exact known staging directory after safe validation; it never recursively deletes an unresolved path.
+No partial output may become the requested destination. On failure, the
+staging directory may be retained only under an explicit debug option and MUST
+be clearly marked incomplete. The default behavior explicitly removes the
+exact known staging directory after safe validation; it never recursively
+deletes an unresolved path. Failure to mark or remove the exact stage MUST
+report the staging path, original failure, requested disposition, and
+disposition failure rather than being silently ignored.
+
+The final directory namespace commit follows ADR-0014. Every existing leaf and
+race winner is preserved as `OutputExists`; an unsupported no-replace
+primitive fails closed without a replacing fallback. Before staging, the
+output and optional integrated Pack are required to be disjoint from every
+immutable source path under resolved-ancestor, lexical, NFC, and full-case-fold
+comparison. A
+post-publication parent-sync failure retains the verified directory and reports
+`PublishedButDurabilityUncertain`; optional Pack publication does not begin.
 
 Warnings may permit compilation if policy allows. Errors prevent approval or
 publication. Hard ingestion and safety resource limits are errors.

@@ -30,7 +30,7 @@ pub use augmentation::{
 };
 pub use compile::{CompileOptions, CompiledArtifact};
 pub use config::{CompilerPolicy, SafetyLimits};
-pub use error::{Result, VaultcError};
+pub use error::{Result, StagingDispositionAction, VaultcError};
 pub use identity::RecordId;
 pub use plan::{DraftPlan, Inspection};
 pub use provenance::{

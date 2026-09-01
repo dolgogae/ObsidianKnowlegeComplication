@@ -11,6 +11,7 @@ decision_refs:
   - ADR-0010
   - ADR-0011
   - ADR-0013
+  - ADR-0014
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -154,16 +155,23 @@ deadline bounds, writes provider input on a supervised thread, and on deadline
 or SIGINT terminates and reaps the provider process tree on supported Unix
 platforms. It never publishes a partial augmentation file.
 
-`compile` rejects an output or pack that exists. A pack path must end in
+`compile` rejects an output or pack that exists. The directory publisher uses
+the ADR-0014 native no-replace primitive, preserves a destination created after
+preflight, and fails closed where that primitive is unsupported. The output is
+and an optional integrated Pack are also rejected before staging if either
+aliases, contains, or is nested within an immutable source. A pack path must end in
 `.vaultpack`, must be disjoint from the Compiled Vault in either containment
 direction, and is sibling-staged and atomically published with no-clobber file
 semantics. `VaultCompiler::compile_with_options` connects the public
 `CompileOptions.create_pack` path; the simpler `compile` uses default options.
 The directory compilation and subsequent pack creation are two publications,
 not one combined transaction, so a runtime pack failure leaves the already
-valid Compiled Vault and returns `PackPublicationAfterCompile`. The V1 contract
-still requires closing the portable directory destination check/rename race
-before release qualification.
+valid Compiled Vault and returns `PackPublicationAfterCompile`.
+
+Caught staging cleanup or incomplete-marker failures retain the original
+compilation/publication error in `StagingDispositionFailed`. A directory
+parent-sync failure returns `PublishedButDurabilityUncertain`, leaves the
+complete verified output visible, and does not begin optional Pack publication.
 
 Every caught failure before pack publication leaves no vaultc-created file at
 the requested pack destination. A parent-directory synchronization failure

@@ -70,20 +70,21 @@ All commands below passed on macOS arm64 with Rust 1.97.1:
 
 | Check | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 172 tests and all doctests passed |
+| `cargo test --workspace --all-features --no-fail-fast` | 173 tests and all doctests passed |
 | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
 
-The 172 tests comprise 27 `vaultc` unit tests, 5 Canvas integration tests, 10
-atomic-directory-publication tests, 4 generated-provenance tests, 22
-normalization/archive tests, 5 pack integration tests, 11
-atomic-pack-publication tests, 8 pipeline tests, 5 provider/approval tests, 14
-SDK augmentation/replay tests, 18 security tests, 9 typed-provenance tests, 13
-CLI unit tests, 3 CLI replay tests, 16 CLI lifecycle tests, and 2 protocol
-tests. They cover, among other cases:
+The 173 tests comprise 27 `vaultc` unit tests, 5 Canvas integration tests, 10
+atomic-directory-publication tests, 1 documentation-integrity test, 4
+generated-provenance tests, 22 normalization/archive tests, 5 pack integration
+tests, 11 atomic-pack-publication tests, 8 pipeline tests, 5 provider/approval
+tests, 14 SDK augmentation/replay tests, 18 security tests, 9 typed-provenance
+tests, 13 CLI unit tests, 3 CLI replay tests, 16 CLI lifecycle tests, and 2
+protocol tests. They cover, among other cases:
 
 - source immutability, deterministic plan/output, absolute-source-location
-  independence, and byte-identical VaultPacks on one supported host;
+  independence, byte-identical VaultPacks on one supported host, and a literal
+  complete-VaultPack SHA-256 golden shared by the platform workflow;
 - exact note and attachment provenance, Markdown link rewrites, portable path
   collisions, stale sources, and tampered sealed plans;
 - exact Markdown span application and expected output hashes, reverse
@@ -151,8 +152,8 @@ The exact requirement-to-test mapping is in
 | QG-004 Safety | implemented corpus green | current hostile-input, control-file, directory/pack publication race, and fault-seam tests pass; fuzz/property campaigns remain |
 | QG-005 Compatibility | documented | no migration/version compatibility matrix is implemented yet |
 | QG-006 Performance | not verified | the 100,000-note/20 GB/20-minute/2 GB RSS benchmark has not run |
-| QG-007 Documentation | passed for this change | current state, traceability, specs, and append-only decision log are updated; all repository-relative Markdown links resolve |
-| QG-008 Supply chain | partial | dual licenses and `Cargo.lock` exist; audit policy, SBOM, release provenance, signing, and clean-room release automation remain |
+| QG-007 Documentation | passed for this change | current state, traceability, specs, and append-only decision log are updated; a direct repository test requires every relative Markdown link to resolve |
+| QG-008 Supply chain | partial | dual licenses, `Cargo.lock`, and a read-only CI workflow with a full-commit-pinned checkout action exist; audit policy, SBOM, release provenance, signing, and clean-room release automation remain |
 
 ## Known implementation gaps
 
@@ -187,8 +188,11 @@ The exact requirement-to-test mapping is in
   reference benchmark are verified. Augmentation recordings share immutable
   decoded state across replay clones, but canonical 1 GiB control-file decoding
   and re-encoding are not yet a fully streaming pipeline.
-- Only macOS arm64 has been exercised in this workspace. Linux, Windows, macOS
-  x86_64, filesystem normalization, and deterministic cross-platform CI remain.
+- Only macOS arm64 has been exercised in this workspace. A locked host-native
+  GitHub Actions matrix is defined for Linux x86_64, Windows x86_64, macOS
+  x86_64, and macOS arm64, but this checkout has no configured remote and those
+  jobs have not run; filesystem normalization and cross-platform evidence
+  therefore remain unverified.
 - `.vaultpack` is deterministic and checksum/audit-verified but unsigned. The
   signing profile, key lifecycle, revocation, SBOM, and release artifacts are
   future work.
@@ -231,12 +235,15 @@ The exact requirement-to-test mapping is in
 - MCP, Obsidian plugin, registry/marketplace, claims, benchmarking, and every
   ALG-MEM experimental or research-only algorithm remain unimplemented and do
   not affect the compiler path.
-- There is no CI workflow or published release artifact yet.
+- The cross-platform CI workflow is implemented but has not run on a connected
+  remote. There is no branch-protection evidence or published release artifact
+  yet.
 
 ## Next implementation slices
 
-1. Add Linux, Windows, and macOS matrix CI for native directory publication,
-   reparse/symlink behavior, path normalization, race, and determinism cases.
+1. Run the committed Linux, Windows, macOS x86_64, and macOS arm64 matrix on a
+   connected repository, retain its native publication/reparse/path/golden
+   evidence, and make the required jobs branch-protection gates.
 2. Define schema migrations and run property/fuzz plus process-crash suites.
 3. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
    ADR before calling a pack signed or marketplace-ready.

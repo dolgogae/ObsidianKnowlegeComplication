@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  RUSTUP_AUTO_INSTALL: "1"
+
+jobs:
+  quality:
+    name: Quality / Linux x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Activate pinned Rust toolchain
+        run: |
+          rustc -vV
+          cargo -V
+          rustup show active-toolchain
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint every target and feature
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+  platform-tests:
+    name: Test / ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - name: Windows x86_64
+            os: windows-2025
+            target: x86_64-pc-windows-msvc
+          - name: macOS x86_64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+          - name: macOS arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Verify pinned host toolchain
+        shell: bash
+        run: |
+          rustc -vV
+          cargo -V
+          rustup show active-toolchain
+          actual_host="$(rustc -vV | sed -n 's/^host: //p')"
+          if [ "$actual_host" != "${{ matrix.target }}" ]; then
+            echo "expected host ${{ matrix.target }}, got $actual_host" >&2
+            exit 1
+          fi
+
+      - name: Run complete workspace suite
+        run: cargo test --locked --workspace --all-features --no-fail-fast

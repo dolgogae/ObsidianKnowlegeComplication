@@ -5,8 +5,12 @@ use std::fs::{self, File};
 use std::io::{Read as _, Write as _};
 use std::path::Path;
 
+use sha2::{Digest as _, Sha256};
 use vaultc::provenance::{ProvenanceQuery, ProvenanceRecordKind, ProvenanceSubject};
 use vaultc::{SourceSpec, VaultcError};
+
+const BASIC_VAULTPACK_SHA256: &str =
+    "e017fa28359eb9d49458fecda42b27a759c58a7546ecbd7c272d58eb8b230890";
 
 fn compile_and_pack(source: &Path, artifact_root: &Path, pack: &Path) {
     let compiler = common::compiler();
@@ -47,9 +51,13 @@ fn vaultpack_is_byte_deterministic_verifiable_and_explainable() {
     vaultc::pack::create_pack(&artifact_root, &second, compiler.policy().output.zstd_level)
         .expect("create second VaultPack");
 
+    let first_bytes = fs::read(&first).expect("read first pack");
+    let second_bytes = fs::read(&second).expect("read second pack");
+    assert_eq!(first_bytes, second_bytes);
     assert_eq!(
-        fs::read(&first).expect("read first pack"),
-        fs::read(&second).expect("read second pack")
+        hex::encode(Sha256::digest(&first_bytes)),
+        BASIC_VAULTPACK_SHA256,
+        "the basic VaultPack is a cross-platform byte golden"
     );
     assert!(compiler.verify(&first).expect("verify first pack").valid);
     assert!(compiler.verify(&second).expect("verify second pack").valid);

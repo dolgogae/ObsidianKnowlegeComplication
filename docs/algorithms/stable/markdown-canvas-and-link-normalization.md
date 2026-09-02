@@ -34,7 +34,7 @@ N_fm(d)   = canonical_typed_map(parse_frontmatter(d))
 `N_body` is a versioned structural projection: it removes parser-position metadata and syntax differences explicitly declared insignificant, but preserves semantic text, heading/block structure, code/math bytes, link target/display distinction, and embed kind. It MUST NOT use locale-dependent case conversion.
 
 The scanner retains `O_path(p)`, the exact valid-UTF-8 component spelling
-joined with `/` before NFC. V1 requires `N_path(O_path(p))` to equal the sealed
+joined with `/` before NFC. V2 requires `N_path(O_path(p))` to equal the sealed
 logical path. `O_path` is audit data and is never substituted for `N_path` in
 the ALG-SNP-001 semantic identity formulas.
 
@@ -53,7 +53,7 @@ the ALG-SNP-001 semantic identity formulas.
 | `N_fm` | normalized frontmatter map | canonical bytes | schema v1 |
 | `O_path` | accepted pre-NFC component spelling | UTF-8 slash path | required |
 
-The V1 implementation pins NFC data to Unicode 17.0.0 and default full case
+The V2 implementation pins NFC data to Unicode 17.0.0 and default full case
 fold data to Unicode 16.0.0. Dependency upgrades MUST NOT silently change
 `N_path` or `N_key`; they require golden-vector review and explicit
 normalization-version handling.
@@ -62,7 +62,7 @@ normalization-version handling.
 
 A wikilink/embed is parsed into `(raw_target, path?, heading?, block_id?, display?, embed)`. Resolution order is explicit path in source namespace, normalized path, filename stem/title/alias candidates, then heading/block validation. Zero or multiple final candidates are unresolved/ambiguous; the compiler does not choose by discovery order.
 
-Rewriting replaces only target spans recorded by the scanner. It preserves surrounding source bytes, display text, embed marker, heading/block suffix, and escaping. The new relative target is calculated from the allocated output path using `/` separators. Markdown-format targets use the frozen V1 percent encoder; wikilink-format targets retain Obsidian delimiters and do not invent escapes for otherwise non-representable filenames.
+Rewriting replaces only target spans recorded by the scanner. It preserves surrounding source bytes, display text, embed marker, heading/block suffix, and escaping. The new relative target is calculated from the allocated output path using `/` separators. Markdown-format targets use the frozen V2 percent encoder; wikilink-format targets retain Obsidian delimiters and do not invent escapes for otherwise non-representable filenames.
 
 Canvas parsing types known fields (`nodes`, `edges`, file nodes and IDs) while preserving unknown JSON fields. Referenced files use the same resolver and output path map. Serialization uses deterministic key policy only for generated/rewritten Canvas; unchanged files may be copied byte-for-byte.
 Canvas `file` rewrites store the destination-relative semantic path with `/`

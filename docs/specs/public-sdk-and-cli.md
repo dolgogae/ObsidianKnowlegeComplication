@@ -3,7 +3,7 @@ title: Public SDK and CLI Contract
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-08-18
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0001
   - ADR-0004
@@ -12,6 +12,11 @@ decision_refs:
   - ADR-0011
   - ADR-0013
   - ADR-0014
+  - ADR-0015
+  - ADR-0017
+  - ADR-0018
+  - ADR-0019
+  - ADR-0020
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -24,12 +29,12 @@ The public API exposes explicit, typed phases rather than one opaque merge
 call. The implemented deterministic path is:
 
 ```rust,ignore
-use vaultc::{CompilerPolicy, SourceSpec, VaultCompiler};
+use okc_core::{CompilerPolicy, OkcCompiler, SourceSpec};
 
-fn compile_vaults() -> vaultc::Result<()> {
-    let compiler = VaultCompiler::builder()
-        .workspace(".vaultc-work/build.sqlite")
-        .policy(CompilerPolicy::from_file("vaultc.toml")?)
+fn compile_vaults() -> okc_core::Result<()> {
+    let compiler = OkcCompiler::builder()
+        .workspace(".okc-work/build.sqlite")
+        .policy(CompilerPolicy::from_file("okc.toml")?)
         .build()?;
 
     let inspection = compiler.inspect([
@@ -53,7 +58,7 @@ fn compile_vaults() -> vaultc::Result<()> {
 ```
 
 For augmentation, a Rust application implements `KnowledgeAugmentor::propose`
-or constructs `vaultc-protocol` messages. `build_augmentation_request` creates
+or constructs `okc-protocol` messages. `build_augmentation_request` creates
 the exact sealed projection; `augment` records an in-process provider;
 an external transport calls `authorize_augmentation_exchange` after capability
 negotiation and before disclosure, then consumes that opaque authorization in
@@ -67,16 +72,16 @@ plan.
 
 | Phase | Current Rust surface | Input | Output | Mutates destination? |
 |---|---|---|---|---|
-| inspect | `VaultCompiler::inspect` | `SourceSpec` values + policy | sealed `Inspection` | no; optional SQLite workspace is updated transactionally |
-| plan | `VaultCompiler::plan` | `&Inspection` | immutable `DraftPlan` | no |
-| augment | `VaultCompiler::{build_augmentation_request,augment,authorize_augmentation_exchange,record_augmentation_exchange}`; CLI `augment` | sealed plan + explicit selection + provider capabilities + live consent | canonical `RecordedAugmentation` | no |
-| replay | `VaultCompiler::replay_augmentation`; CLI `replay` | sealed plan + canonical recording | provider-free revalidated recording | no |
-| validate | `VaultCompiler::validate_proposals` | `&DraftPlan` + proposals | deterministic `ValidatedProposals` | no |
+| inspect | `OkcCompiler::inspect` | `SourceSpec` values + policy | sealed `Inspection` | no; optional SQLite workspace is updated transactionally |
+| plan | `OkcCompiler::plan` | `&Inspection` | immutable `DraftPlan` | no |
+| augment | `OkcCompiler::{build_augmentation_request,augment,authorize_augmentation_exchange,record_augmentation_exchange}`; CLI `augment` | sealed plan + explicit selection + provider capabilities + live consent | canonical `RecordedAugmentation` | no |
+| replay | `OkcCompiler::replay_augmentation`; CLI `replay` | sealed plan + canonical recording | provider-free revalidated recording | no |
+| validate | `OkcCompiler::validate_proposals` | `&DraftPlan` + proposals | deterministic `ValidatedProposals` | no |
 | approve | `approve`, `approve_with_conflicts`, `approve_without_augmentation` | owned `DraftPlan` + validation/decision logs | `ApprovedPlan` | no |
-| compile | `VaultCompiler::{compile,compile_with_options}` | `&ApprovedPlan` + absent destination + optional pack path | `CompiledArtifact` | yes; the directory and optional pack are two ordered publications |
-| pack | `vaultc::pack::create_pack`; CLI `compile --pack` | verified Compiled Vault + absent disjoint `.vaultpack` path | deterministic pack | yes; sibling-stages, synchronizes, verifies, and atomically publishes without replacement |
-| verify | `VaultCompiler::verify` | Compiled Vault or `.vaultpack` | `VerificationReport` | no |
-| explain | `VaultCompiler::explain_provenance_page`; bounded `explain_provenance` convenience | artifact + typed path/package query | versioned `ProvenancePage` or complete bounded explanation | no |
+| compile | `OkcCompiler::{compile,compile_with_options}` | `&ApprovedPlan` + absent destination + optional pack path | `CompiledArtifact` | yes; the directory and optional pack are two ordered publications |
+| pack | `okc_core::pack::create_pack`; CLI `compile --pack` | verified Compiled Vault + absent disjoint `.okcpack` path | deterministic pack | yes; sibling-stages, synchronizes, verifies, and atomically publishes without replacement |
+| verify | `OkcCompiler::verify` | Compiled Vault or `.okcpack` | `VerificationReport` | no |
+| explain | `OkcCompiler::explain_provenance_page`; bounded `explain_provenance` convenience | artifact + typed path/package query | versioned `ProvenancePage` or complete bounded explanation | no |
 
 All serialized plans and approvals are untrusted control files. Approval,
 compilation, and verification revalidate sealed plan/proposal/conflict
@@ -100,12 +105,14 @@ pre-output-hash `DraftPlan` as a plan/decision error (`4`), not a provider error
 
 ## CLI commands
 
-The frozen `0.1.0` command forms are:
+The `0.2.0` command surface is:
 
 ```text
-vaultc [--policy FILE] [--workspace FILE] inspect SOURCE... [--format human|json]
-vaultc [--policy FILE] [--workspace FILE] plan SOURCE... --out FILE [--format human|json]
-vaultc augment PLAN --provider-cmd PROGRAM [--provider-arg ARG]...
+okc [--project PATH]
+okc tui [--project PATH]
+okc [--policy FILE] [--workspace FILE] inspect SOURCE... [--format human|json]
+okc [--policy FILE] [--workspace FILE] plan SOURCE... --out FILE [--format human|json]
+okc augment PLAN --provider-cmd PROGRAM [--provider-arg ARG]...
     (--document-id DOCUMENT_ID... | --all-documents) --out FILE
     [--provider-working-directory DIRECTORY]
     [--provider-timeout-seconds SECONDS]
@@ -113,16 +120,23 @@ vaultc augment PLAN --provider-cmd PROGRAM [--provider-arg ARG]...
     [--provider-max-line-bytes BYTES]
     [--provider-max-messages COUNT]
     [--allow-remote-provider]
-vaultc replay PLAN --augmentation FILE --out FILE
-vaultc approve PLAN --decisions FILE [--proposals FILE] --out FILE
-vaultc [--policy FILE] compile APPROVED_PLAN --output PATH
+okc replay PLAN --augmentation FILE --out FILE
+okc validate PLAN --augmentation FILE
+okc approve PLAN --decisions FILE [--proposals FILE] --out FILE
+okc [--policy FILE] compile APPROVED_PLAN --output PATH
     [--pack FILE] [--format human|json]
-vaultc verify PATH_OR_PACK [--format human|json]
-vaultc explain PATH_OR_PACK OUTPUT_PATH
+okc verify PATH_OR_PACK [--format human|json]
+okc explain PATH_OR_PACK OUTPUT_PATH
     [--limit COUNT] [--cursor CURSOR] [--format human|json]
-vaultc explain PACK --package
+okc explain PACK --package
     [--limit COUNT] [--cursor CURSOR] [--format human|json]
+okc doctor
+okc update [stable|latest|VERSION]
 ```
+
+With no subcommand, a TTY starts the TUI. A non-TTY prints help and exits 2.
+CLI and TUI call the same application/core services and MUST NOT spawn one
+another. `validate` performs provider-free validation and writes no file.
 
 `SOURCE` is `ID=PATH`. A bare path derives an ASCII-safe ID from its final
 component. Directories and the `.zip`, `.tar.zst`, and `.tzst` extensions are
@@ -142,7 +156,7 @@ core authorization before any augmentation projection is written to the child.
 The resulting authorization is an in-memory one-exchange token, not a stored
 permission.
 
-`replay` accepts only canonical schema-1 augmentation JSONL and never invokes a
+`replay` accepts only canonical schema-2 augmentation JSONL and never invokes a
 provider, process, network, MCP server, or output compiler. It rehydrates the
 redacted projection from the sealed plan, rebuilds the public request, checks
 the exact four-record transcript, and reruns proposal validation. There is no
@@ -160,9 +174,9 @@ the ADR-0014 native no-replace primitive, preserves a destination created after
 preflight, and fails closed where that primitive is unsupported. The output is
 and an optional integrated Pack are also rejected before staging if either
 aliases, contains, or is nested within an immutable source. A pack path must end in
-`.vaultpack`, must be disjoint from the Compiled Vault in either containment
+`.okcpack`, must be disjoint from the Compiled Vault in either containment
 direction, and is sibling-staged and atomically published with no-clobber file
-semantics. `VaultCompiler::compile_with_options` connects the public
+semantics. `OkcCompiler::compile_with_options` connects the public
 `CompileOptions.create_pack` path; the simpler `compile` uses default options.
 The directory compilation and subsequent pack creation are two publications,
 not one combined transaction, so a runtime pack failure leaves the already
@@ -173,7 +187,7 @@ compilation/publication error in `StagingDispositionFailed`. A directory
 parent-sync failure returns `PublishedButDurabilityUncertain`, leaves the
 complete verified output visible, and does not begin optional Pack publication.
 
-Every caught failure before pack publication leaves no vaultc-created file at
+Every caught failure before pack publication leaves no okc-created file at
 the requested pack destination. A parent-directory synchronization failure
 after publication returns `PublishedButDurabilityUncertain`; the complete pack
 is retained because deleting it would not restore atomicity and could destroy
@@ -184,17 +198,17 @@ authentication.
 `explain` emits schema-versioned typed provenance. Its default and hard limits
 are 256/4,096 records and 4/16 MiB respectively. A returned cursor is bound to
 the graph, subject, and last global sort key. Package queries are valid only
-for `.vaultpack` and return virtual outer-package integrity records; inner-path
+for `.okcpack` and return virtual outer-package integrity records; inner-path
 queries remain identical between a directory and its pack. Invalid query
 limits are exit `2`; malformed, stale, or cross-artifact cursors are exit `7`.
 
 ## Decision document
 
-`approve --decisions` consumes schema version 1:
+`approve --decisions` consumes schema version 2:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "plan_id": "plan_...",
   "decisions": [
     {
@@ -203,7 +217,7 @@ limits are exit `2`; malformed, stale, or cross-artifact cursors are exit `7`.
       "proposal_content_hash": "<canonical content hash>",
       "approved": true,
       "approver": "curator-id",
-      "policy_version": "team-policy-v1"
+      "policy_version": "team-policy-v2"
     }
   ],
   "conflicts": [
@@ -211,9 +225,9 @@ limits are exit `2`; malformed, stale, or cross-artifact cursors are exit `7`.
       "plan_id": "plan_...",
       "conflict_id": "conflict_...",
       "conflict_content_hash": "<sealed conflict hash>",
-      "resolution": "waived_by_policy",
-      "resolver": "curator-id",
-      "policy_version": "team-policy-v1",
+      "action": { "type": "waive_preserve_original" },
+      "decided_by": "curator-id",
+      "policy_version": "team-policy-v2",
       "rationale": "retain the ambiguous source representation"
     }
   ]
@@ -221,9 +235,11 @@ limits are exit `2`; malformed, stale, or cross-artifact cursors are exit `7`.
 ```
 
 `decisions` may be empty when no augmentation is approved. `conflicts` may be
-empty when the plan has no unresolved required conflict. Per ADR-0009, V1
-rejects `user_resolved` and every other external conflict resolution until a
-typed target/rewrite action exists.
+empty when the plan has no unresolved required conflict. A conflict action is
+`waive_preserve_original`, `select_markdown_target` with a sealed
+`target_document_id`, or `select_canvas_target` with a sealed typed target.
+Free-form replacement strings and targets outside the candidate set fail
+closed. ADR-0017 supersedes the V1 waiver-only restriction in ADR-0009.
 
 ## Output and exit behavior
 
@@ -233,7 +249,7 @@ Secrets and complete source content MUST NOT be logged by default. Human text
 is not stable; JSON field meanings, schema versions, diagnostic codes, and exit
 families are compatibility surfaces.
 
-The numeric exit codes are frozen for the `0.1.x` CLI:
+The numeric exit codes are frozen for the `0.2.x` CLI:
 
 | Code | Family |
 |---:|---|
@@ -249,16 +265,18 @@ The numeric exit codes are frozen for the `0.1.x` CLI:
 ## Compatibility
 
 Rust APIs follow SemVer. JSON schemas and NDJSON envelopes carry independent
-schema versions. CLI human text is not stable. The current verifier accepts
-only its exact schema/compiler version; migration and compatibility matrices
-are not implemented yet. The pre-release schema 1
+schema versions. CLI human text is not stable. V2 writers emit schema 2 only.
+`okc verify` and `okc explain` additionally detect frozen V1 Compiled Vaults
+and `.vaultpack` inputs and dispatch to a read-only reader. Migration rebuilds
+V2 state from relinked, identity-verified sources and never carries V1
+approvals, proposals, or conflict decisions forward. The pre-release schema 1
 `RewriteMarkdown.expected_output_hash` field is required, so earlier
 working-tree plans without it fail closed rather than receiving a default.
 The same pre-release schema-completion rule applies to the required approved
 proposal materialization field; earlier working-tree approval files without it
 fail closed.
 AI-bearing development approvals with non-empty validations and an empty
-transcript now also fail closed. Canonical schema-1 CLI recordings retain their
+transcript now also fail closed. Canonical schema-2 CLI recordings retain their
 wire shape; non-canonical JSONL that earlier CLI readers tolerated has no
 compatibility alias.
 Deprecations require one minor-version migration window before `1.0` where
@@ -266,7 +284,7 @@ practical and two after `1.0`.
 
 ## Language bindings
 
-V1 offers the Rust crates and CLI/JSON/NDJSON interoperability. Python and Node
+V2 offers the Rust crates, TUI, and CLI/JSON/NDJSON interoperability. Python and Node
 bindings are later conveniences, not separate compiler implementations. Other
 languages SHOULD invoke the CLI or implement the subprocess protocol until
 stable bindings exist.

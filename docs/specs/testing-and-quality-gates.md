@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - qa-security-engineer
   - core-rust-engineer
-last_updated: 2026-09-01
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0004
   - ADR-0007
@@ -14,6 +14,11 @@ decision_refs:
   - ADR-0012
   - ADR-0013
   - ADR-0014
+  - ADR-0015
+  - ADR-0017
+  - ADR-0018
+  - ADR-0019
+  - ADR-0020
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -23,7 +28,7 @@ source_refs:
 ## Release gates
 
 - **QG-001 Functional:** all stable requirement tests pass on supported platforms.
-- **QG-002 Determinism:** identical fixtures/configuration/transcript produce identical manifest, output hashes, and VaultPack bytes across two clean runs; cross-platform semantic hashes match.
+- **QG-002 Determinism:** identical fixtures/configuration/transcript produce identical manifest, output hashes, and OKCPack bytes across two clean runs; cross-platform semantic hashes match.
 - **QG-003 Provenance:** every output node has a complete derivation path; generated items have evidence and approval.
 - **QG-004 Safety:** hostile-input corpus, traversal/symlink/archive and malicious-proposal tests pass fail-closed.
 - **QG-005 Compatibility:** schema backward/forward behavior matches the version matrix.
@@ -31,11 +36,11 @@ source_refs:
 - **QG-007 Documentation:** Markdown links resolve; traceability reflects code/tests; release changes and ADR impact are recorded.
 - **QG-008 Supply chain:** licenses, lockfiles, vulnerability policy, provenance/SBOM, and reproducible release process pass.
 
-## Current `0.1.0` evidence
+## Current `0.2.0` evidence
 
-Local macOS arm64 execution with Rust 1.97.1 has 173 passing tests plus passing
-doctest harnesses, warning-free workspace Clippy, and a clean rustfmt check.
-This evidence does not make the full release gates green:
+The exact local command results and test count are recorded in
+[`../CURRENT_STATE.md`](../CURRENT_STATE.md). Local evidence never substitutes
+for the supported-platform or protected-release gates:
 
 | Gate | Current state |
 |---|---|
@@ -43,10 +48,10 @@ This evidence does not make the full release gates green:
 | QG-002 | partial: same-host and cross-absolute-source-root byte equality pass; cross-platform/toolchain comparison remains |
 | QG-003 | implemented and locally verified: typed stored graph, virtual audit envelope, RecordIds, attribution retention, bounded explanation, and semantic reseal cases pass; supported-platform evidence remains |
 | QG-004 | partial: targeted hostile-input suite passes; fuzz/property campaigns and remaining platform/adversarial classes remain |
-| QG-005 | not passed: exact-version rejection exists, but migrations and a compatibility matrix do not |
+| QG-005 | partial: frozen V1 verify/explain and schema-2 workspace migration exist; V1 project reconstruction and broader forward-compatibility evidence remain |
 | QG-006 | not run at the 100,000-note/20 GB reference workload |
 | QG-007 | evaluated per change after link, traceability, current-state, ADR, and decision-log validation |
-| QG-008 | partial: licenses and lockfile exist; audit, SBOM/provenance, signing, and release automation do not |
+| QG-008 | partial: licenses, lockfile, cargo-dist/SBOM/attestation configuration, and receipt-aware updater exist; protected native signing/notarization and published evidence do not |
 
 The authoritative live status and exact limitations are in
 [`../CURRENT_STATE.md`](../CURRENT_STATE.md); the mapping to code/tests is in
@@ -63,7 +68,7 @@ others.
 
 At least one job MUST additionally enforce workspace rustfmt, all-feature
 all-target Clippy with warnings denied, and repository-relative Markdown link
-integrity. A canonical basic-Vault build MUST compare its complete VaultPack
+integrity. A canonical basic-Vault build MUST compare its complete OKCPack
 bytes against a literal raw-SHA-256 golden on every host; same-run equality
 alone is not cross-platform evidence.
 
@@ -74,6 +79,10 @@ in a comment. The workflow definition being present or compiling locally is
 not a passed platform gate: only completed remote jobs on the named hosts count
 as Linux, Windows, or macOS CI evidence. Symlink/reparse-point skips MUST state
 the missing runner capability rather than silently count as coverage.
+
+A stable tag additionally requires two consecutive complete matrix successes
+on the exact same full commit SHA. A successful run plus a rerun of only failed
+jobs is not sufficient.
 
 ## Test layers
 
@@ -126,6 +135,11 @@ unchanged.
   never overwrites an existing entry or symlink referent, and has exactly one
   winner under concurrent publication.
 - Independent verifier catches each intentionally corrupted artifact class.
+- TUI reducer and render snapshots cover all screens, English/Korean, 80×24
+  fallback, long Unicode paths, hostile terminal controls, and
+  color-independent status. PTY E2E covers keyboard-only conflict selection,
+  cancellation, provider crash, signal/panic restoration, and the publication
+  barrier.
 - Future MCP and Obsidian adapters pass contract and permission tests without bypassing framework invariants.
 
 Typed provenance acceptance MUST cover Copy, Markdown/Canvas rewrite, exact

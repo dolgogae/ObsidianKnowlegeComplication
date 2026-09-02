@@ -4,13 +4,17 @@ status: normative-v1
 owners:
   - architect
   - core-rust-engineer
-last_updated: 2026-08-18
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0001
   - ADR-0002
   - ADR-0004
   - ADR-0005
   - ADR-0013
+  - ADR-0015
+  - ADR-0017
+  - ADR-0019
+  - ADR-0021
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -24,7 +28,7 @@ Obsidian plugin       MCP server       Other applications
        \                  |                  /
         \          CLI / stable protocols  /
          +---------------v----------------+
-         |         public `vaultc` API     |
+         |       `okc` CLI and TUI      |
          +---------------+----------------+
                          |
        +-----------------+------------------+
@@ -44,13 +48,16 @@ Dependencies point inward. The compiler core MUST NOT import Obsidian, MCP, host
 
 | Package | State | Responsibility |
 |---|---|---|
-| `vaultc` | implemented public library | identifiers, IR, snapshotting, parsing/normalization, deduplication, planning, approval, compilation, packing, provenance, verification, workspace persistence |
-| `vaultc-protocol` | implemented public library | versioned serializable request/response, provider capabilities, proposal/evidence, and transcript schemas |
-| `vaultc-cli` | implemented binary `vaultc` | filesystem/control-file orchestration, human/JSON output, supervised subprocess provider execution |
-| `vaultc-mcp` | future adapter | MCP tools that call public library operations |
-| `vaultc-memory` | future experimental | calibrated memory/retrieval models isolated from file compilation |
+| `okc-core` | implemented public library | identifiers, IR, snapshotting, parsing/normalization, deduplication, planning, immutable materialization, compilation, packing, provenance, verification, workspace persistence |
+| `okc-protocol` | implemented public library | versioned serializable request/response, provider capabilities, proposal/evidence, and transcript schemas |
+| `okc-app` | partially implemented application library | implemented project persistence, writer lock, immutable object storage, updater and progress/cancellation types; worker orchestration remains |
+| `okc` | implemented sole binary | Clap CLI, Ratatui/Crossterm TUI, human/JSON output, supervised subprocess provider execution |
+| `vaultc` | deprecated facade, no binary | one-minor Rust compatibility aliases over `okc-core` |
+| internal V1 readers | private compatibility packages | frozen schema-1 verify/explain implementation and literal goldens only |
+| `okc-mcp` | future adapter | MCP tools that call public library operations |
+| `okc-memory` | future experimental | calibrated memory/retrieval models isolated from file compilation |
 
-Circular dependencies are forbidden. `vaultc` may depend on protocol data types but MUST NOT launch provider processes. Process supervision belongs to the CLI or an application adapter.
+Circular dependencies are forbidden. `okc-core` may depend on protocol data types but MUST NOT launch provider processes. Process supervision belongs to `okc-app` or the `okc` binary.
 
 ## Module boundaries
 
@@ -64,8 +71,9 @@ Circular dependencies are forbidden. `vaultc` may depend on protocol data types 
 - `plan`: output namespace, rewrites, conflicts, diagnostics, sealed operations, and integrity revalidation.
 - `provider`: provider-neutral traits plus capability/evidence/proposal validation.
 - `approval`: record explicit decisions and invalidation rules.
+- `materialization`: derive effective operations and `MaterializationId` from the immutable plan, typed action set, and approved proposal set.
 - `compile`: stage, materialize, checksum, and atomically publish.
-- `pack`: verified deterministic VaultPack creation, atomic no-replace file
+- `pack`: verified deterministic OKCPack creation, atomic no-replace file
   publication, and safe extraction for verification.
 - `provenance`: emit and explain exact output-to-source derivations.
 - `verify`: independently verify manifest, paths, hashes, sealed audit linkage, approvals, and provenance closure.
@@ -80,7 +88,8 @@ Sources
   -> DraftPlan
   -> [AugmentationTranscript + Proposals]
   -> ValidatedProposals
-  -> ApprovedPlan
+  -> DecisionOverlay + ApprovedPlan
+  -> MaterializationPlan
   -> StagedOutput
   -> CompiledVault
   -> VerifiedArtifact
@@ -92,27 +101,26 @@ Operations MUST reject inputs from the wrong state. Any change to source hashes,
 
 - Raw snapshots own original bytes.
 - Canonical IR owns normalized semantics and source spans.
-- A plan owns output-path choices and rewrite decisions.
-- An approval log owns authorization for optional changes.
+- A plan owns deterministic output paths, candidates, and base operations.
+- Decision and approval logs own authorization; a materialization owns the exact effective operations without mutating the plan.
 - A compiled artifact owns only materialized output plus its audit metadata.
 - Search indexes and MCP engines own disposable derivatives.
 
 ## Persistence
 
-The current library performs inspection/planning in memory and may persist an
-inspection index to bundled SQLite. The CLI enables that SQLite workspace by
-default. SQLite uses WAL, foreign keys, `FULL` synchronous mode, deterministic
-transaction ordering, schema `user_version = 1`, and private Unix permissions.
-It is a build workspace, not a registry or long-term canonical service
-database.
+`okc-app` owns `Name.okc-project/manifest.json`, `state.sqlite3`, immutable
+`objects/`, `workspace/build.sqlite3`, and the single-writer `project.lock`.
+SQLite uses WAL, foreign keys, `FULL` synchronous mode, deterministic
+transactions, explicit migration through `user_version = 2`, and private Unix
+permissions. The build workspace has its own core schema and MUST NOT be
+initialized with the application-state tables. A source rebind or changed
+snapshot invalidates all downstream plan, decision, and approval references.
 
-The current SQLite layer cannot reload/resume an inspection and is reset on
-each persisted inspection. Migration, cleanup, encryption, and resumability are
-open V1 work. Calling it a bounded production streaming workspace before those
-features and QG-006 evidence exist is forbidden.
+Project data is plaintext. Applications MUST warn for likely shared/network
+locations and MUST NOT imply encryption.
 
 Large blobs SHOULD be streamed from sources and MUST NOT be duplicated in
-memory. The `0.1.0` scanner currently accumulates bounded source bytes in memory
+memory. The `0.2.0` scanner currently accumulates bounded source bytes in memory
 before parsing and therefore does not yet meet this target at the 20 GB
 reference workload. Database writes SHOULD be batched in deterministic
 primary-key order.

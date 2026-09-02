@@ -15,11 +15,11 @@ source_refs:
 
 ## Product shape
 
-Ship one generic VaultPack review and installation plugin. Knowledge packs contain data, manifests, provenance, and optional indexes; they do not contain pack-specific executable Obsidian plugins.
+Ship one generic OKCPack review and installation plugin. Knowledge packs contain data, manifests, provenance, and optional indexes; they do not contain pack-specific executable Obsidian plugins.
 
 ## Responsibilities
 
-- Open a local `.vaultpack` selected by the user.
+- Open a local `.okcpack` selected by the user.
 - Verify schema, checksums, and signature before showing install actions.
 - Display publisher, source/author/license attribution, requested changes, generated-content markers, conflicts, and permissions.
 - Preview paths and overwrites against the current Vault.

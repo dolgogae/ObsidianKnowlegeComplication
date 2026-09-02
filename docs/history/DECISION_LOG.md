@@ -3,7 +3,7 @@ title: Decision Log
 status: historical
 owners:
   - release-maintainer
-last_updated: 2026-08-18
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -14,6 +14,13 @@ decision_refs:
   - ADR-0007
   - ADR-0008
   - ADR-0009
+  - ADR-0015
+  - ADR-0016
+  - ADR-0017
+  - ADR-0018
+  - ADR-0019
+  - ADR-0020
+  - ADR-0021
 source_refs:
   - HIST-SHARED-CHAT
   - HIST-CURRENT-PLAN
@@ -342,3 +349,57 @@ Append-only. Normative details live in specifications and accepted ADRs.
   with locked workspace tests, Clippy, rustfmt, workflow YAML parsing, and diff
   checks. No remote is configured in this checkout, so the four hosted jobs are
   implemented but not yet execution evidence.
+
+## 2026-09-02 — OKC V2 application, materialization, and release baseline
+
+- Accepted ADR-0015 through ADR-0020: renamed the writable format family and
+  identity domains to OKC schema 2, made multi-Vault inputs MCP-origin-neutral,
+  introduced sealed typed Markdown/Canvas ambiguity actions and immutable
+  materialization, froze V1 as verify/explain-only, selected one `okc` CLI/TUI
+  executable and `.okc-project` format, and established cargo-dist/updater and
+  native-signing release policy.
+- Reorganized the workspace into `okc-core`, `okc-protocol`, `okc-app`, and the
+  sole `okc` binary. Retained frozen internal V1 packages and a deprecated
+  non-executable `vaultc` Rust facade for one minor version.
+- Implemented V2 manifests, domains, audit layout and deterministic OKCPack;
+  expanded IR with sections, typed blocks, typed Canvas members, raw hashes,
+  media/size data, Vault content identity and plan resource estimates; added
+  project schema 2 storage, private object writes, source rebinding and
+  downstream invalidation.
+- Implemented typed target selections over sealed candidate sets without
+  mutating Draft Plans. Approval, compilation, audit verification, provenance,
+  and independent artifact verification now bind the same Materialization ID.
+  Added direct Markdown and Canvas compile/verify regressions, including
+  suffix/display and unknown-field preservation.
+- Added the twelve-screen Ratatui/Crossterm reducer shell, terminal-control
+  escaping/restoration guard, English/Korean and accessibility modes, project
+  navigation, `doctor`, `validate`, and receipt-aware `update` commands. Real
+  TUI worker effects and PTY workflows remain release work.
+- Discovered a same-change normative conflict: axoupdater 0.10.0's blocking API
+  internally creates a private current-thread Tokio runtime while ADR-0019 had
+  unqualified “no Tokio” wording. Recorded the defect and accepted ADR-0021,
+  limiting the exception to explicit updater calls and forbidding Tokio in the
+  TUI/core/provider worker architecture.
+- Validated `dist-workspace.toml` with the official cargo-dist 0.32.0 binary and
+  its published SHA-256. The plan contains all four native archives, shell and
+  PowerShell installers, checksums, source archive, CycloneDX SBOM, and GitHub
+  attestations.
+- On macOS arm64 with Rust 1.97.1, 323 tests plus all doctests pass; locked
+  all-feature/all-target Clippy is warning-free, rustfmt is clean, and all
+  repository-relative Markdown links resolve. This is local development
+  evidence only. Stable `0.2.0` remains prohibited until the full four-host
+  matrix succeeds twice on one SHA, the 20 GB performance gate passes, and
+  Apple/Windows native signing and notarization evidence exists.
+
+## 2026-09-02 — Public README synchronized with the V2 boundary
+
+- Updated the repository entry point to explain MCP-origin-neutral multi-Vault
+  compilation, deterministic link/deduplication behavior, schema-2 format
+  literals, and the V1 verify/explain-only boundary.
+- Documented the sole `okc` CLI/TUI surface, `.okc-project` layout and plaintext
+  trust boundary, local build/verification commands, receipt-aware updates, and
+  the distinction between unsigned user Packs and native-signed application
+  releases.
+- Made the development status fail-closed: local macOS arm64 evidence is stated
+  separately from the missing TUI, performance, hardening, remote CI, and
+  native-signing gates. No normative behavior or release status changed.

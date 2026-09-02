@@ -3,9 +3,11 @@ title: Documentation Index
 status: normative-v1
 owners:
   - release-maintainer
-last_updated: 2026-08-16
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0002
+  - ADR-0015
+  - ADR-0019
 source_refs:
   - HIST-CURRENT-PLAN
 ---
@@ -15,7 +17,7 @@ source_refs:
 ## Start here
 
 1. [`../AGENTS.md`](../AGENTS.md) — operating contract for every coding agent.
-2. [`../PROJECT_CONTEXT.md`](../PROJECT_CONTEXT.md) — product identity and V1 boundary.
+2. [`../PROJECT_CONTEXT.md`](../PROJECT_CONTEXT.md) — product identity and V2 boundary.
 3. [`CURRENT_STATE.md`](CURRENT_STATE.md) — what exists now.
 4. [`TRACEABILITY.md`](TRACEABILITY.md) — requirement, algorithm, implementation, and test map.
 5. [`GLOSSARY.md`](GLOSSARY.md) — shared vocabulary.
@@ -47,10 +49,11 @@ source_refs:
 - [`specs/security-and-trust-boundaries.md`](specs/security-and-trust-boundaries.md)
 - [`specs/testing-and-quality-gates.md`](specs/testing-and-quality-gates.md)
 - [`specs/roadmap.md`](specs/roadmap.md)
+- [`RELEASE.md`](RELEASE.md)
 
 ## Algorithms
 
-The status matrix and promotion rules are in [`algorithms/README.md`](algorithms/README.md). Stable algorithms define the V1 compiler. Experimental algorithms cannot be enabled by default until their calibration gates are met and an ADR promotes them.
+The status matrix and promotion rules are in [`algorithms/README.md`](algorithms/README.md). Stable algorithms define the V2 compiler. Experimental algorithms cannot be enabled by default until their calibration gates are met and an ADR promotes them.
 
 ## Decisions and history
 

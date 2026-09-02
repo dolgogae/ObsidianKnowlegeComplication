@@ -9,14 +9,14 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use serde::de::{DeserializeOwned, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use vaultc::{Result, VaultcError};
-use vaultc_protocol::{
+use okc_core::{OkcError, Result};
+use okc_protocol::{
     AugmentationRequest, AugmentationResponse, Envelope, MessageType, PROTOCOL_VERSION,
     ProtocolError, ProviderCapabilities, ProviderOperation,
 };
+use serde::de::{DeserializeOwned, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 const HARD_MAX_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 const HARD_MAX_LINE_BYTES: usize = 32 * 1024 * 1024;
@@ -153,10 +153,10 @@ fn parse_unique_json(bytes: &[u8]) -> Result<Value> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let UniqueJsonValue(value) =
         UniqueJsonValue::deserialize(&mut deserializer).map_err(|error| {
-            VaultcError::Provider(format!("provider emitted malformed NDJSON: {error}"))
+            OkcError::Provider(format!("provider emitted malformed NDJSON: {error}"))
         })?;
     deserializer.end().map_err(|error| {
-        VaultcError::Provider(format!("provider emitted malformed NDJSON: {error}"))
+        OkcError::Provider(format!("provider emitted malformed NDJSON: {error}"))
     })?;
     Ok(value)
 }
@@ -166,12 +166,12 @@ where
     T: DeserializeOwned + Serialize,
 {
     let decoded: T = serde_json::from_value(value.clone())
-        .map_err(|error| VaultcError::Provider(format!("{context} schema is invalid: {error}")))?;
+        .map_err(|error| OkcError::Provider(format!("{context} schema is invalid: {error}")))?;
     let encoded = serde_json::to_value(&decoded).map_err(|error| {
-        VaultcError::Internal(format!("failed to re-encode typed provider data: {error}"))
+        OkcError::Internal(format!("failed to re-encode typed provider data: {error}"))
     })?;
     if encoded != *value {
-        return Err(VaultcError::Provider(format!(
+        return Err(OkcError::Provider(format!(
             "{context} contains unknown or non-schema fields"
         )));
     }
@@ -181,43 +181,43 @@ where
 impl CommandProvider {
     pub fn new(config: CommandProviderConfig) -> Result<Self> {
         if config.timeout.is_zero() || config.timeout > HARD_MAX_TIMEOUT {
-            return Err(VaultcError::InvalidConfig(format!(
+            return Err(OkcError::InvalidConfig(format!(
                 "provider timeout must be between 1 ms and {} seconds",
                 HARD_MAX_TIMEOUT.as_secs()
             )));
         }
         if config.max_line_bytes == 0 || config.max_line_bytes > HARD_MAX_LINE_BYTES {
-            return Err(VaultcError::InvalidConfig(format!(
+            return Err(OkcError::InvalidConfig(format!(
                 "provider line limit must be within 1..={HARD_MAX_LINE_BYTES} bytes"
             )));
         }
         if config.max_output_bytes == 0 || config.max_output_bytes > HARD_MAX_OUTPUT_BYTES {
-            return Err(VaultcError::InvalidConfig(format!(
+            return Err(OkcError::InvalidConfig(format!(
                 "provider output limit must be within 1..={HARD_MAX_OUTPUT_BYTES} bytes"
             )));
         }
         if config.max_line_bytes > config.max_output_bytes {
-            return Err(VaultcError::InvalidConfig(
+            return Err(OkcError::InvalidConfig(
                 "provider line limit cannot exceed the total output limit".into(),
             ));
         }
         if config.max_messages < 2 || config.max_messages > HARD_MAX_MESSAGES {
-            return Err(VaultcError::InvalidConfig(format!(
+            return Err(OkcError::InvalidConfig(format!(
                 "provider message limit must be within 2..={HARD_MAX_MESSAGES}"
             )));
         }
         if config.program.as_os_str().is_empty() {
-            return Err(VaultcError::InvalidConfig(
+            return Err(OkcError::InvalidConfig(
                 "provider executable cannot be empty".into(),
             ));
         }
         if let Some(directory) = &config.working_directory {
-            let metadata = std::fs::metadata(directory).map_err(|error| VaultcError::Io {
+            let metadata = std::fs::metadata(directory).map_err(|error| OkcError::Io {
                 path: directory.clone(),
                 source: error,
             })?;
             if !metadata.is_dir() {
-                return Err(VaultcError::InvalidConfig(format!(
+                return Err(OkcError::InvalidConfig(format!(
                     "provider working directory `{}` is not a directory",
                     directory.display()
                 )));
@@ -236,7 +236,7 @@ impl CommandProvider {
     {
         let deadline = Instant::now()
             .checked_add(self.config.timeout)
-            .ok_or_else(|| VaultcError::InvalidConfig("provider timeout overflow".into()))?;
+            .ok_or_else(|| OkcError::InvalidConfig("provider timeout overflow".into()))?;
         let mut session = ChildSession::spawn(&self.config)?;
 
         let capabilities_request = Envelope::new(
@@ -252,12 +252,12 @@ impl CommandProvider {
         )?;
         let capabilities = capabilities_wire.payload.clone();
         if !capabilities.structured_output {
-            return Err(VaultcError::Provider(
+            return Err(OkcError::Provider(
                 "knowledge augmentation requires structured provider output".into(),
             ));
         }
         if !capabilities.supports(ProviderOperation::KnowledgeAugmentation) {
-            return Err(VaultcError::Provider(
+            return Err(OkcError::Provider(
                 "provider did not negotiate knowledge augmentation".into(),
             ));
         }
@@ -265,7 +265,7 @@ impl CommandProvider {
 
         let request_payload = serde_json::to_vec(request)?;
         if request_payload.len() as u64 > capabilities.max_input_bytes {
-            return Err(VaultcError::ResourceLimit(format!(
+            return Err(OkcError::ResourceLimit(format!(
                 "augmentation projection is {} bytes, exceeding provider input limit {}",
                 request_payload.len(),
                 capabilities.max_input_bytes
@@ -284,7 +284,7 @@ impl CommandProvider {
         )?;
         let response_bytes = serde_json::to_vec(&response_wire.payload)?;
         if response_bytes.len() as u64 > capabilities.max_output_bytes {
-            return Err(VaultcError::ResourceLimit(format!(
+            return Err(OkcError::ResourceLimit(format!(
                 "augmentation response is {} bytes, exceeding declared provider output limit {}",
                 response_bytes.len(),
                 capabilities.max_output_bytes
@@ -292,7 +292,7 @@ impl CommandProvider {
         }
         for proposal in &response_wire.payload.proposals {
             if proposal.provider != capabilities.provider {
-                return Err(VaultcError::Provider(
+                return Err(OkcError::Provider(
                     "a proposal identity does not match the negotiated provider identity".into(),
                 ));
             }
@@ -342,7 +342,7 @@ impl ChildSession {
             .args(&config.arguments)
             .env_clear()
             .env(
-                "VAULTC_PROVIDER_PROTOCOL_VERSION",
+                "OKC_PROVIDER_PROTOCOL_VERSION",
                 PROTOCOL_VERSION.to_string(),
             )
             .stdin(Stdio::piped())
@@ -359,7 +359,7 @@ impl ChildSession {
         }
 
         let mut child = command.spawn().map_err(|error| {
-            VaultcError::Provider(format!(
+            OkcError::Provider(format!(
                 "failed to start provider executable `{}`: {error}",
                 config.program.display()
             ))
@@ -367,15 +367,15 @@ impl ChildSession {
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| VaultcError::Provider("provider stdin was not piped".into()))?;
+            .ok_or_else(|| OkcError::Provider("provider stdin was not piped".into()))?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| VaultcError::Provider("provider stdout was not piped".into()))?;
+            .ok_or_else(|| OkcError::Provider("provider stdout was not piped".into()))?;
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| VaultcError::Provider("provider stderr was not piped".into()))?;
+            .ok_or_else(|| OkcError::Provider("provider stderr was not piped".into()))?;
 
         let (writer, writer_receiver) = mpsc::channel();
         let stdin_thread = thread::spawn(move || write_stdin(stdin, &writer_receiver));
@@ -402,7 +402,7 @@ impl ChildSession {
     fn send<T: Serialize>(&mut self, envelope: &Envelope<T>, deadline: Instant) -> Result<()> {
         let mut encoded = serde_json::to_vec(envelope)?;
         if encoded.len() > HARD_MAX_OUTPUT_BYTES {
-            return Err(VaultcError::ResourceLimit(format!(
+            return Err(OkcError::ResourceLimit(format!(
                 "provider request envelope exceeds {HARD_MAX_OUTPUT_BYTES} bytes"
             )));
         }
@@ -410,34 +410,34 @@ impl ChildSession {
         let writer = self
             .writer
             .as_ref()
-            .ok_or_else(|| VaultcError::Provider("provider stdin is closed".into()))?;
+            .ok_or_else(|| OkcError::Provider("provider stdin is closed".into()))?;
         let (completion, result) = mpsc::channel();
         writer
             .send(WriterCommand {
                 bytes: encoded,
                 completion,
             })
-            .map_err(|_| VaultcError::Provider("provider input writer stopped".into()))?;
+            .map_err(|_| OkcError::Provider("provider input writer stopped".into()))?;
         loop {
             if self.cancellation.is_cancelled() {
                 self.terminate();
-                return Err(VaultcError::Provider(
+                return Err(OkcError::Provider(
                     "provider operation was cancelled".into(),
                 ));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 self.terminate();
-                return Err(VaultcError::Provider(
+                return Err(OkcError::Provider(
                     "provider input deadline exceeded".into(),
                 ));
             }
             match result.recv_timeout(remaining.min(PROVIDER_POLL_INTERVAL)) {
                 Ok(Ok(())) => return Ok(()),
-                Ok(Err(reason)) => return Err(VaultcError::Provider(reason)),
+                Ok(Err(reason)) => return Err(OkcError::Provider(reason)),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err(VaultcError::Provider(
+                    return Err(OkcError::Provider(
                         "provider input writer stopped unexpectedly".into(),
                     ));
                 }
@@ -454,14 +454,14 @@ impl ChildSession {
         let line = loop {
             if self.cancellation.is_cancelled() {
                 self.terminate();
-                return Err(VaultcError::Provider(
+                return Err(OkcError::Provider(
                     "provider operation was cancelled".into(),
                 ));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 self.terminate();
-                return Err(VaultcError::Provider("provider deadline exceeded".into()));
+                return Err(OkcError::Provider("provider deadline exceeded".into()));
             }
             match self
                 .receiver
@@ -470,17 +470,17 @@ impl ChildSession {
                 Ok(ReaderEvent::Line(line)) => break line,
                 Ok(ReaderEvent::End) => {
                     let status = self.child.try_wait().ok().flatten();
-                    return Err(VaultcError::Provider(format!(
+                    return Err(OkcError::Provider(format!(
                         "provider closed protocol output{}",
                         status_suffix(status)
                     )));
                 }
                 Ok(ReaderEvent::Failed(reason)) => {
-                    return Err(VaultcError::Provider(reason));
+                    return Err(OkcError::Provider(reason));
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err(VaultcError::Provider(
+                    return Err(OkcError::Provider(
                         "provider protocol reader stopped unexpectedly".into(),
                     ));
                 }
@@ -489,26 +489,26 @@ impl ChildSession {
         let raw = parse_unique_json(&line)?;
         let wire: Envelope<Value> = decode_exact_value(&raw, "provider response envelope")?;
         if wire.protocol_version != PROTOCOL_VERSION {
-            return Err(VaultcError::Provider(format!(
+            return Err(OkcError::Provider(format!(
                 "provider responded with unsupported protocol version {}",
                 wire.protocol_version
             )));
         }
         if wire.request_id != request_id {
-            return Err(VaultcError::Provider(
+            return Err(OkcError::Provider(
                 "provider response request ID does not match the active request".into(),
             ));
         }
         if wire.message_type == MessageType::Error {
             let protocol_error: ProtocolError =
                 decode_exact_value(&wire.payload, "provider error payload")?;
-            return Err(VaultcError::Provider(format!(
+            return Err(OkcError::Provider(format!(
                 "provider returned error code `{}`; untrusted error text was withheld",
                 safe_protocol_label(&protocol_error.code)
             )));
         }
         if wire.message_type != expected_type {
-            return Err(VaultcError::Provider(format!(
+            return Err(OkcError::Provider(format!(
                 "provider returned {:?}; expected {:?}",
                 wire.message_type, expected_type
             )));
@@ -527,7 +527,7 @@ impl ChildSession {
         loop {
             if self.cancellation.is_cancelled() {
                 self.terminate();
-                return Err(VaultcError::Provider(
+                return Err(OkcError::Provider(
                     "provider operation was cancelled".into(),
                 ));
             }
@@ -542,13 +542,13 @@ impl ChildSession {
                     }
                     let workers_stopped = self.join_worker_threads();
                     if !status.success() {
-                        return Err(VaultcError::Provider(format!(
+                        return Err(OkcError::Provider(format!(
                             "provider exited unsuccessfully{}",
                             status_suffix(Some(status))
                         )));
                     }
                     if !workers_stopped && protocol_result.is_ok() {
-                        return Err(VaultcError::Provider(
+                        return Err(OkcError::Provider(
                             "provider worker threads did not stop after process exit".into(),
                         ));
                     }
@@ -563,13 +563,13 @@ impl ChildSession {
                 }
                 Ok(None) => {
                     self.terminate();
-                    return Err(VaultcError::Provider(
+                    return Err(OkcError::Provider(
                         "provider did not exit before its deadline".into(),
                     ));
                 }
                 Err(error) => {
                     self.terminate();
-                    return Err(VaultcError::Provider(format!(
+                    return Err(OkcError::Provider(format!(
                         "failed to query provider status: {error}"
                     )));
                 }
@@ -639,15 +639,15 @@ impl Drop for ChildSession {
 
 fn validate_protocol_tail(receiver: &Receiver<ReaderEvent>) -> Result<()> {
     match receiver.recv_timeout(PROTOCOL_CLOSE_GRACE) {
-        Ok(ReaderEvent::Line(_)) => Err(VaultcError::Provider(
+        Ok(ReaderEvent::Line(_)) => Err(OkcError::Provider(
             "provider emitted an unexpected protocol message after the response".into(),
         )),
-        Ok(ReaderEvent::Failed(reason)) => Err(VaultcError::Provider(reason)),
+        Ok(ReaderEvent::Failed(reason)) => Err(OkcError::Provider(reason)),
         Ok(ReaderEvent::End) => Ok(()),
-        Err(RecvTimeoutError::Timeout) => Err(VaultcError::Provider(
+        Err(RecvTimeoutError::Timeout) => Err(OkcError::Provider(
             "provider protocol output did not close after the response".into(),
         )),
-        Err(RecvTimeoutError::Disconnected) => Err(VaultcError::Provider(
+        Err(RecvTimeoutError::Disconnected) => Err(OkcError::Provider(
             "provider protocol reader stopped without a completion marker".into(),
         )),
     }
@@ -882,7 +882,7 @@ mod tests {
         );
 
         let unknown_envelope = parse_unique_json(
-            br#"{"message_type":"augmentation_response","payload":{"proposals":[]},"protocol_version":1,"request_id":"augmentation-1","unexpected":true}"#,
+            br#"{"message_type":"augmentation_response","payload":{"proposals":[]},"protocol_version":2,"request_id":"augmentation-1","unexpected":true}"#,
         )
         .expect("unique envelope with an unknown field");
         assert!(

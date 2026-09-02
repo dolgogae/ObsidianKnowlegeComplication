@@ -31,9 +31,9 @@ separated exactly as defined by ADR-0010.
 ## Record identity
 
 ```text
-RecordId(r) = H("vaultc:provenance:v1\0"
+RecordId(r) = H("okc:provenance:v2\0"
                 || canonical_json({schema_version: 1, kind: r.kind}))
-EvidenceId(e) = H("vaultc:evidence:v1\0" || raw(SnapshotId)
+EvidenceId(e) = H("okc:evidence:v2\0" || raw(SnapshotId)
                   || raw(DocumentId) || mode
                   || mode_fields || raw(ContentHash))
 ```
@@ -145,9 +145,9 @@ The stored JSONL safety ceilings are 16 MiB per record line, 2,000,000
 records, and 512 MiB aggregate including each final LF. Exceeding any ceiling
 is a resource-limit failure before graph semantics are trusted.
 
-`.vaultc/provenance.jsonl`, `.vaultc/manifest.json`, and
-`.vaultc/checksums.txt` MUST NOT claim stored records for themselves. Their
-records are marked virtual and synthesized from final bytes. A `.vaultpack`
+`.okc/provenance.jsonl`, `.okc/manifest.json`, and
+`.okc/checksums.txt` MUST NOT claim stored records for themselves. Their
+records are marked virtual and synthesized from final bytes. A `.okcpack`
 package record is likewise virtual and exists only for an explicit package
 query; it does not prove publisher authenticity.
 
@@ -177,7 +177,7 @@ Exact canonical-JSON RecordId fixtures MUST be frozen with schema implementation
 
 The stored graph, subject, explanation, and cursor identities use the exact
 ADR-0010 formulas. In particular, the cursor is
-`H("vaultc:provenance-cursor:v1\0" || raw(ExplanationGraphHash) ||
+`H("okc:provenance-cursor:v2\0" || raw(ExplanationGraphHash) ||
 raw(SubjectHash) || u8(record_type_order) || raw(last RecordId))`, rendered as
 `cursor_` plus lowercase hexadecimal. Artifact-path subjects use a `0x00` tag,
 an unsigned 64-bit big-endian UTF-8 byte length, and the path bytes; package

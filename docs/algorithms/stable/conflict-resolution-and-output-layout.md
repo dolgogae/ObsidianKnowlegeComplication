@@ -3,10 +3,11 @@ title: ALG-CNF-001 — Conflict Resolution and Output Layout
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0003
   - ADR-0006
+  - ADR-0017
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -19,7 +20,10 @@ Allocate a unique, portable, explainable output path for every retained item and
 
 ## Inputs and outputs
 
-Input is the ordered canonical IR, duplicate groups, conflicts, and path policy. Output is a total input-to-output map, rewrite operations, typed resolutions, diagnostics, and stable operation IDs.
+Input is the ordered canonical IR, duplicate groups, conflicts, path policy,
+typed decision overlays, and approved proposal commitments. Output is a total
+input-to-output map, an immutable Draft Plan, typed resolutions, diagnostics,
+stable operation IDs, and one derived Materialization Plan.
 
 ## Deterministic ordering and suffix
 
@@ -63,17 +67,54 @@ for assets grouped by SHA-256:
 for every resolved link/canvas reference:
     compute destination-relative target from allocated maps
 validate paths and reparsed rewrites
+seal DraftPlan and its conflict candidate sets
+validate each DecisionOverlay against plan/conflict/hash/candidate set
+action_set_hash = canonical_hash("okc:action-set:v2\\0", sorted overlays)
+proposal_set_hash = canonical_hash("okc:proposal-set:v2\\0", approved commitments)
+effective_operations = compose typed selections over a copy of DraftPlan operations
+sort effective_operations by destination bytes and OperationId
+materialization_id = canonical_hash("okc:materialization:v2\\0",
+    base_plan_id, action_set_hash, proposal_set_hash, effective_operations)
 ```
 
 Generated notes live under `knowledge/_generated/`. Canvas and Base artifacts live under `canvases/` and `views/`. Directory and filename components are sanitized through a versioned portable policy; original paths remain in provenance.
 
+## Typed ambiguity actions and materialization
+
+Only a required Markdown or Canvas `LINK_AMBIGUITY` may change an existing
+output operation. `SelectMarkdownTarget` accepts one `DocumentId` from that
+conflict's sealed candidate set. `SelectCanvasTarget` accepts one exact
+`CanvasReferenceTarget` from its sealed candidate set. `WaivePreserveOriginal`
+retains the already sealed operation. A decision may not supply arbitrary
+replacement text or a path.
+
+Markdown selection rewrites only the target while preserving embed state,
+display text, heading, and block suffix. Canvas selection rewrites only the
+typed file target while retaining every unknown JSON field. Multiple decisions
+against one file are composed in increasing source-span order before one
+effective operation is sealed. The Draft Plan is never mutated.
+
+Every decision binds `PlanId`, `ConflictId`, the conflict content hash,
+curator identity, and policy version. Duplicate decisions, stale identities,
+action/subject mismatches, or targets outside the sealed candidate set fail
+closed. Approval, compilation, provenance, and verification MUST call the same
+materialization derivation and compare the resulting `MaterializationId`.
+
 ## Complexity
 
-For `D` retained documents and `L` links: allocation `O(D log D)` and rewriting `O(L + total bytes)` plus path-map lookups. Collision-prefix extension is bounded by full 256-bit identity.
+For `D` retained documents, `L` links, and `A` accepted actions: allocation is
+`O(D log D)`, base rewriting is `O(L + total bytes)`, and materialization is
+`O(A log A + total rewritten bytes)` plus path-map lookups. Collision-prefix
+extension is bounded by the full 256-bit identity.
 
 ## Edge and security cases
 
-Check case-insensitive collisions even on case-sensitive hosts, NFC/NFD collisions, reserved Windows names, trailing dot/space, extension spoofing, maximum path/component length, empty names, attachment basename injection, link escape, and destination symlinks. No path is emitted from unvalidated provider text.
+Check case-insensitive collisions even on case-sensitive hosts, NFC/NFD
+collisions, reserved Windows names, trailing dot/space, extension spoofing,
+maximum path/component length, empty names, attachment basename injection,
+link escape, destination symlinks, stale decision hashes, duplicate actions,
+and out-of-set targets. No path is emitted from unvalidated provider text or
+curator-supplied replacement text.
 
 ## Worked example
 
@@ -88,7 +129,14 @@ Sources `alpha` and `beta` each contain non-identical `Topic.md`. Suppose `T(alp
 | `Readme.md` and `README.md` | portable collision even on Linux |
 | NFC and NFD spellings of same path | normalization collision and stable suffix |
 | two IDs with same first 8 Base32 chars | extend both/required candidate deterministically until unique |
+| ambiguous `![[Topic#Part|shown]]` with a sealed selection | only target changes; embed, heading, and display suffix survive |
+| Canvas file node with unknown keys and a sealed selection | file target changes; unknown JSON keys survive |
+| selected target absent from candidate set | reject before materialization |
 
 ## Correctness and rollback
 
-Properties: total allocation, no exact or portable collision, input-order invariance, stable suffixes, all resolved links target allocated items, and no output escapes root. On any unresolved required conflict or failed reparse, stop before staging. There is no “last writer wins” fallback.
+Properties: total allocation, no exact or portable collision, input-order
+invariance, stable suffixes, all resolved links target allocated items, an
+unchanged Draft Plan, deterministic materialization, and no output escapes
+root. On any unresolved required conflict, stale overlay, out-of-set target, or
+failed reparse, stop before staging. There is no “last writer wins” fallback.

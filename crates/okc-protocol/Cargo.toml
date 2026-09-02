@@ -1,22 +1,14 @@
 [package]
-name = "vaultc-cli"
+name = "okc-protocol"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-
-[[bin]]
-name = "vaultc"
-path = "src/main.rs"
+repository.workspace = true
 
 [dependencies]
-clap.workspace = true
-ctrlc = "3"
 serde.workspace = true
 serde_json.workspace = true
-tempfile.workspace = true
-vaultc = { path = "../vaultc" }
-vaultc-protocol = { path = "../vaultc-protocol" }
 
 [lints]
 workspace = true

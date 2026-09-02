@@ -15,7 +15,7 @@ source_refs:
 
 ## Objective and non-goals
 
-Combine auditable evidence likelihood ratios into a calibrated support probability for a context- and time-scoped claim. This score does not establish objective truth, replace human adjudication, infer causality, or permit copied sources to masquerade as independent evidence. It is not part of V1 file compilation.
+Combine auditable evidence likelihood ratios into a calibrated support probability for a context- and time-scoped claim. This score does not establish objective truth, replace human adjudication, infer causality, or permit copied sources to masquerade as independent evidence. It is not part of V2 file compilation.
 
 ## Inputs and outputs
 

@@ -24,8 +24,8 @@ Inputs are normalized IR Documents, pinned Unicode/hash configuration, and resou
 ## Exact duplicate formula — ALG-DED-001
 
 ```text
-BodyHash(d) = H("vaultc:body:v1\0" || canonical_encode(N_body(d)))
-MetaHash(d) = H("vaultc:frontmatter:v1\0" || canonical_encode(N_fm(d)))
+BodyHash(d) = H("okc:body:v2\0" || canonical_encode(N_body(d)))
+MetaHash(d) = H("okc:frontmatter:v2\0" || canonical_encode(N_fm(d)))
 ExactKey(d) = (BodyHash(d), MetaHash(d))
 ```
 
@@ -41,7 +41,7 @@ m_j(d) = min { h_j(s) : s in S_5(d) }, j = 1..k
 sim_hat(a,b) = (1/k) sum_{j=1}^k 1[m_j(a) = m_j(b)]
 ```
 
-LSH bands generate candidates; the estimated similarity is checked against `tau_near = 0.85`. Recommended V1 candidate defaults are `k=128`, `b=32` bands, `r=4` rows (`k=b*r`). Exact configuration is recorded in the plan.
+LSH bands generate candidates; the estimated similarity is checked against `tau_near = 0.85`. Recommended V2 candidate defaults are `k=128`, `b=32` bands, `r=4` rows (`k=b*r`). Exact configuration is recorded in the plan.
 
 ## Symbols
 

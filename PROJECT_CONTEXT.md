@@ -1,9 +1,9 @@
 ---
-title: Vault Compiler Framework Project Context
+title: Obsidian Knowledge Compilation Project Context
 status: normative-v1
 owners:
   - architect
-last_updated: 2026-08-18
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -14,18 +14,25 @@ decision_refs:
   - ADR-0012
   - ADR-0013
   - ADR-0014
+  - ADR-0015
+  - ADR-0016
+  - ADR-0017
+  - ADR-0018
+  - ADR-0019
+  - ADR-0020
+  - ADR-0021
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
 ---
 
-# Vault Compiler Framework
+# Obsidian Knowledge Compilation (OKC)
 
-The project compiles multiple Obsidian Vault snapshots into a new, deterministic, auditable Vault. It is a knowledge compiler rather than a folder merger: Markdown, Canvas, attachments, links, and metadata are parsed into a canonical intermediate representation (IR), conflicts and duplication are planned explicitly, optional AI proposes evidence-bound enrichments, and an approved plan is materialized as a Compiled Vault or deterministic `.vaultpack`. Signing belongs to a future versioned profile and is not part of the current V1 implementation.
+The project compiles multiple Obsidian Vault snapshots into a new, deterministic, auditable Vault. It is a knowledge compiler rather than a folder merger: Markdown, Canvas, attachments, links, and metadata are parsed into a canonical intermediate representation (IR), conflicts and duplication are planned explicitly, optional AI proposes evidence-bound enrichments, and an approved materialization is emitted as a Compiled Vault or deterministic `.okcpack`. User Packs are unsigned in V2; application binaries still require native release signing.
 
 ## Product boundary
 
-The first deliverable is an open-source Rust framework and CLI. MCP servers, Obsidian plugins, web services, and a marketplace are adapters or later products around the compiler. The canonical model and compilation policy belong in the framework, not in any LLM, MCP server, UI, or search index.
+The first deliverable is an open-source Rust framework with one `okc` CLI/TUI executable. OKC compiles standard Vault files and never connects to, identifies, or federates the MCP server that produced them. MCP servers, Obsidian plugins, web services, and a marketplace are adapters or later products around the compiler. The canonical model and compilation policy belong in the framework, not in any LLM, MCP server, UI, or search index.
 
 The framework is intended for:
 
@@ -35,19 +42,20 @@ The framework is intended for:
 - future Codex, Claude Code, Cursor, VS Code, and Obsidian integrations;
 - a future on-premise Knowledge Package Registry.
 
-## V1 contract
+## V2 contract
 
 - Rust 2024 Edition on stable Rust; Linux, macOS, and Windows, including macOS arm64.
 - Up to 10 input Vaults, 100,000 notes, and 20 GB on 8 CPU cores, 16 GB RAM, and NVMe storage.
-- Directory, ZIP, and `tar.zst` inputs with stable source IDs.
+- Directory, ZIP, and `tar.zst` inputs with stable source IDs and optional display-only owners; input order and MCP origin do not affect output.
 - Markdown, YAML frontmatter, wikilinks, embeds, block references, attachments, and JSON Canvas are first-class. `.base` files are preserved opaquely with warnings. `.obsidian/**` is excluded.
 - Inputs remain byte-for-byte unchanged. Compilation creates a new output and never stores raw `_sources` inside it.
-- Exact duplicates may be unified deterministically. Near duplicates are candidates for review and are never auto-merged in V1.
+- Exact duplicates may be unified deterministically. Near duplicates are candidates for review and are never auto-merged in V2.
+- Link ambiguities may select only an exact sealed target or explicitly preserve the original through an immutable materialization overlay.
 - AI is optional and provider-neutral. Live source disclosure passes a sealed-policy plus per-call-consent preflight, every exchange is recorded for provider-free offline replay, and providers return proposals rather than filesystem mutations. Only freshly validated and explicitly approved proposals enter a build.
 - Every output is traceable to immutable input content hashes and, for generated content, explicit evidence references.
 - The AI-free path is reproducible across runs and supported platforms.
 
-## Non-goals for V1
+## Non-goals for V2
 
 - Determining objective truth by majority vote.
 - Executing uploaded plugins, scripts, or code.

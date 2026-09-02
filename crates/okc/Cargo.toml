@@ -1,0 +1,27 @@
+[package]
+name = "okc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "okc"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+crossterm.workspace = true
+ctrlc = "3"
+okc-app = { path = "../okc-app" }
+okc-core = { path = "../okc-core" }
+okc-legacy-v1 = { package = "okc-legacy-v1", path = "../okc-legacy-v1" }
+okc-protocol = { path = "../okc-protocol" }
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

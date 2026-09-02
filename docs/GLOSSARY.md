@@ -3,9 +3,11 @@ title: Glossary
 status: normative-v1
 owners:
   - architect
-last_updated: 2026-08-16
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0003
+  - ADR-0015
+  - ADR-0017
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
 ---
@@ -23,16 +25,17 @@ source_refs:
 | Evidence reference | A pointer to a source snapshot, document/block ID, content hash, and optional source span that supports a proposal or claim. |
 | Claim | A proposition represented with context, evidence, time, and confidence; conflicting claims may coexist. |
 | Compilation plan | Deterministic, reviewable set of intended output operations, conflicts, and diagnostics. |
+| Materialization plan | Immutable effective operation set derived from one Draft Plan, sealed conflict actions, and approved proposals. |
 | Proposal | Optional provider-generated suggestion that is untrusted until validated and explicitly approved. |
 | Approval | Immutable user or policy decision permitting a validated proposal to enter a particular plan revision. |
 | Compiled Vault | Newly materialized Obsidian-compatible output containing selected and generated knowledge, not embedded raw source snapshots. |
-| VaultPack | Deterministic `tar.zst` distribution artifact with content, manifest, provenance, checksums, and optional signature. |
+| OKCPack | V2 deterministic `tar.zst` distribution artifact with content, manifest, provenance, and checksums; user-created V2 Packs are unsigned. |
 | MCP adapter | Thin Model Context Protocol surface over framework operations or an external retrieval engine. |
 | Derived index | Replaceable BM25, vector, or graph representation built from canonical data; never the source of truth. |
 | Conflict | Two or more inputs or decisions that cannot safely share the same semantic or output identity without explicit handling. |
 | Exact duplicate | Inputs whose canonical content and normalized frontmatter hashes match. |
-| Near duplicate | Similarity candidate above the configured MinHash threshold; never automatically merged in V1. |
+| Near duplicate | Similarity candidate above the configured MinHash threshold; never automatically merged in V2. |
 | Deterministic core | Compiler path whose result depends only on versioned inputs, configuration, and approved replay transcript. |
 | Knowledge compilation | Parsing, normalizing, reconciling, planning, validating, and materializing knowledge with provenance. |
-| Consolidation | Experimental promotion of repeated or useful episodic items into generalized knowledge; not a V1 file-compiler behavior. |
+| Consolidation | Experimental promotion of repeated or useful episodic items into generalized knowledge; not a V2 file-compiler behavior. |
 | Interference | Retrieval penalty for redundant or competing items that consume context without useful gain. |

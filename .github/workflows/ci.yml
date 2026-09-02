@@ -43,6 +43,9 @@ jobs:
       - name: Lint every target and feature
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
+      - name: Verify repository-relative Markdown links
+        run: cargo test --locked -p okc-core --test documentation_contract
+
   platform-tests:
     name: Test / ${{ matrix.name }}
     strategy:

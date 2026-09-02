@@ -18,6 +18,9 @@ source_refs:
 
 Accepted on 2026-08-16.
 
+The V1 waiver-only action restriction is superseded for V2 by ADR-0017. The
+immutable overlay and stale-binding requirements remain in force.
+
 ## Context
 
 `DraftPlan` is a sealed, content-addressed value. Mutating a conflict's

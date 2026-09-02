@@ -1,10 +1,10 @@
 ---
-title: Compiled Vault and VaultPack Format
+title: Compiled Vault and OKCPack Format
 status: normative-v1
 owners:
   - core-rust-engineer
   - release-maintainer
-last_updated: 2026-08-18
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0003
   - ADR-0004
@@ -14,11 +14,15 @@ decision_refs:
   - ADR-0012
   - ADR-0013
   - ADR-0014
+  - ADR-0015
+  - ADR-0017
+  - ADR-0018
+  - ADR-0020
 source_refs:
   - HIST-COMPILER-PLAN
 ---
 
-# Compiled Vault and VaultPack Format
+# Compiled Vault and OKCPack Format
 
 ## Output layout
 
@@ -31,7 +35,7 @@ CompiledVault/
 │   └── ab/abcdef...-sanitized-name.ext
 ├── canvases/
 ├── views/ ... opaque `.base` files ...
-└── .vaultc/
+└── .okc/
     ├── manifest.json
     ├── plan.json
     ├── provenance.jsonl
@@ -43,10 +47,10 @@ CompiledVault/
 
 The output MUST NOT contain raw source Vault archives or a `_sources` copy. It MAY contain selected source-derived notes and assets, each tied to provenance.
 
-`.vaultc/plan.json` contains the canonical, source-locator-redacted
+`.okc/plan.json` contains the canonical, source-locator-redacted
 `ApprovedPlan` envelope: its immutable `DraftPlan`, proposal
-validations/approvals, conflict-decision overlay, and transcript. It is not a
-bare `DraftPlan`.
+validations/approvals, conflict-decision overlay, transcript, and exact derived
+`MaterializationPlan`. It is not a bare `DraftPlan`.
 
 Absolute or host-specific source locators are build inputs, not semantic
 artifact data. The serialized audit plan MUST replace them with the stable
@@ -67,35 +71,32 @@ Generated Markdown begins with canonical YAML fields in this order:
 
 ```yaml
 ---
-vaultc_generated: true
-vaultc_pack_id: <pack-id-or-null>
-vaultc_proposal_id: <proposal-id>
-vaultc_confidence: <optional-calibrated-number>
-vaultc_sources:
+okc_generated: true
+okc_pack_id: <pack-id-or-null>
+okc_proposal_id: <proposal-id>
+okc_confidence: <optional-calibrated-number>
+okc_sources:
   - <evidence-reference-id>
 ---
 ```
 
-`vaultc_confidence` MUST be omitted if it is not calibrated for the declared task/cohort. License and author attribution required by any source MUST remain reachable from the manifest and provenance, and SHOULD appear in generated content when policy requires visible attribution.
+`okc_confidence` MUST be omitted if it is not calibrated for the declared task/cohort. License and author attribution required by any source MUST remain reachable from the manifest and provenance, and SHOULD appear in generated content when policy requires visible attribution.
 
-The `vaultc_sources` entries are ALG-PRV-001 `EvidenceId` values in the sealed
+The `okc_sources` entries are ALG-PRV-001 `EvidenceId` values in the sealed
 proposal evidence order. The current writer emits those canonical identities
 and binds them to the approval materialization, provenance ledger, and exact
-rendered bytes. `vaultc_pack_id` remains `null` because pack identity/signing
+rendered bytes. `okc_pack_id` remains `null` because pack identity/signing
 belongs to the future distribution profile.
 
 ## Manifest
 
-The manifest includes format/schema/compiler versions, artifact ID, ordered source snapshot IDs, plan ID, configuration hash, approved proposal hashes, output file inventory, media types, sizes, hashes, license/attribution summaries, creation policy, and optional signature metadata. Wall-clock creation time is informational and excluded from reproducibility identity.
-
-The `0.1.0` manifest contains `schema_version`, `compiler_version`,
-`artifact_id`, `plan_id`, `policy_hash`, `projection_hash`, ordered source
-snapshot IDs, approved proposal hashes, required
-`provenance_schema_version`, required `provenance_graph_hash`, and
-`files[{path, byte_len, sha256}]`. Its inventory excludes `manifest.json` and
-`checksums.txt` and includes the stored provenance ledger. It does not yet
-carry media types, license summaries, creation/distribution policy, or
-signature metadata.
+The schema-2 manifest includes `format_family`, schema/compiler/toolchain,
+artifact/plan/materialization IDs, policy and projection hashes, ordered source
+snapshot IDs, approved proposal IDs and hashes, provenance schema/graph hash,
+attribution summary, creation policy, distribution metadata, and
+`files[{path, media_type, byte_len, raw_sha256, content_hash}]`. Wall-clock time
+is excluded from reproducibility identity. Its inventory excludes
+`manifest.json` and `checksums.txt` and includes the stored provenance ledger.
 
 ADR-0010 freezes the non-circular inventory layers. The stored provenance
 graph covers content plus plan/conflict/diagnostic/transcript audit outputs.
@@ -107,7 +108,7 @@ records MUST NOT be serialized back into the provenance file.
 
 Each `checksums.txt` line is `<64 lowercase raw-SHA-256 hex><two ASCII
 spaces><validated normalized UTF-8 logical path>\n`, sorted by logical path.
-Paths are literal rather than escaped because V1 path policy forbids control
+Paths are literal rather than escaped because V2 path policy forbids control
 characters, backslashes, and non-canonical forms. The file covers the manifest
 and every other artifact file except itself and detached signatures as defined
 by format version.
@@ -150,13 +151,13 @@ verify the Compiled Vault, write a complete deterministic stream to a
 synchronized, restrictive sibling temporary file, verify the staged pack, and
 then atomically publish it without replacement. Existing regular files,
 directories, live or dangling symlinks, and publication-race winners are never
-overwritten. Pack destinations must end in `.vaultpack` and be disjoint from
+overwritten. Pack destinations must end in `.okcpack` and be disjoint from
 the Compiled Vault in either containment direction. Caught pre-publication
-failures leave no vaultc-created file at the requested pack destination.
+failures leave no okc-created file at the requested pack destination.
 
 Compiled Vault publication and pack publication are not one combined
 filesystem transaction: a valid Compiled Vault remains if later pack creation
-fails. `VaultCompiler::compile_with_options` performs detectable pack preflight
+fails. `OkcCompiler::compile_with_options` performs detectable pack preflight
 before compilation and then performs these two ordered commits. A runtime pack
 failure is wrapped as `PackPublicationAfterCompile` so callers can identify
 the retained valid directory. A future true all-or-nothing release requires a
@@ -165,35 +166,36 @@ paths.
 
 If Unix parent-directory synchronization fails after the pack has been
 published, the complete pack remains and the SDK returns the distinct
-`PublishedButDurabilityUncertain` error. Windows V1 synchronizes the file and
+`PublishedButDurabilityUncertain` error. Windows V2 synchronizes the file and
 provides process-visible atomic no-replace publication but does not claim a
 safe-Rust parent-directory flush or physical power-loss durability.
 
-## VaultPack
+## OKCPack
 
-A `.vaultpack` is a deterministic `tar.zst` of the Compiled Vault plus
-versioned distribution metadata. Archive members are lexically ordered;
+A `.okcpack` is a deterministic `tar.zst` of the Compiled Vault with versioned
+distribution metadata in the inner manifest. Archive members are lexically ordered;
 owner/group IDs, names, regular-file modes, timestamps, and tar header mode are
 normalized. Identical semantic build inputs MUST yield identical bytes under
-the declared Rust/zstd toolchain contract. The current `0.1.0` writer packages
-the Compiled Vault tree but has no separate distribution-metadata record, so
-that part of the V1 format contract remains unimplemented.
+the declared Rust/zstd toolchain contract. The exact profile name is
+`okc-tar-zstd-deterministic-v2`.
 
-The current format is unsigned. Signatures will be detached or embedded only
-after a future versioned signing profile defines keys, algorithms, identity,
-revocation, and reproducible coverage. Until then, verification establishes
+User-created Packs are unsigned in V2. Until a future Pack-signing profile
+defines keys, algorithms, identity, revocation, and reproducible coverage,
+verification establishes
 internal checksum, sealed-audit, approval, provenance-graph, and independently
 reconstructed output consistency, not publisher authenticity. Once that
 profile exists, signature verification MUST
 occur before installation, and signatures will not replace content-hash
 verification, permission display, license review, or provenance inspection.
+This policy does not apply to application release binaries, which require the
+native signatures and notarization in ADR-0020.
 
-Verification of a `.vaultpack` requires both a valid inner Compiled Vault and
+Verification of a `.okcpack` requires both a valid inner Compiled Vault and
 byte equality with a package recreated by the exact declared deterministic
 tar/zstd writer profile. Equivalent extracted members encoded with different
-compression parameters or archive headers are not canonical VaultPacks and
+compression parameters or archive headers are not canonical OKCPacks and
 are rejected. Only a canonical outer archive may receive the virtual
-`vaultc-tar-zstd-deterministic-v1` package provenance profile.
+`okc-tar-zstd-deterministic-v2` package provenance profile.
 
 ## Verification
 
@@ -215,7 +217,7 @@ reconstruct and hash the original source candidate, and reparses the rewritten
 links. Generated notes are reconstructed byte-for-byte from the approved
 proposal and its required materialization commitment, including canonical body
 and output hashes, destination, operation ID, and ordered EvidenceId values.
-V1 rejects arbitrary evidence spans and accepts only file/body evidence or
+V2 rejects arbitrary evidence spans and accepts only file/body evidence or
 exact block evidence. It independently reconstructs the complete typed stored
 graph, validates RecordIds, edge/cardinality/acyclic/reachability invariants,
 retains declared frontmatter author/license values, synthesizes the

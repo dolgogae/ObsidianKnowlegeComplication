@@ -1,28 +1,35 @@
 [workspace]
 members = [
+    "crates/okc-core",
+    "crates/okc-protocol",
+    "crates/okc-app",
+    "crates/okc",
+    "crates/okc-legacy-v1",
+    "crates/okc-legacy-protocol",
     "crates/vaultc",
-    "crates/vaultc-protocol",
-    "crates/vaultc-cli",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT OR Apache-2.0"
-repository = "https://example.invalid/vaultc"
+repository = "https://github.com/dolgogae/okc"
 
 [workspace.dependencies]
 anyhow = "1"
 atomicwrites = "=0.4.4"
+axoupdater = { version = "=0.10.0", features = ["blocking"] }
 caseless = "=0.2.2"
 clap = { version = "4", features = ["derive"] }
+crossterm = "=0.29.0"
 comrak = { version = "0.48", default-features = false }
 data-encoding = "2"
 hex = "0.4"
 ignore = "0.4"
 rayon = "1"
+ratatui = "=0.30.2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 rustix = { version = "=1.1.4", features = ["fs"] }
 serde = { version = "1", features = ["derive"] }

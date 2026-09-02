@@ -5,10 +5,12 @@ owners:
   - architect
   - algorithms-ai-engineer
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0003
   - ADR-0004
+  - ADR-0015
+  - ADR-0017
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -20,8 +22,8 @@ The word “brain” is an engineering analogy. Immutable snapshots resemble epi
 
 ## Status meanings
 
-- `normative-v1`: required in the deterministic compiler path.
-- `normative-future`: specified direction, not required or enabled in V1.
+- `normative-v1`: first normative revision, required in the deterministic compiler path.
+- `normative-future`: specified direction, not required or enabled in the V2 default path.
 - `experimental`: isolated opt-in research; cannot affect default outputs.
 - `research-only`: exploratory; no product commitment.
 - `historical`: context only.
@@ -47,13 +49,23 @@ The word “brain” is an engineering analogy. Immutable snapshots resemble epi
 
 ## Stable boundary
 
-Stable V1 includes snapshot identity, canonicalization for comparison, source-aware link rewriting, exact deduplication, review-only near-duplicate candidates, deterministic conflict/output rules, provenance, approval, and atomic compilation. It MUST work without an embedding model, LLM, graph server, or MCP server.
+The stable V2 compiler includes snapshot identity, canonicalization for
+comparison, source-local-first and cross-source link rewriting, exact
+deduplication, review-only near-duplicate candidates, deterministic
+conflict/output rules, typed ambiguity actions, immutable materialization,
+provenance, approval, and atomic compilation. It MUST work without an
+embedding model, LLM, graph server, or MCP server.
 
-Bayesian claim confidence is housed with stable knowledge-model mathematics because its semantics must remain auditable, but its status is `normative-future`; V1 has no mandatory Claim layer.
+Bayesian claim confidence is housed with stable knowledge-model mathematics because its semantics must remain auditable, but its status is `normative-future`; V2 has no mandatory Claim layer.
 
 ## Experimental isolation
 
-ACT-R activation, spreading activation, plasticity, consolidation, retrieval fusion, engine routing, and merge scores belong in a future `vaultc-memory` package or evaluation harness. Hopfield retrieval is research-only. Experimental results may annotate reports but MUST NOT change V1 default file selection, conflict resolution, approval, provenance, or safe output operations.
+ACT-R activation, spreading activation, plasticity, consolidation, retrieval
+fusion, engine routing, and merge scores belong in a future `okc-memory`
+package or evaluation harness. Hopfield retrieval is research-only.
+Experimental results may annotate reports but MUST NOT change V2 default file
+selection, conflict resolution, approval, provenance, or safe output
+operations.
 
 ## Promotion gate
 

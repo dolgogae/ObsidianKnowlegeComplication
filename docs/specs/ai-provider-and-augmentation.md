@@ -4,11 +4,12 @@ status: normative-v1
 owners:
   - algorithms-ai-engineer
   - qa-security-engineer
-last_updated: 2026-08-17
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0004
   - ADR-0009
   - ADR-0011
+  - ADR-0017
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -20,12 +21,12 @@ source_refs:
 AI is optional, replaceable, and outside the trusted compiler core. OpenAI,
 Anthropic, Google, local vLLM, command-line models, and future providers connect
 through the same provider-neutral boundaries. No provider is required for
-correct V1 compilation, and no provider can mutate a Vault or approve its own
+correct V2 compilation, and no provider can mutate a Vault or approve its own
 proposal.
 
 ## Rust capability interfaces
 
-The implemented `vaultc::provider` traits are:
+The implemented `okc_core::provider` traits are:
 
 ```rust,ignore
 trait TextGenerator {
@@ -34,7 +35,7 @@ trait TextGenerator {
         &self,
         request: &TextGenerationRequest,
         cancellation: &CancellationToken,
-    ) -> vaultc::Result<TextGenerationResponse>;
+    ) -> okc_core::Result<TextGenerationResponse>;
 }
 
 trait EmbeddingProvider {
@@ -43,7 +44,7 @@ trait EmbeddingProvider {
         &self,
         request: &EmbeddingRequest,
         cancellation: &CancellationToken,
-    ) -> vaultc::Result<EmbeddingResponse>;
+    ) -> okc_core::Result<EmbeddingResponse>;
 }
 
 trait RerankProvider {
@@ -52,7 +53,7 @@ trait RerankProvider {
         &self,
         request: &RerankRequest,
         cancellation: &CancellationToken,
-    ) -> vaultc::Result<RerankResponse>;
+    ) -> okc_core::Result<RerankResponse>;
 }
 
 trait KnowledgeAugmentor {
@@ -61,13 +62,13 @@ trait KnowledgeAugmentor {
         &self,
         request: &AugmentationRequest,
         cancellation: &CancellationToken,
-    ) -> vaultc::Result<Vec<KnowledgeProposal>>;
+    ) -> okc_core::Result<Vec<KnowledgeProposal>>;
 }
 ```
 
 `KnowledgeAugmentor` is re-exported from the crate root; the other traits and
-request/response types are available under `vaultc::provider`. Wire types live
-in the independent `vaultc-protocol` crate.
+request/response types are available under `okc_core::provider`. Wire types live
+in the independent `okc-protocol` crate.
 
 ADR-0011 adds a provider-neutral façade rather than a vendor client:
 
@@ -96,15 +97,15 @@ authorization is then consumed by `record_augmentation_exchange` with the
 response. This gives non-Rust and non-trait transports the same consent,
 validation, and recording boundary without taking ownership of policy.
 
-V1 `ProviderCapabilities` contains provider identity, supported protocol
+V2 `ProviderCapabilities` contains provider identity, supported protocol
 versions and operations, maximum input/output bytes, structured-output,
 streaming and deterministic-control declarations, and a `local` or labeled
 `remote` data boundary. Context-token limits and supported content-class lists
-are not part of schema version 1.
+are not part of schema version 2.
 
 ## Universal subprocess protocol
 
-Non-Rust providers use protocol version 1 NDJSON over standard input/output.
+Non-Rust providers use protocol version 2 NDJSON over standard input/output.
 Each envelope has exactly `protocol_version`, `request_id`, `message_type`, and
 `payload`. Standard output is protocol-only; provider logs go to standard
 error. The CLI exchange is exactly:
@@ -114,7 +115,7 @@ error. The CLI exchange is exactly:
 3. `augmentation-1` / `augmentation_request`;
 4. `augmentation-1` / `augmentation_response`.
 
-The provider must negotiate protocol V1, `knowledge_augmentation`, and
+The provider must negotiate protocol V2, `knowledge_augmentation`, and
 structured output. The CLI verifies declared input/output limits and proposal
 provider identity. It invokes the core pre-disclosure authorization after the
 capability response and before sending `augmentation_request`. Extra protocol
@@ -167,7 +168,7 @@ stronger deadline and process-tree termination behavior.
 
 ## Proposal model
 
-A V1 proposal contains:
+A V2 proposal contains:
 
 - schema version, unique proposal ID, originating plan ID, and projection hash;
 - provider/model/version identity;
@@ -175,7 +176,7 @@ A V1 proposal contains:
 - zero or more snapshot/document/block/span/content-hash evidence references;
 - optional uncertainty in `[0, 1]` and optional rationale.
 
-The two V1 kinds are:
+The two V2 kinds are:
 
 - `create_generated_note`: title, Markdown body, and optional safe `.md` path;
 - `explain_conflict`: existing conflict ID and explanation text.
@@ -183,7 +184,7 @@ The two V1 kinds are:
 Generated notes require at least one evidence reference. A conflict explanation
 is advisory data; it is not a conflict decision and cannot change the sealed
 plan. Proposal-local transcript reference fields and bulk approval commitments
-are not part of schema version 1.
+are not part of schema version 2.
 
 ## Validation and approval
 
@@ -203,17 +204,17 @@ Deterministic proposal validation covers:
 Provider text is DATA. It cannot invoke tools, initiate HTTP, execute commands,
 delete files, change policy, or grant approval. Link-target semantics,
 frontmatter-policy analysis, and instruction-content classification are not
-implemented proposal validators in V1 and must not be advertised as such.
+implemented proposal validators in V2 and must not be advertised as such.
 
 An `ApprovalDecision` binds `plan_id`, `proposal_id`, canonical
 `proposal_content_hash`, approval boolean, approver, and policy version. Any
 bound value change makes it stale. Only approved valid proposals are retained
 in `ApprovedPlan`; rejected decisions are not materialized.
 
-Conflict authorization is a separate ADR-0009 overlay bound to plan and
-conflict content hashes. The only external V1 resolution is
-`waived_by_policy`. A provider explanation never becomes a waiver or typed
-resolution.
+Conflict authorization is a separate ADR-0017 overlay bound to plan and
+conflict content hashes. The curator may preserve the original or select one
+sealed Markdown/Canvas target. A provider cannot choose, waive, or approve a
+conflict action; an explanation remains advisory data.
 
 When an approved proposal creates a note, approval derives a required
 materialization commitment from the sealed plan and exact proposal content.
@@ -227,7 +228,7 @@ The canonical augmentation JSONL contains one header, exactly four canonical
 transcript records, and one proposal-ID-sorted validation record per proposal.
 A transcript record stores
 sequence, request ID, direction, message type, canonical payload hash, and
-payload. There is no timing-metadata field in V1.
+payload. There is no timing-metadata field in V2.
 
 For the stored augmentation request, block text is replaced by
 `"[redacted]"`, while `canonical_payload_hash` commits to the original sent
@@ -241,7 +242,7 @@ set without the exchange fails closed.
 
 Every JSONL line is compact recursively key-sorted JSON followed by LF, and the
 file ends in LF. Blank/CRLF/unterminated/non-canonical lines, unknown or
-duplicate fields, record reordering, and over-limit input are rejected. V1
+duplicate fields, record reordering, and over-limit input are rejected. V2
 hard limits are 64 MiB per line, 1 GiB per file, and the sealed maximum proposal
 count plus five fixed records. The decoder validates typed nested payloads and
 header/provider/plan/projection self-consistency before exposing a recording;
@@ -257,7 +258,7 @@ plan must have permitted the recorded remote capability. Given identical
 snapshots, policy, compiler version, approved proposal contents, conflict
 decisions, and transcript, the deterministic materialization path is reusable
 offline. Canonical record-to-replay JSONL bytes, approval bytes, Compiled Vault,
-and VaultPack outputs MUST be equal in the required replay E2E.
+and OKCPack outputs MUST be equal in the required replay E2E.
 
 ## Failure behavior
 

@@ -18,10 +18,10 @@ source_refs:
 ## Progress marker: 2026-08-16
 
 - Phase 0 is complete.
-- Phases 1 and 2 have an implemented `0.1.0` vertical slice with local macOS
+- Phases 1 and 2 have an implemented `0.2.0` vertical slice with local macOS
   arm64 test evidence, but their full cross-platform, parser, provenance,
   compatibility, safety, and performance exit criteria remain open.
-- Phase 3 has deterministic unsigned VaultPack creation/verification only. The
+- Phase 3 has deterministic unsigned OKCPack creation/verification only. The
   signing profile, MCP adapter, and Obsidian plugin have not started.
 - Phases 4–6 remain documentation/research direction only.
 
@@ -39,11 +39,11 @@ Deliver the Rust workspace, snapshot/identity pipeline, Markdown/Canvas IR, exac
 
 ## Phase 2 — provider protocol and review workflow
 
-Deliver `vaultc-protocol`, universal subprocess provider, proposal schema, evidence validation, approvals, record/replay, and example provider packages. Add a non-AI manual decision workflow first.
+Deliver `okc-protocol`, universal subprocess provider, proposal schema, evidence validation, approvals, record/replay, and example provider packages. Add a non-AI manual decision workflow first.
 
 ## Phase 3 — adapters and packaging
 
-Deliver deterministic `.vaultpack`, signing profile, generic Obsidian review/install plugin, and thin MCP server for coding agents. Maintain one compiler implementation.
+Deliver deterministic `.okcpack`, signing profile, generic Obsidian review/install plugin, and thin MCP server for coding agents. Maintain one compiler implementation.
 
 ## Phase 4 — semantic knowledge and evaluation
 
@@ -51,11 +51,11 @@ Introduce versioned Entity/Claim/Relationship/Topic models, evidence-aware confl
 
 ## Phase 5 — experimental memory and routing
 
-Evaluate ACT-R-inspired activation, topic decay, graph spreading, consolidation, retrieval fusion, engine routing, merge scoring, and research-only Hopfield retrieval in isolated `vaultc-memory`. Do not couple these experiments to safe file materialization.
+Evaluate ACT-R-inspired activation, topic decay, graph spreading, consolidation, retrieval fusion, engine routing, merge scoring, and research-only Hopfield retrieval in isolated `okc-memory`. Do not couple these experiments to safe file materialization.
 
 ## Phase 6 — on-premise Knowledge Package Registry
 
-Potential four-VM baseline: app (Nginx, Next.js, Spring Boot, Keycloak), data (PostgreSQL, OpenSearch, SeaweedFS, NATS), worker (FastAPI, compiler/MCP gateway, scanners), and GPU (vLLM, embedding, reranker), deployed on ordinary Linux VMs with Docker Compose and Ansible. This topology is historical guidance, not a V1 framework dependency.
+Potential four-VM baseline: app (Nginx, Next.js, Spring Boot, Keycloak), data (PostgreSQL, OpenSearch, SeaweedFS, NATS), worker (FastAPI, compiler/MCP gateway, scanners), and GPU (vLLM, embedding, reranker), deployed on ordinary Linux VMs with Docker Compose and Ansible. This topology is historical guidance, not a V2 framework dependency.
 
 Registry work includes immutable source/pack versions, search, benchmarks, compatibility, signing, moderation, consent, takedown, revocation, backup/DR, and later marketplace features. Do not start with Kubernetes; adopt an orchestrator only after measured operational need and an ADR.
 

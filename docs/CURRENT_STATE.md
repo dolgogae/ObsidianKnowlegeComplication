@@ -3,264 +3,162 @@ title: Current State
 status: normative-v1
 owners:
   - release-maintainer
-last_updated: 2026-09-01
+last_updated: 2026-09-02
 decision_refs:
-  - ADR-0001
-  - ADR-0003
-  - ADR-0004
-  - ADR-0009
-  - ADR-0010
-  - ADR-0011
-  - ADR-0012
-  - ADR-0013
-  - ADR-0014
+  - ADR-0015
+  - ADR-0016
+  - ADR-0017
+  - ADR-0018
+  - ADR-0019
+  - ADR-0020
+  - ADR-0021
 source_refs:
   - HIST-CURRENT-PLAN
 ---
 
 # Current State
 
-## Snapshot: 2026-09-01
+## Snapshot: 2026-09-02
 
-The repository now contains a working `0.1.0` Rust framework and CLI. The
-implemented vertical slice covers deterministic inspection through independent
-verification, including the provider-neutral proposal/approval path. It is a
-development implementation, not a cross-platform V1 release.
+The repository contains a locally verified `0.2.0` OKC V2 development build.
+It is not a public stable release: the required remote platform, performance,
+fuzzing, PTY, and native-signing evidence does not yet exist.
 
-Implemented production packages:
+## Implemented product surface
 
-- `vaultc`: safe snapshotting, canonical IDs/IR, Markdown and Canvas parsing,
-  exact pre-NFC UTF-8 source-path retention plus NFC logical paths and pinned
-  full-Unicode case-fold lookup, exact and review-only near deduplication,
-  conflict/path planning, source-aware
-  Markdown rewrites with sealed output commitments and reverse verification,
-  typed Canvas reference resolution and rewriting, immutable approvals,
-  verified sibling-staged compilation with native atomic no-replace directory
-  publication, provider-neutral augmentation request/authorization/recording
-  and offline replay, typed content-addressed provenance with a non-circular
-  audit envelope, deterministic packing with verified atomic no-clobber pack
-  publication, independent verification, and SQLite workspace state;
-- `vaultc-protocol`: versioned provider capabilities, projections, evidence,
-  proposals, and transcript records without a vendor SDK dependency;
-- `vaultc-cli`: `inspect`, `plan`, `augment`, `replay`, `approve`, `compile`,
-  `verify`, and `explain`, including a bounded NDJSON subprocess provider.
+The Rust workspace is organized as follows:
 
-The compiler accepts directories, ZIP, `tar.zst`, and `.tzst` sources. It
-rejects or excludes traversal, duplicate archive members, archive expansion
-bombs, external links, special files, named secret files, executable classes,
-malformed structured content, and unsafe portable paths. Source Vaults remain
-unchanged. A build publishes only a new Compiled Vault and optional
-deterministic `.vaultpack`; source locations are redacted from artifact audit
-data.
+- `okc-core`: V2 snapshot, IR, deterministic deduplication and planning,
+  materialization, compilation, packing, verification, and provenance;
+- `okc-protocol`: schema-2 provider-neutral NDJSON types;
+- `okc-app`: `.okc-project` storage, private permissions, content-addressed
+  objects, SQLite state, writer locking, source rebinding/invalidation,
+  progress/cancellation types, and receipt-aware updating;
+- `okc`: the only executable, containing the Clap CLI and Ratatui/Crossterm
+  TUI reducer/shell;
+- `okc-legacy-v1` and `okc-legacy-protocol`: frozen internal readers and
+  literal goldens for read-only V1 compatibility;
+- `vaultc`: deprecated Rust facade for one minor release, with no executable.
 
-AI is not required. The implemented augmentation types are
-`create_generated_note` and `explain_conflict`. Proposals are bound to a sealed
-plan/projection/evidence set, validated as untrusted data, and materialized only
-after an explicit content-hash-bound approval. Generated-note approvals also
-seal their destination, canonical body/output hashes, ordered EvidenceId list,
-and operation ID. SDK and CLI live calls share an exact pre-disclosure policy
-and consent gate; canonical four-record recordings can be replayed offline
-without invoking a provider. Conflict decisions are immutable approval
-overlays. V1 permits only `waived_by_policy`; it does not mislabel an
-ambiguous link as user-resolved without a typed target/rewrite action.
+V2 writers use `format_family: "okc"`, schema `2`, `okc:*:v2\0` identity
+domains, `.okc/`, `.okcpack`, and pack profile
+`okc-tar-zstd-deterministic-v2`. New V1 artifacts are not written.
 
-## Verification evidence
+The core accepts directories, ZIP, `tar.zst`, and `.tzst`, preserves source
+Vaults, canonical-sorts sources, rejects duplicate source IDs and duplicate
+whole-Vault content identities, and carries optional owner display names
+without an MCP-origin field. Markdown, frontmatter, wikilinks, ordinary links,
+embeds, assets, typed Canvas nodes/edges/references, and opaque Base artifacts
+enter canonical IR. Section/heading paths, ordered typed blocks, source spans,
+media types, byte counts, raw SHA-256 values, and resource estimates are
+sealed.
 
-All commands below passed on macOS arm64 with Rust 1.97.1:
+Exact duplicate notes and attachments collapse with all provenance edges;
+near duplicates remain review-only. Source-local link resolution precedes
+cross-source candidates. Path/case/Unicode conflicts retain deterministic
+suffixing.
 
-| Check | Result |
+Required Markdown and Canvas ambiguities support only three typed actions:
+preserve the original, select one sealed Markdown document, or select one
+sealed Canvas target. Decisions bind plan, conflict, conflict hash, curator,
+and policy. The Draft Plan remains unchanged. The canonical action/proposal
+sets derive one `MaterializationPlan`; compile, verify, provenance, and audit
+validation reconstruct it. Direct Markdown and Canvas selection lifecycles
+verify suffix/display and unknown-JSON preservation.
+
+Compiled manifests bind compiler/toolchain, plan, materialization, policy,
+projection, source snapshots, proposal IDs/hashes, attribution summary,
+creation/distribution policy, media type, byte length, raw SHA-256, content
+hash, and deterministic Pack profile. User-created Packs are unsigned;
+release-binary signing is a separate policy.
+
+The CLI exposes the planned commands, including `tui`, `inspect`, `plan`,
+`augment`, `validate`, `replay`, `approve`, `compile`, `verify`, `explain`,
+`doctor`, and `update`. No-argument non-TTY execution prints help and exits 2.
+V1 dispatch is limited to `verify` and `explain`.
+
+The TUI has all twelve named screens, English/Korean labels, keyboard reducer,
+80×24 fallback, ASCII/high-contrast modes, visible escaping for terminal and
+bidi controls, and a terminal restoration guard. It is presently a reducer
+and navigation shell: core/provider worker effects and full review workflows
+are not implemented.
+
+The project store creates the documented layout, uses private local
+permissions where supported, WAL/foreign keys/`FULL` SQLite state, no-clobber
+object writes, and invalidates downstream state after source changes. Project
+data is intentionally plaintext and shared-location warnings are present.
+
+`axoupdater 0.10.0` is pinned. `okc update` supports stable, latest, or an exact
+canonical SemVer, refuses cargo/manual copies without a matching cargo-dist
+receipt, and requires interactive confirmation unless `--yes` is supplied.
+ADR-0021 records that only this library-owned blocking adapter may create a
+short-lived current-thread runtime; OKC's TUI and worker architecture do not
+use Tokio.
+
+## Local verification evidence
+
+All commands ran on macOS arm64 with Rust 1.97.1:
+
+| Command | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | 173 tests and all doctests passed |
-| `cargo clippy --workspace --all-features --all-targets -- -D warnings` | passed with zero warnings |
+| `cargo test --locked --workspace --all-features --no-fail-fast` | 323 tests plus all doctests passed: 182 V2/application/CLI tests and 141 frozen V1/facade tests |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed |
+| `cargo test --locked -p okc-core --test documentation_contract` | every repository-relative Markdown link resolved |
+| cargo-dist 0.32.0 `dist plan --tag v0.2.0 --output-format=json --allow-dirty` | passed; planned four native archives, two installers, SHA-256, source archive, CycloneDX SBOM, and GitHub attestations |
 
-The 173 tests comprise 27 `vaultc` unit tests, 5 Canvas integration tests, 10
-atomic-directory-publication tests, 1 documentation-integrity test, 4
-generated-provenance tests, 22 normalization/archive tests, 5 pack integration
-tests, 11 atomic-pack-publication tests, 8 pipeline tests, 5 provider/approval
-tests, 14 SDK augmentation/replay tests, 18 security tests, 9 typed-provenance
-tests, 13 CLI unit tests, 3 CLI replay tests, 16 CLI lifecycle tests, and 2
-protocol tests. They cover, among other cases:
-
-- source immutability, deterministic plan/output, absolute-source-location
-  independence, byte-identical VaultPacks on one supported host, and a literal
-  complete-VaultPack SHA-256 golden shared by the platform workflow;
-- exact note and attachment provenance, Markdown link rewrites, portable path
-  collisions, stale sources, and tampered sealed plans;
-- exact Markdown span application and expected output hashes, reverse
-  reconstruction to the sealed source hash, byte-identical copy commitments,
-  missing required rewrite fields, and semantic output/provenance/manifest
-  attacks that are fully resealed without changing the sealed plan;
-- Document, Asset, Canvas, and Base file-node resolution; deterministic
-  destination-relative Canvas rewrites; unknown-field preservation; unchanged
-  byte copies; node-scoped ambiguity waivers; output-root containment; duplicate
-  JSON-key/node rejection; and independently resealed semantic/target-removal
-  tampering;
-- explicit proposal approvals, evidence binding, generated-frontmatter
-  injection resistance, generated body/output commitments, canonical
-  EvidenceId frontmatter/provenance closure, fully resealed generated-output
-  attack rejection, conflict waiver binding, and transcript audit closure;
-- file-level evidence with no span, exact block hash/span evidence, rejection of
-  arbitrary/mismatched spans, and provider-visible snapshot identity binding;
-- typed source/operation/decision/proposal/approval/output/edge records,
-  literal RecordId vectors, declared/absent/opaque attribution, exact dedup and
-  generated closure, stored and virtual audit-envelope reconstruction,
-  bounded pagination/cursors, directory/pack explanation parity, and fully
-  resealed graph attacks;
-- ZIP/tar traversal and links, duplicate ZIP members, decompression ratio,
-  malformed UTF-8/JSON, resource limits, exclusions, output no-clobber, and
-  independently resealed artifact tampering;
-- exact pre-NFC/NFC source-path pairs, semantic-ID versus Plan/Record identity
-  boundaries, spelling-only stale detection, Unicode-normalization and pinned
-  full-case-fold collisions, BOM/CRLF/lone-CR byte spans, multi-span rewrites,
-  raw ZIP central-name/Unicode-extra attacks, strict PAX paths, every-member
-  archive accounting, and complete `tar.zst` stream-ratio enforcement;
-- canonical VaultPack outer-byte verification, rejection of alternate zstd
-  encodings or policy-mismatched levels, and streamed outer expansion-ratio
-  enforcement before materialization;
-- SDK/CLI pack staging, input and staged-pack verification, atomic no-replace
-  publication, existing file/directory/live-or-dangling-symlink preservation,
-  bidirectional containment and portable alias rejection, deterministic
-  concurrent single-winner publication, and injected pre/post-commit faults;
-- SDK/CLI Compiled Vault sibling staging, full-tree synchronization and
-  independent staged verification, native no-replace publication, late
-  file/directory/live-or-dangling-symlink race winners, concurrent distinct
-  build isolation, source/output/pack disjointness, explicit cleanup or marked
-  retention, unsupported-primitive fail-closed behavior, and post-commit
-  durability uncertainty without starting the optional pack;
-- CLI/SDK plan parity and the full plan → approve → compile → pack → verify →
-  explain lifecycle, including stable plan input/decision/internal exit families
-  and fail-closed pre-output-hash plan rejection;
-- provider deadline and SIGINT cancellation while input is blocked, bounded
-  shutdown, process-group reaping, and non-publication of partial augmentation.
-- deterministic SDK projection construction, exact redacted four-record
-  recordings, provider-free byte-identical replay, fresh validation at the
-  approval boundary, remote policy/consent preflight before disclosure,
-  cooperative cancellation, strict nested wire schemas, stale/header/validation
-  attacks, SDK/CLI byte parity, and replay no-clobber publication.
-
-The exact requirement-to-test mapping is in
-[`TRACEABILITY.md`](TRACEABILITY.md).
+The cargo-dist binary used for the last check was the official
+`cargo-dist-aarch64-apple-darwin.tar.xz`; its observed SHA-256
+`aa343b2ff78ec2981f17a65140250c5ad6062c74072163f68c5c2686d94763a7`
+matched the publisher's adjacent checksum file.
 
 ## Quality-gate status
 
 | Gate | State | Evidence or remaining work |
 |---|---|---|
-| QG-001 Functional | implemented on macOS arm64 | current automated suite is green; the complete Markdown/Canvas golden corpus and supported-platform matrix are not complete |
-| QG-002 Determinism | implemented on one platform | same-host bytes and absolute-location independence pass; Linux/Windows/toolchain comparison remains |
-| QG-003 Provenance | implemented and locally verified | typed stored graph, virtual audit envelope, RecordIds, decisions/approvals, frontmatter attribution, pagination, exact reconstruction, and adversarial reseal tests pass on macOS arm64; platform matrix remains |
-| QG-004 Safety | implemented corpus green | current hostile-input, control-file, directory/pack publication race, and fault-seam tests pass; fuzz/property campaigns remain |
-| QG-005 Compatibility | documented | no migration/version compatibility matrix is implemented yet |
-| QG-006 Performance | not verified | the 100,000-note/20 GB/20-minute/2 GB RSS benchmark has not run |
-| QG-007 Documentation | passed for this change | current state, traceability, specs, and append-only decision log are updated; a direct repository test requires every relative Markdown link to resolve |
-| QG-008 Supply chain | partial | dual licenses, `Cargo.lock`, and a read-only CI workflow with a full-commit-pinned checkout action exist; audit policy, SBOM, release provenance, signing, and clean-room release automation remain |
+| QG-001 Functional | partial | 323 local tests pass, including a five-style multi-Vault lifecycle; maximum-scale fixtures, full parser corpus, real TUI workflows, and four-host execution remain |
+| QG-002 Determinism | partial | same-host plan/artifact/Pack and absolute-root invariance pass; cross-platform/toolchain bytes and reverse-order 10-Vault evidence remain |
+| QG-003 Provenance | locally verified | typed graph, audit envelope, decisions/proposals/approvals, attribution, directory/Pack explanation parity, and semantic reseal attacks pass |
+| QG-004 Safety | partial | current traversal/archive/symlink/publication/control/provider tests pass; descriptor-relative source opening, Windows reparse execution, fuzz/property campaigns, and process-crash testing remain |
+| QG-005 Compatibility | partial | frozen V1 artifacts/Packs can be verified and explained; V1 project import/rebind migration workflow and forward-version matrix remain |
+| QG-006 Performance | not passed | the 10-Vault, 100,000-note, 20 GB, ≤20-minute, ≤2 GB RSS benchmark has not run; accepted source members are still buffered |
+| QG-007 Documentation | locally passed | current state, traceability, specs, ADRs, decision log, and relative links are synchronized |
+| QG-008 Supply chain | partial | lockfile, dual licenses, validated cargo-dist plan, SBOM/attestation configuration, and receipt-aware updater exist; remote builds, audit evidence, protected signing, notarization, and publication remain |
 
-## Known implementation gaps
+## Release blockers and known gaps
 
-- Canvas file references now resolve through typed Document, Asset, Canvas, and
-  Base targets and rewritten outputs are independently reconstructed. The
-  complete normative Markdown/Canvas golden corpus—including delimiter
-  escaping, self-reference, and mixed-target vectors—and the supported-platform
-  normalization matrix are not yet complete.
-- Markdown/frontmatter/wikilink/embed/ordinary-link parsing and exact byte-span
-  rewrites are output-hash-bound and independently reversed to their sealed
-  source hash. BOM-at-zero versus content BOM, CRLF/lone CR, Unicode combining
-  marks/full-fold vectors, and multiple grow/shrink replacements are covered;
-  the remaining corpus gap is broader escaped/delimiter syntax.
-- Every accepted source path retains its exact portable UTF-8 spelling before
-  NFC plus its NFC logical path. Semantic source IDs remain logical-path based,
-  while Plan and typed provenance identities bind the original spelling.
-  Directory, raw ZIP central-directory, tar/PAX, collision classification,
-  spelling-only stale-source, and fully resealed provenance attacks are covered
-  locally; other filesystems and supported platforms remain unverified.
-- Provenance now implements the ALG-PRV-001 typed stored graph for content and
-  pre-envelope audit outputs plus deterministic virtual records for provenance,
-  manifest, and checksums. Record identity, graph order, closure, decisions,
-  proposals, approvals, frontmatter author/license declarations, pagination,
-  and directory/pack explanation parity are verified locally. Attribution is
-  deliberately retained as the original declared typed value; SPDX inference,
-  license compatibility, manifest summaries, and a detached authenticity
-  signature remain future profiles. V1 supports only spanless file/body
-  evidence or exact block-hash evidence with an omitted or exact block span;
-  arbitrary byte-span evidence is rejected.
-- Some source and pack members are buffered under hard limits. The V1 20 GB
-  workload and ≤2 GB RSS target cannot be claimed until streaming and the
-  reference benchmark are verified. Augmentation recordings share immutable
-  decoded state across replay clones, but canonical 1 GiB control-file decoding
-  and re-encoding are not yet a fully streaming pipeline.
-- Only macOS arm64 has been exercised in this workspace. A locked host-native
-  GitHub Actions matrix is defined for Linux x86_64, Windows x86_64, macOS
-  x86_64, and macOS arm64, but this checkout has no configured remote and those
-  jobs have not run; filesystem normalization and cross-platform evidence
-  therefore remain unverified.
-- `.vaultpack` is deterministic and checksum/audit-verified but unsigned. The
-  signing profile, key lifecycle, revocation, SBOM, and release artifacts are
-  future work.
-- Schema migrations, resume semantics, workspace encryption policy, broader
-  property/fuzz testing, and a process-crash harness for directory
-  materialization remain. Pack publication has deterministic in-process fault
-  injection at every write-to-parent-sync boundary.
-- SDK and CLI share one verified sibling-staging/no-replace pack publisher.
-  The Compiled Vault and pack remain two ordered publications rather than one
-  combined filesystem transaction. A runtime pack failure returns an explicit
-  `PackPublicationAfterCompile` state and keeps the valid Compiled Vault; a
-  post-commit parent-sync failure keeps the complete pack and reports uncertain
-  durability.
-- Source opening and existing ancestors are rechecked but are not yet fully
-  descriptor-relative/no-follow. Compiled Vault publication now uses a native
-  no-replace directory commit and deterministic late-winner fault barriers on
-  macOS; the Linux and Windows implementations compile behind target-specific
-  backends but still require execution on their supported local filesystems.
-  VaultPack extraction bounds the outer file, declared and streamed expansion
-  ratio, member count, per-file size, and aggregate size.
-- Source archive container size, every effective member (including excluded and
-  non-file entries), declared aggregate sizes, ZIP central-directory names, and
-  the complete `tar.zst` decoder stream are bounded. Nested archives remain
-  opaque rather than recursively extracted, and accepted entries are still
-  buffered before sealing.
-- The artifact manifest is still minimal: media types, license/attribution
-  summaries, creation-policy/distribution metadata, and signature metadata from
-  the target format are not implemented. Canvas and Markdown rewrite bytes are
-  independently reconstructed from sealed operations, and every source-derived
-  output is hash-committed; generated bodies/frontmatter source IDs now have an
-  equivalent approved-proposal derivation check. An unsigned, wholly resealed
-  artifact still has no external authenticity anchor.
-- Directory and pack no-clobber plus symlink/race behavior are verified locally
-  on macOS; Linux filesystem execution, Windows reparse-point execution, and
-  the full supported-filesystem matrix remain. There is no installer or
-  permission/license/signature display surface.
-- Typed conflict actions are not modeled yet. `user_resolved` and
-  `provider_suggested` remain reserved states; V1 only accepts an explicit
-  policy waiver overlay for a required conflict.
-- MCP, Obsidian plugin, registry/marketplace, claims, benchmarking, and every
-  ALG-MEM experimental or research-only algorithm remain unimplemented and do
-  not affect the compiler path.
-- The cross-platform CI workflow is implemented but has not run on a connected
-  remote. There is no branch-protection evidence or published release artifact
-  yet.
+- The TUI does not yet execute real worker effects, persist review choices, or
+  provide PTY-tested end-to-end keyboard workflows. Panic/signal/provider-crash
+  restoration and publication-barrier cancellation lack PTY/system coverage.
+- `OperationControl` and progress types exist, but inspect/plan/compile services
+  do not yet consistently report progress or honor pre-publication cancellation.
+  Platform process-tree termination still needs non-Unix implementation.
+- Accepted directory/archive members are still accumulated in memory under
+  bounds. The required streaming blob store, 20 GB benchmark, resume/cleanup
+  lifecycle, and peak-RSS proof are incomplete.
+- Source checks reject links and restat opened files, but fully
+  descriptor-relative/no-follow traversal, Windows reparse-point defenses, and
+  adversarial TOCTOU execution are incomplete.
+- Project SQLite schema 2 and core workspace schema 2 migrate older local
+  layouts, but resumable long operations and V1 project reconstruction are not
+  complete. Source paths, plans, decisions, and AI records remain plaintext by
+  design.
+- A heterogeneous five-Vault MCP-style fixture now covers wikilinks, ordinary
+  links, differing frontmatter, Canvas, callout/math/list blocks, attachments,
+  exact note/asset deduplication, source-local priority, unique cross-source
+  resolution, excluded MCP caches, and reverse-order output/Pack equality. A
+  reverse-order 10-Vault fixture, supported-platform metadata matrix, broader
+  Markdown/Canvas corpus, and fuzz/property campaigns remain.
+- `dist plan` validates configuration only. No release archives have been built
+  on all four hosts, no two consecutive same-SHA CI matrices have completed,
+  and branch-protection evidence is absent.
+- Apple Developer ID signing/notarization, Windows Authenticode with RFC3161,
+  protected `release` Environment credentials, and native verification jobs do
+  not exist in this checkout.
+- QG-006 and the remaining QG-001/002/004/005/008 evidence are mandatory.
+  [`RELEASE.md`](RELEASE.md) therefore prohibits publishing stable `0.2.0`.
 
-## Next implementation slices
-
-1. Run the committed Linux, Windows, macOS x86_64, and macOS arm64 matrix on a
-   connected repository, retain its native publication/reparse/path/golden
-   evidence, and make the required jobs branch-protection gates.
-2. Define schema migrations and run property/fuzz plus process-crash suites.
-3. Complete QG-008 release automation, SBOM/provenance, and a versioned signing
-   ADR before calling a pack signed or marketplace-ready.
-4. Stream large blobs and control files and run QG-006 at the full reference
-   workload.
-
-No MCP, plugin, marketplace, or neuroscience-inspired runtime behavior should
-enter the default compiler path while these stable V1 gates remain open.
-
-## Status vocabulary
-
-- `documented`: contract exists but no production code is present.
-- `implemented`: production code exists, but one or more required verification
-  gates may remain.
-- `verified`: all verification named for that scoped behavior passes on the
-  stated platform matrix.
-- `blocked`: a named external decision or dependency prevents progress.
-
-Status always applies to the exact scope and evidence stated here; it is not a
-release-quality claim by itself.
+Experimental memory/retrieval algorithms, MCP server integration, an Obsidian
+plugin, registry/marketplace services, near-duplicate auto-merge, unattended AI
+approval, project encryption, silent auto-update, and user-Pack publisher
+signing remain outside the V2 default compiler.

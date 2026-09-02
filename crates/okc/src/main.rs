@@ -1,24 +1,25 @@
 mod command_provider;
+mod tui;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{IsTerminal as _, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::builder::{OsStringValueParser, TypedValueParser as _};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory as _, Parser, Subcommand, ValueEnum};
 use command_provider::{CommandProvider, CommandProviderConfig, ProviderCancellation};
+use okc_core::approval::{ApprovalLog, ApprovedPlan, DecisionOverlay, DecisionOverlayLog};
+use okc_core::augmentation::{DocumentSelection, RecordedAugmentation, RemoteProviderConsent};
+use okc_core::identity::DocumentId;
+use okc_core::plan::{DraftPlan, Inspection};
+use okc_core::provider::ValidatedProposals;
+use okc_core::{CompileOptions, CompilerPolicy, OkcCompiler, OkcError, SourceId, SourceSpec};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use vaultc::approval::{ApprovalLog, ApprovedPlan, ConflictDecision, ConflictDecisionLog};
-use vaultc::augmentation::{DocumentSelection, RecordedAugmentation, RemoteProviderConsent};
-use vaultc::identity::DocumentId;
-use vaultc::plan::{DraftPlan, Inspection};
-use vaultc::provider::ValidatedProposals;
-use vaultc::{CompileOptions, CompilerPolicy, SourceId, SourceSpec, VaultCompiler, VaultcError};
 
 const EXIT_USAGE: u8 = 2;
 const EXIT_INPUT: u8 = 3;
@@ -28,16 +29,20 @@ const EXIT_OUTPUT: u8 = 6;
 const EXIT_VERIFY: u8 = 7;
 const EXIT_INTERNAL: u8 = 70;
 const CONTROL_FILE_LIMIT: u64 = 1024 * 1024 * 1024;
-const DECISIONS_SCHEMA_VERSION: u32 = 1;
+const DECISIONS_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "vaultc",
+    name = "okc",
     version,
     about = "Compile immutable Obsidian Vault snapshots into an auditable Vault"
 )]
 struct Cli {
-    /// TOML compiler policy. Defaults to the V1 policy.
+    /// Long-lived `.okc-project` used by the TUI and application services.
+    #[arg(long, global = true, value_name = "PATH")]
+    project: Option<PathBuf>,
+
+    /// TOML compiler policy. Defaults to the V2 policy.
     #[arg(long, global = true, value_name = "FILE")]
     policy: Option<PathBuf>,
 
@@ -46,16 +51,19 @@ struct Cli {
         long,
         global = true,
         value_name = "FILE",
-        default_value = ".vaultc-work/build.sqlite"
+        default_value = ".okc-work/build.sqlite"
     )]
     workspace: PathBuf,
 
     #[command(subcommand)]
-    command: CommandKind,
+    command: Option<CommandKind>,
 }
 
 #[derive(Debug, Subcommand)]
 enum CommandKind {
+    /// Launch the interactive terminal interface.
+    Tui,
+
     /// Seal and inspect one or more immutable Vault sources.
     Inspect {
         /// Source as ID=PATH. PATH alone derives ID from its final component.
@@ -119,15 +127,23 @@ enum CommandKind {
         out: PathBuf,
     },
 
+    /// Validate and replay an augmentation recording without writing a file.
+    Validate {
+        #[arg(value_name = "PLAN")]
+        plan: PathBuf,
+        #[arg(long, value_name = "FILE")]
+        augmentation: PathBuf,
+    },
+
     /// Bind decisions to a plan and produce an approved immutable plan.
-    /// V1 conflict overlays support explicit `waived_by_policy` only.
+    /// Conflict overlays select one sealed target or preserve the original.
     Approve {
         #[arg(value_name = "PLAN")]
         plan: PathBuf,
         /// Versioned proposal decisions and conflict waivers as JSON.
         #[arg(long, value_name = "FILE")]
         decisions: PathBuf,
-        /// Augmentation JSONL emitted by `vaultc augment`.
+        /// Augmentation JSONL emitted by `okc augment`.
         #[arg(long, value_name = "FILE")]
         proposals: Option<PathBuf>,
         #[arg(long, value_name = "FILE")]
@@ -143,14 +159,14 @@ enum CommandKind {
         #[arg(
             long,
             value_name = "FILE",
-            value_parser = OsStringValueParser::new().try_map(parse_vaultpack_path)
+            value_parser = OsStringValueParser::new().try_map(parse_okcpack_path)
         )]
         pack: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
     },
 
-    /// Independently verify a Compiled Vault directory or `VaultPack`.
+    /// Independently verify a Compiled Vault directory or `OKCPack`.
     Verify {
         #[arg(value_name = "PATH_OR_PACK")]
         artifact: PathBuf,
@@ -184,6 +200,18 @@ enum CommandKind {
         cursor: Option<String>,
         #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
         format: OutputFormat,
+    },
+
+    /// Diagnose the local terminal, project, and update-installation context.
+    Doctor,
+
+    /// Install a receipt-aware update after explicit confirmation.
+    Update {
+        #[arg(default_value = "stable", value_name = "stable|latest|VERSION")]
+        channel_or_version: String,
+        /// Confirm installation non-interactively.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -223,8 +251,8 @@ impl CliFailure {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn from_vaultc(default_code: u8, error: VaultcError) -> Self {
-        let code = if vaultc_error_contains_internal(&error) {
+    fn from_okc(default_code: u8, error: OkcError) -> Self {
+        let code = if okc_error_contains_internal(&error) {
             EXIT_INTERNAL
         } else {
             default_code
@@ -233,42 +261,42 @@ impl CliFailure {
     }
 }
 
-fn vaultc_error_contains_internal(error: &VaultcError) -> bool {
+fn okc_error_contains_internal(error: &OkcError) -> bool {
     match error {
-        VaultcError::Internal(_) => true,
-        VaultcError::PackPublicationAfterCompile { source: nested, .. }
-        | VaultcError::StagingDispositionFailed {
+        OkcError::Internal(_) => true,
+        OkcError::PackPublicationAfterCompile { source: nested, .. }
+        | OkcError::StagingDispositionFailed {
             original: nested, ..
-        } => vaultc_error_contains_internal(nested),
+        } => okc_error_contains_internal(nested),
         _ => false,
     }
 }
 
-fn plan_failure(error: &VaultcError) -> CliFailure {
+fn plan_failure(error: &OkcError) -> CliFailure {
     let code = match error {
-        VaultcError::UnsafePath { .. }
-        | VaultcError::UnsupportedSource(_)
-        | VaultcError::ResourceLimit(_)
-        | VaultcError::MalformedInput { .. }
-        | VaultcError::IdentityMismatch(_)
-        | VaultcError::Io { .. } => EXIT_INPUT,
-        VaultcError::InvalidConfig(_) => EXIT_USAGE,
-        VaultcError::PlanStale(_) => EXIT_DECISION,
+        OkcError::UnsafePath { .. }
+        | OkcError::UnsupportedSource(_)
+        | OkcError::ResourceLimit(_)
+        | OkcError::MalformedInput { .. }
+        | OkcError::IdentityMismatch(_)
+        | OkcError::Io { .. } => EXIT_INPUT,
+        OkcError::InvalidConfig(_) => EXIT_USAGE,
+        OkcError::PlanStale(_) => EXIT_DECISION,
         _ => EXIT_INTERNAL,
     };
     CliFailure::new(code, error.to_string())
 }
 
-fn parse_vaultpack_path(value: OsString) -> Result<PathBuf, &'static str> {
+fn parse_okcpack_path(value: OsString) -> Result<PathBuf, &'static str> {
     let path = PathBuf::from(value);
     if path
         .extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("vaultpack"))
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("okcpack"))
     {
         Ok(path)
     } else {
-        Err("VaultPack destination must use the .vaultpack extension")
+        Err("OKCPack destination must use the .okcpack extension")
     }
 }
 
@@ -278,23 +306,32 @@ struct DecisionDocument {
     schema_version: u32,
     plan_id: String,
     #[serde(default)]
-    decisions: Vec<vaultc::ApprovalDecision>,
+    decisions: Vec<okc_core::ApprovalDecision>,
     #[serde(default)]
-    conflicts: Vec<ConflictDecision>,
+    conflicts: Vec<DecisionOverlay>,
 }
 
 fn main() -> ExitCode {
-    let cli = match Cli::try_parse() {
+    let mut cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => {
             let _ = error.print();
             return ExitCode::from(u8::try_from(error.exit_code()).unwrap_or(EXIT_USAGE));
         }
     };
+    if cli.command.is_none() {
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+            let mut command = Cli::command();
+            let _ = command.print_help();
+            println!();
+            return ExitCode::from(EXIT_USAGE);
+        }
+        cli.command = Some(CommandKind::Tui);
+    }
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("vaultc: {}", sanitize_terminal(&error.message));
+            eprintln!("okc: {}", sanitize_terminal(&error.message));
             ExitCode::from(error.code)
         }
     }
@@ -302,13 +339,19 @@ fn main() -> ExitCode {
 
 #[allow(clippy::too_many_lines)]
 fn run(cli: Cli) -> CliResult<()> {
-    match cli.command {
+    let command = cli
+        .command
+        .ok_or_else(|| CliFailure::new(EXIT_USAGE, "a command is required"))?;
+    match command {
+        CommandKind::Tui => {
+            tui::run(cli.project.as_deref()).map_err(|error| CliFailure::new(EXIT_INTERNAL, error))
+        }
         CommandKind::Inspect { sources, format } => {
             let policy = load_policy(cli.policy.as_deref())?;
             let compiler = build_compiler(policy, Some(&cli.workspace), EXIT_USAGE)?;
             let inspection = compiler
                 .inspect(parse_sources(&sources)?)
-                .map_err(|error| CliFailure::from_vaultc(EXIT_INPUT, error))?;
+                .map_err(|error| CliFailure::from_okc(EXIT_INPUT, error))?;
             print_inspection(&inspection, format)
         }
         CommandKind::Plan {
@@ -320,7 +363,7 @@ fn run(cli: Cli) -> CliResult<()> {
             let compiler = build_compiler(policy, Some(&cli.workspace), EXIT_USAGE)?;
             let inspection = compiler
                 .inspect(parse_sources(&sources)?)
-                .map_err(|error| CliFailure::from_vaultc(EXIT_INPUT, error))?;
+                .map_err(|error| CliFailure::from_okc(EXIT_INPUT, error))?;
             let plan = compiler
                 .plan(&inspection)
                 .map_err(|error| plan_failure(&error))?;
@@ -370,6 +413,9 @@ fn run(cli: Cli) -> CliResult<()> {
             augmentation,
             out,
         } => replay_command(&plan, &augmentation, &out),
+        CommandKind::Validate { plan, augmentation } => {
+            validate_augmentation_command(&plan, &augmentation)
+        }
         CommandKind::Approve {
             plan,
             decisions,
@@ -404,14 +450,38 @@ fn run(cli: Cli) -> CliResult<()> {
             cursor.as_deref(),
             format,
         ),
+        CommandKind::Doctor => doctor_command(cli.project.as_deref()),
+        CommandKind::Update {
+            channel_or_version,
+            yes,
+        } => update_command(&channel_or_version, yes),
     }
 }
 
 fn verify_command(artifact: &Path, format: OutputFormat) -> CliResult<()> {
+    if is_legacy_artifact(artifact) {
+        let compiler = okc_legacy_v1::VaultCompiler::builder()
+            .build()
+            .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
+        let mut report = compiler
+            .verify(artifact)
+            .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
+        report.artifact_path = artifact.to_path_buf();
+        return match format {
+            OutputFormat::Json => print_json(&report),
+            OutputFormat::Human => {
+                println!("valid legacy V1 artifact: {}", report.valid);
+                println!("artifact: {}", report.artifact_id);
+                println!("plan: {}", report.plan_id);
+                println!("checked files: {}", report.checked_files);
+                Ok(())
+            }
+        };
+    }
     let compiler = build_compiler(CompilerPolicy::default(), None, EXIT_VERIFY)?;
     let mut report = compiler
         .verify(artifact)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_VERIFY, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_VERIFY, error))?;
     // Pack verification happens in a private extraction directory. Do not
     // leak that ephemeral implementation path through the public CLI.
     report.artifact_path = artifact.to_path_buf();
@@ -426,9 +496,40 @@ fn explain_command(
     cursor: Option<&str>,
     format: OutputFormat,
 ) -> CliResult<()> {
+    if is_legacy_artifact(artifact) {
+        let compiler = okc_legacy_v1::VaultCompiler::builder()
+            .build()
+            .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
+        let mut query = if package {
+            okc_legacy_v1::provenance::ProvenanceQuery::package()
+        } else {
+            okc_legacy_v1::provenance::ProvenanceQuery::artifact_path(
+                output_path
+                    .ok_or_else(|| CliFailure::new(EXIT_USAGE, "missing output path"))?
+                    .to_owned(),
+            )
+        };
+        query = query
+            .with_limit(limit)
+            .map_err(|error| CliFailure::from_error(EXIT_USAGE, error))?;
+        if let Some(cursor) = cursor {
+            query = query.with_cursor(cursor.to_owned());
+        }
+        let page = compiler
+            .explain_provenance_page(artifact, &query)
+            .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
+        return match format {
+            OutputFormat::Json => print_json(&page),
+            OutputFormat::Human => {
+                println!("legacy V1 provenance records: {}", page.records.len());
+                println!("{}", human_safe_json(&page)?);
+                Ok(())
+            }
+        };
+    }
     let compiler = build_compiler(CompilerPolicy::default(), None, EXIT_VERIFY)?;
     let mut query = if package {
-        vaultc::provenance::ProvenanceQuery::package()
+        okc_core::provenance::ProvenanceQuery::package()
     } else {
         let output_path = output_path.ok_or_else(|| {
             CliFailure::new(
@@ -436,18 +537,25 @@ fn explain_command(
                 "explain requires OUTPUT_PATH or the mutually exclusive --package flag",
             )
         })?;
-        vaultc::provenance::ProvenanceQuery::artifact_path(output_path.to_owned())
+        okc_core::provenance::ProvenanceQuery::artifact_path(output_path.to_owned())
     };
     query = query
         .with_limit(limit)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_USAGE, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_USAGE, error))?;
     if let Some(cursor) = cursor {
         query = query.with_cursor(cursor.to_owned());
     }
     let page = compiler
         .explain_provenance_page(artifact, &query)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_VERIFY, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_VERIFY, error))?;
     print_provenance(&page, format)
+}
+
+fn is_legacy_artifact(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("vaultpack"))
+        || path.join(".vaultc/manifest.json").is_file()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -473,12 +581,12 @@ fn augment_command(
     }
     let plan: DraftPlan = read_json(plan_path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
     plan.validate_integrity()
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
     let compiler = build_compiler(plan.policy.clone(), None, EXIT_PROVIDER)?;
     let selection = document_selection(requested_documents, all_documents)?;
     let request = compiler
         .build_augmentation_request(&plan, &selection)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
     let consent = if allow_remote_provider {
         RemoteProviderConsent::Granted
     } else {
@@ -496,12 +604,12 @@ fn augment_command(
         max_messages: provider_max_messages,
         cancellation: cancellation.clone(),
     })
-    .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+    .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
     let run = provider
         .augment(&request, |capabilities| {
             compiler.authorize_augmentation_exchange(&plan, &request, capabilities, consent)
         })
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
     if cancellation.is_cancelled() {
         return Err(CliFailure::new(
             EXIT_PROVIDER,
@@ -510,10 +618,10 @@ fn augment_command(
     }
     let recording = compiler
         .record_augmentation_exchange(&plan, run.authorization, &run.response)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
     let bytes = recording
         .to_canonical_jsonl()
-        .map_err(|error| CliFailure::from_vaultc(EXIT_INTERNAL, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_INTERNAL, error))?;
     write_atomic(out, &bytes)?;
     let rejected = recording
         .validations()
@@ -559,17 +667,17 @@ fn document_selection(requested: &[String], all_documents: bool) -> CliResult<Do
 fn replay_command(plan_path: &Path, augmentation_path: &Path, out: &Path) -> CliResult<()> {
     let plan: DraftPlan = read_json(plan_path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
     plan.validate_integrity()
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
     let compiler = build_compiler(plan.policy.clone(), None, EXIT_PROVIDER)?;
     let input = read_control_bytes(augmentation_path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
     let recording = RecordedAugmentation::from_canonical_jsonl(&input)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
     let replayed = compiler
         .replay_augmentation(&plan, &recording)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
     let output = replayed
         .to_canonical_jsonl()
-        .map_err(|error| CliFailure::from_vaultc(EXIT_INTERNAL, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_INTERNAL, error))?;
     if output != input {
         return Err(CliFailure::new(
             EXIT_INTERNAL,
@@ -582,6 +690,98 @@ fn replay_command(plan_path: &Path, augmentation_path: &Path, out: &Path) -> Cli
         plan.plan_id,
         out.display()
     );
+    Ok(())
+}
+
+fn validate_augmentation_command(plan_path: &Path, augmentation_path: &Path) -> CliResult<()> {
+    let plan: DraftPlan = read_json(plan_path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
+    plan.validate_integrity()
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
+    let compiler = build_compiler(plan.policy.clone(), None, EXIT_PROVIDER)?;
+    let input = read_control_bytes(augmentation_path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
+    let recording = RecordedAugmentation::from_canonical_jsonl(&input)
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
+    let replayed = compiler
+        .replay_augmentation(&plan, &recording)
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
+    let output = replayed
+        .to_canonical_jsonl()
+        .map_err(|error| CliFailure::from_okc(EXIT_INTERNAL, error))?;
+    if output != input {
+        return Err(CliFailure::new(
+            EXIT_INTERNAL,
+            "canonical augmentation validation changed the recording bytes",
+        ));
+    }
+    println!(
+        "valid augmentation for plan {} ({} proposal validation(s))",
+        plan.plan_id,
+        replayed.validations().len()
+    );
+    Ok(())
+}
+
+fn doctor_command(project: Option<&Path>) -> CliResult<()> {
+    println!("OKC {}", env!("CARGO_PKG_VERSION"));
+    println!("format: okc schema 2");
+    println!("stdin TTY: {}", std::io::stdin().is_terminal());
+    println!("stdout TTY: {}", std::io::stdout().is_terminal());
+    println!(
+        "target: {}-{}",
+        std::env::consts::ARCH,
+        std::env::consts::OS
+    );
+    if let Some(path) = project {
+        let project = okc_app::ProjectStore::open(path)
+            .map_err(|error| CliFailure::from_error(EXIT_INPUT, error))?;
+        println!("project: {}", project.root().display());
+        println!("sources: {}", project.manifest().sources.len());
+        if let Some(warning) = project.privacy_warning() {
+            println!("warning: {warning}");
+        }
+    } else {
+        println!("project: none");
+    }
+    Ok(())
+}
+
+fn update_command(channel_or_version: &str, yes: bool) -> CliResult<()> {
+    let target = okc_app::UpdateTarget::parse(channel_or_version)
+        .map_err(|error| CliFailure::from_error(EXIT_USAGE, error))?;
+    if !yes {
+        if !std::io::stdin().is_terminal() {
+            return Err(CliFailure::new(
+                EXIT_USAGE,
+                "update installation requires interactive confirmation or --yes",
+            ));
+        }
+        eprint!("Install the `{channel_or_version}` OKC update? [y/N] ");
+        std::io::stderr()
+            .flush()
+            .map_err(|error| CliFailure::from_error(EXIT_OUTPUT, error))?;
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|error| CliFailure::from_error(EXIT_OUTPUT, error))?;
+        if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
+            println!("update cancelled");
+            return Ok(());
+        }
+    }
+    match okc_app::install_update(&target)
+        .map_err(|error| CliFailure::from_error(EXIT_OUTPUT, error))?
+    {
+        Some(update) => {
+            println!(
+                "updated OKC from {} to {} ({}) in {}",
+                update.old_version.as_deref().unwrap_or("unknown"),
+                update.new_version,
+                update.release_tag,
+                update.install_prefix
+            );
+        }
+        None => println!("OKC is already at the requested release"),
+    }
     Ok(())
 }
 
@@ -603,7 +803,7 @@ fn approve_command(
 ) -> CliResult<()> {
     let plan: DraftPlan = read_json(plan_path, CONTROL_FILE_LIMIT, EXIT_DECISION)?;
     plan.validate_integrity()
-        .map_err(|error| CliFailure::from_vaultc(EXIT_DECISION, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_DECISION, error))?;
     let decision_document: DecisionDocument =
         read_json(decisions_path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
     if decision_document.schema_version != DECISIONS_SCHEMA_VERSION {
@@ -623,13 +823,13 @@ fn approve_command(
         ));
     }
     let compiler = build_compiler(plan.policy.clone(), None, EXIT_PROVIDER)?;
-    let conflict_log = ConflictDecisionLog {
+    let conflict_log = DecisionOverlayLog {
         decisions: decision_document.conflicts,
     };
     // Validate the conflict overlay independently so conflict-action failures
     // retain exit family 4 instead of being conflated with provider failures.
-    vaultc::approval::validate_conflict_decisions(&plan, &conflict_log.decisions)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_DECISION, error))?;
+    okc_core::approval::validate_conflict_decisions(&plan, &conflict_log.decisions)
+        .map_err(|error| CliFailure::from_okc(EXIT_DECISION, error))?;
     let decided_conflicts: BTreeSet<_> = conflict_log
         .decisions
         .iter()
@@ -656,7 +856,7 @@ fn approve_command(
     };
     let approved = compiler
         .approve_with_conflicts(plan, validated, approval_log, conflict_log)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
     write_canonical_json(out, &approved)?;
     println!(
         "wrote approved plan {} with {} approved proposal(s) to {}",
@@ -678,18 +878,18 @@ fn compile_command(
     approved
         .plan
         .validate_integrity()
-        .map_err(|error| CliFailure::from_vaultc(EXIT_OUTPUT, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_OUTPUT, error))?;
     if let Some(path) = policy_path {
         let supplied = CompilerPolicy::from_file(path)
-            .map_err(|error| CliFailure::from_vaultc(EXIT_USAGE, error))?;
+            .map_err(|error| CliFailure::from_okc(EXIT_USAGE, error))?;
         let supplied_hash = supplied
             .semantic_hash()
-            .map_err(|error| CliFailure::from_vaultc(EXIT_USAGE, error))?;
+            .map_err(|error| CliFailure::from_okc(EXIT_USAGE, error))?;
         let embedded_hash = approved
             .plan
             .policy
             .semantic_hash()
-            .map_err(|error| CliFailure::from_vaultc(EXIT_OUTPUT, error))?;
+            .map_err(|error| CliFailure::from_okc(EXIT_OUTPUT, error))?;
         if supplied_hash != embedded_hash {
             return Err(CliFailure::new(
                 EXIT_OUTPUT,
@@ -704,11 +904,11 @@ fn compile_command(
     };
     let artifact = compiler
         .compile_with_options(&approved, output, &options)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_OUTPUT, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_OUTPUT, error))?;
     match format {
         OutputFormat::Json => print_json(&serde_json::json!({
             "artifact": artifact,
-            "vaultpack": pack.map(Path::to_path_buf),
+            "okcpack": pack.map(Path::to_path_buf),
         })),
         OutputFormat::Human => {
             println!("compiled artifact {}", artifact.artifact_id);
@@ -716,7 +916,7 @@ fn compile_command(
             println!("path: {}", artifact.path.display());
             println!("files: {}", artifact.files.len());
             if let Some(pack) = pack {
-                println!("vaultpack: {}", pack.display());
+                println!("okcpack: {}", pack.display());
             }
             Ok(())
         }
@@ -724,32 +924,32 @@ fn compile_command(
 }
 
 fn revalidate_approved_plan(
-    compiler: &VaultCompiler,
+    compiler: &OkcCompiler,
     approved: &ApprovedPlan,
 ) -> CliResult<ApprovedPlan> {
-    vaultc::approval::validate_approved_plan(approved, compiler.policy())
-        .map_err(|error| CliFailure::from_vaultc(EXIT_OUTPUT, error))?;
+    okc_core::approval::validate_approved_plan(approved, compiler.policy())
+        .map_err(|error| CliFailure::from_okc(EXIT_OUTPUT, error))?;
     Ok(approved.clone())
 }
 
 fn load_augmentation(
     path: &Path,
     plan: &DraftPlan,
-    compiler: &VaultCompiler,
+    compiler: &OkcCompiler,
 ) -> CliResult<ValidatedProposals> {
     let bytes = read_control_bytes(path, CONTROL_FILE_LIMIT, EXIT_PROVIDER)?;
     let recording = RecordedAugmentation::from_canonical_jsonl(&bytes)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))?;
     compiler
         .replay_augmentation(plan, &recording)
         .map(RecordedAugmentation::into_validated)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_PROVIDER, error))
+        .map_err(|error| CliFailure::from_okc(EXIT_PROVIDER, error))
 }
 
 fn validate_approval_decisions(
     plan: &DraftPlan,
     validated: &ValidatedProposals,
-    decisions: &[vaultc::ApprovalDecision],
+    decisions: &[okc_core::ApprovalDecision],
 ) -> CliResult<()> {
     let mut proposal_by_id = BTreeMap::new();
     for validation in &validated.validations {
@@ -833,7 +1033,7 @@ fn parse_sources(values: &[String]) -> CliResult<Vec<SourceSpec>> {
         let path = PathBuf::from(path_text);
         let id_text = explicit_id.map_or_else(|| derive_source_id(&path), ToOwned::to_owned);
         let source_id =
-            SourceId::new(id_text).map_err(|error| CliFailure::from_vaultc(EXIT_USAGE, error))?;
+            SourceId::new(id_text).map_err(|error| CliFailure::from_okc(EXIT_USAGE, error))?;
         if !ids.insert(source_id.clone()) {
             return Err(CliFailure::new(
                 EXIT_USAGE,
@@ -855,7 +1055,7 @@ fn parse_sources(values: &[String]) -> CliResult<Vec<SourceSpec>> {
                 ),
             ));
         }
-        .map_err(|error| CliFailure::from_vaultc(EXIT_INPUT, error))?;
+        .map_err(|error| CliFailure::from_okc(EXIT_INPUT, error))?;
         sources.push(source);
     }
     Ok(sources)
@@ -896,8 +1096,7 @@ fn load_policy(path: Option<&Path>) -> CliResult<CompilerPolicy> {
     path.map_or_else(
         || Ok(CompilerPolicy::default()),
         |path| {
-            CompilerPolicy::from_file(path)
-                .map_err(|error| CliFailure::from_vaultc(EXIT_USAGE, error))
+            CompilerPolicy::from_file(path).map_err(|error| CliFailure::from_okc(EXIT_USAGE, error))
         },
     )
 }
@@ -906,14 +1105,14 @@ fn build_compiler(
     policy: CompilerPolicy,
     workspace: Option<&Path>,
     exit_code: u8,
-) -> CliResult<VaultCompiler> {
-    let mut builder = VaultCompiler::builder().policy(policy);
+) -> CliResult<OkcCompiler> {
+    let mut builder = OkcCompiler::builder().policy(policy);
     if let Some(workspace) = workspace {
         builder = builder.workspace(workspace);
     }
     builder
         .build()
-        .map_err(|error| CliFailure::from_vaultc(exit_code, error))
+        .map_err(|error| CliFailure::from_okc(exit_code, error))
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path, limit: u64, code: u8) -> CliResult<T> {
@@ -978,8 +1177,8 @@ fn control_file_limit_failure(path: &Path, limit: u64, code: u8) -> CliFailure {
 }
 
 fn write_canonical_json<T: Serialize>(path: &Path, value: &T) -> CliResult<()> {
-    let bytes = vaultc::canonical::to_canonical_json_pretty(value)
-        .map_err(|error| CliFailure::from_vaultc(EXIT_INTERNAL, error))?;
+    let bytes = okc_core::canonical::to_canonical_json_pretty(value)
+        .map_err(|error| CliFailure::from_okc(EXIT_INTERNAL, error))?;
     write_atomic(path, &bytes)
 }
 
@@ -1067,7 +1266,10 @@ fn print_plan(plan: &DraftPlan, out: &Path, format: OutputFormat) -> CliResult<(
     }
 }
 
-fn print_verification(report: &vaultc::VerificationReport, format: OutputFormat) -> CliResult<()> {
+fn print_verification(
+    report: &okc_core::VerificationReport,
+    format: OutputFormat,
+) -> CliResult<()> {
     match format {
         OutputFormat::Json => print_json(report),
         OutputFormat::Human => {
@@ -1081,7 +1283,7 @@ fn print_verification(report: &vaultc::VerificationReport, format: OutputFormat)
 }
 
 fn print_provenance(
-    page: &vaultc::provenance::ProvenancePage,
+    page: &okc_core::provenance::ProvenancePage,
     format: OutputFormat,
 ) -> CliResult<()> {
     match format {
@@ -1090,10 +1292,10 @@ fn print_provenance(
             println!("schema version: {}", page.schema_version);
             println!("graph: {}", page.graph_hash);
             match &page.subject {
-                vaultc::provenance::ProvenanceSubject::ArtifactPath { path } => {
+                okc_core::provenance::ProvenanceSubject::ArtifactPath { path } => {
                     println!("output: {path}");
                 }
-                vaultc::provenance::ProvenanceSubject::Package => {
+                okc_core::provenance::ProvenanceSubject::Package => {
                     println!("subject: package");
                 }
             }
@@ -1163,26 +1365,26 @@ mod tests {
     }
 
     #[test]
-    fn compile_pack_argument_requires_vaultpack_extension() {
+    fn compile_pack_argument_requires_okcpack_extension() {
         let cli = Cli::try_parse_from([
-            "vaultc",
+            "okc",
             "compile",
             "approved.json",
             "--output",
             "compiled",
             "--pack",
-            "release.VAULTPACK",
+            "release.OKCPACK",
         ])
-        .expect("ASCII-case-insensitive VaultPack extension");
+        .expect("ASCII-case-insensitive OKCPack extension");
         match cli.command {
-            CommandKind::Compile { pack, .. } => {
-                assert_eq!(pack, Some(PathBuf::from("release.VAULTPACK")));
+            Some(CommandKind::Compile { pack, .. }) => {
+                assert_eq!(pack, Some(PathBuf::from("release.OKCPACK")));
             }
             _ => panic!("expected compile command"),
         }
 
         let error = Cli::try_parse_from([
-            "vaultc",
+            "okc",
             "compile",
             "approved.json",
             "--output",
@@ -1190,7 +1392,7 @@ mod tests {
             "--pack",
             "release.tar.zst",
         ])
-        .expect_err("non-VaultPack extension must be a usage error");
+        .expect_err("non-OKCPack extension must be a usage error");
         assert_eq!(error.exit_code(), i32::from(EXIT_USAGE));
     }
 
@@ -1227,7 +1429,7 @@ mod tests {
     #[test]
     fn replay_arguments_have_no_provider_or_remote_consent_surface() {
         let cli = Cli::try_parse_from([
-            "vaultc",
+            "okc",
             "replay",
             "plan.json",
             "--augmentation",
@@ -1237,11 +1439,11 @@ mod tests {
         ])
         .expect("valid replay arguments");
         match cli.command {
-            CommandKind::Replay {
+            Some(CommandKind::Replay {
                 plan,
                 augmentation,
                 out,
-            } => {
+            }) => {
                 assert_eq!(plan, PathBuf::from("plan.json"));
                 assert_eq!(augmentation, PathBuf::from("augmentation.jsonl"));
                 assert_eq!(out, PathBuf::from("replayed.jsonl"));
@@ -1250,7 +1452,7 @@ mod tests {
         }
 
         let error = Cli::try_parse_from([
-            "vaultc",
+            "okc",
             "replay",
             "plan.json",
             "--augmentation",
@@ -1266,21 +1468,21 @@ mod tests {
     #[test]
     fn explain_arguments_require_one_subject_and_a_bounded_limit() {
         let cli = Cli::try_parse_from([
-            "vaultc",
+            "okc",
             "explain",
-            "artifact.vaultpack",
+            "artifact.okcpack",
             "--package",
             "--limit",
             "4096",
         ])
         .expect("valid package explanation arguments");
         match cli.command {
-            CommandKind::Explain {
+            Some(CommandKind::Explain {
                 output_path,
                 package,
                 limit,
                 ..
-            } => {
+            }) => {
                 assert!(output_path.is_none());
                 assert!(package);
                 assert_eq!(limit, 4096);
@@ -1289,16 +1491,16 @@ mod tests {
         }
 
         for arguments in [
-            vec!["vaultc", "explain", "artifact"],
+            vec!["okc", "explain", "artifact"],
             vec![
-                "vaultc",
+                "okc",
                 "explain",
                 "artifact",
                 "knowledge/Index.md",
                 "--package",
             ],
             vec![
-                "vaultc",
+                "okc",
                 "explain",
                 "artifact",
                 "knowledge/Index.md",
@@ -1306,7 +1508,7 @@ mod tests {
                 "0",
             ],
             vec![
-                "vaultc",
+                "okc",
                 "explain",
                 "artifact",
                 "knowledge/Index.md",
@@ -1322,18 +1524,18 @@ mod tests {
     #[test]
     fn plan_error_families_are_classified_without_hiding_invariants() {
         let input_errors = [
-            VaultcError::UnsafePath {
+            OkcError::UnsafePath {
                 path: "unsafe".into(),
                 reason: "escapes source root".into(),
             },
-            VaultcError::UnsupportedSource(PathBuf::from("unsupported")),
-            VaultcError::ResourceLimit("source is too large".into()),
-            VaultcError::MalformedInput {
+            OkcError::UnsupportedSource(PathBuf::from("unsupported")),
+            OkcError::ResourceLimit("source is too large".into()),
+            OkcError::MalformedInput {
                 path: "bad.zip".into(),
                 reason: "invalid archive".into(),
             },
-            VaultcError::IdentityMismatch("changed.md".into()),
-            VaultcError::Io {
+            OkcError::IdentityMismatch("changed.md".into()),
+            OkcError::Io {
                 path: PathBuf::from("missing.md"),
                 source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
             },
@@ -1343,78 +1545,78 @@ mod tests {
         }
 
         assert_eq!(
-            plan_failure(&VaultcError::InvalidConfig("bad policy".into())).code,
+            plan_failure(&OkcError::InvalidConfig("bad policy".into())).code,
             EXIT_USAGE
         );
         assert_eq!(
-            plan_failure(&VaultcError::PlanStale("decision boundary".into())).code,
+            plan_failure(&OkcError::PlanStale("decision boundary".into())).code,
             EXIT_DECISION
         );
         assert_eq!(
-            plan_failure(&VaultcError::Internal("broken invariant".into())).code,
+            plan_failure(&OkcError::Internal("broken invariant".into())).code,
             EXIT_INTERNAL
         );
         assert_eq!(
-            plan_failure(&VaultcError::Provider("impossible during planning".into())).code,
+            plan_failure(&OkcError::Provider("impossible during planning".into())).code,
             EXIT_INTERNAL
         );
     }
 
     #[test]
     fn compile_error_families_preserve_nested_internal_invariants() {
-        let wrapped_internal = VaultcError::PackPublicationAfterCompile {
+        let wrapped_internal = OkcError::PackPublicationAfterCompile {
             compiled_vault: PathBuf::from("compiled"),
-            pack: PathBuf::from("compiled.vaultpack"),
-            source: Box::new(VaultcError::Internal("broken pack invariant".into())),
+            pack: PathBuf::from("compiled.okcpack"),
+            source: Box::new(OkcError::Internal("broken pack invariant".into())),
         };
         assert_eq!(
-            CliFailure::from_vaultc(EXIT_OUTPUT, wrapped_internal).code,
+            CliFailure::from_okc(EXIT_OUTPUT, wrapped_internal).code,
             EXIT_INTERNAL
         );
 
-        let wrapped_runtime = VaultcError::PackPublicationAfterCompile {
+        let wrapped_runtime = OkcError::PackPublicationAfterCompile {
             compiled_vault: PathBuf::from("compiled"),
-            pack: PathBuf::from("compiled.vaultpack"),
-            source: Box::new(VaultcError::Io {
-                path: PathBuf::from("compiled.vaultpack"),
+            pack: PathBuf::from("compiled.okcpack"),
+            source: Box::new(OkcError::Io {
+                path: PathBuf::from("compiled.okcpack"),
                 source: std::io::Error::other("runtime pack failure"),
             }),
         };
         assert_eq!(
-            CliFailure::from_vaultc(EXIT_OUTPUT, wrapped_runtime).code,
+            CliFailure::from_okc(EXIT_OUTPUT, wrapped_runtime).code,
             EXIT_OUTPUT
         );
 
-        let durability = VaultcError::PublishedButDurabilityUncertain {
-            path: PathBuf::from("compiled.vaultpack"),
+        let durability = OkcError::PublishedButDurabilityUncertain {
+            path: PathBuf::from("compiled.okcpack"),
             source: std::io::Error::other("directory sync failed"),
         };
         assert_eq!(
-            CliFailure::from_vaultc(EXIT_OUTPUT, durability).code,
+            CliFailure::from_okc(EXIT_OUTPUT, durability).code,
             EXIT_OUTPUT
         );
 
-        let staging_internal = VaultcError::StagingDispositionFailed {
-            staging: PathBuf::from(".vaultc-staging-failed"),
-            action: vaultc::StagingDispositionAction::Remove,
-            original: Box::new(VaultcError::Internal(
+        let staging_internal = OkcError::StagingDispositionFailed {
+            staging: PathBuf::from(".okc-staging-failed"),
+            action: okc_core::StagingDispositionAction::Remove,
+            original: Box::new(OkcError::Internal(
                 "broken directory publication invariant".into(),
             )),
             disposition_error: std::io::Error::other("staging cleanup failed"),
         };
         assert_eq!(
-            CliFailure::from_vaultc(EXIT_OUTPUT, staging_internal).code,
+            CliFailure::from_okc(EXIT_OUTPUT, staging_internal).code,
             EXIT_INTERNAL
         );
 
-        let staging_runtime = VaultcError::StagingDispositionFailed {
-            staging: PathBuf::from(".vaultc-staging-failed"),
-            action: vaultc::StagingDispositionAction::MarkIncompleteAndRetain,
-            original: Box::new(VaultcError::OutputExists(PathBuf::from("compiled"))),
+        let staging_runtime = OkcError::StagingDispositionFailed {
+            staging: PathBuf::from(".okc-staging-failed"),
+            action: okc_core::StagingDispositionAction::MarkIncompleteAndRetain,
+            original: Box::new(OkcError::OutputExists(PathBuf::from("compiled"))),
             disposition_error: std::io::Error::other("staging marker failed"),
         };
         assert_eq!(
-            CliFailure::from_vaultc(EXIT_OUTPUT, staging_runtime).code,
+            CliFailure::from_okc(EXIT_OUTPUT, staging_runtime).code,
             EXIT_OUTPUT
         );
     }

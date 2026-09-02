@@ -3,7 +3,7 @@ title: Vault Compilation Pipeline
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-08-18
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0003
   - ADR-0005
@@ -11,6 +11,8 @@ decision_refs:
   - ADR-0009
   - ADR-0012
   - ADR-0014
+  - ADR-0016
+  - ADR-0017
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -28,18 +30,19 @@ source_refs:
 7. **Analyze:** group exact duplicates, generate near-duplicate candidates, detect conflicts.
 8. **Plan:** allocate source-derived output paths, deterministic copy/rewrite operations, diagnostics, conflicts, and required decisions. Approved generated outputs enter only through the later approval overlay.
 9. **Augment optionally:** ask providers for evidence-bound proposals and capture a transcript.
-10. **Validate and approve:** reject invalid/stale proposals; record explicit decisions.
-11. **Compile:** reverify source hashes, stage output, materialize approved operations, write audit metadata and checksums.
-12. **Publish:** atomically commit the complete sibling staging directory with
+10. **Validate and approve:** reject invalid/stale proposals; validate typed actions against sealed candidates.
+11. **Derive materialization:** compose source-span-ordered actions and approved proposals into one immutable effective operation set.
+12. **Compile:** reverify source hashes, stage output, materialize effective operations, write audit metadata and checksums.
+13. **Publish:** atomically commit the complete sibling staging directory with
     a supported no-replace primitive; never substitute a check followed by a
     replacing rename.
-13. **Verify:** independently validate paths, hashes, manifests, provenance closure, and resolvable rewrites.
+14. **Verify:** independently rederive materialization and validate paths, hashes, manifests, provenance closure, and resolvable rewrites.
 
 Stages are resumable only when their input identity and semantic configuration hash match.
 
 ## Source policies
 
-V1 excludes `.obsidian/**`, `.git/**`, known executable file classes, named secret files, and any external symlink traversal. Symlinks are not followed by default. A logical path containing an absolute root, drive prefix, NUL, or `..` traversal is rejected.
+V2 excludes `.obsidian/**`, `.git/**`, known executable file classes, named secret files, and any external symlink traversal. Symlinks are not followed by default. A logical path containing an absolute root, drive prefix, NUL, or `..` traversal is rejected.
 
 Every accepted source entry retains its exact portable UTF-8 spelling before
 NFC and its NFC logical path under ADR-0012. Duplicate logical paths within one
@@ -56,7 +59,7 @@ sealing/parsing and treats nested archives as opaque assets. ZIP and `tar.zst`
 containers are bounded before parser construction, all effective members count
 toward limits, and the complete `tar.zst` decoder stream is expansion-bounded.
 Streaming accepted-file storage and recursive archive policy remain
-implementation gaps, not alternate V1 behavior.
+implementation gaps, not alternate V2 behavior.
 
 ## Analysis policy
 
@@ -64,7 +67,7 @@ implementation gaps, not alternate V1 behavior.
 - Near duplicates follow ALG-DED-002 and only create review candidates.
 - Link, path, title, alias, and frontmatter collisions become typed conflicts.
 - Attachments use the domain-separated
-  `ContentHash = SHA-256("vaultc:content:v1\0" || bytes)` and are deduplicated
+  `ContentHash = SHA-256("okc:content:v2\0" || bytes)` and are deduplicated
   independently of note identity. Artifact checksum entries use raw SHA-256.
 - `.base` files are copied to `views/` and receive an `OPAQUE_BASE_UNVALIDATED` diagnostic.
 
@@ -84,22 +87,22 @@ A normative `DraftPlan` contains:
 
 Provider proposals are not inserted into `DraftPlan`. Validation records,
 approved proposals, the provider transcript, and conflict-decision overlays are
-carried by `ApprovedPlan`. Plans are immutable values: any plan payload change
+carried by `ApprovedPlan`. Typed actions plus approved proposals derive a
+`MaterializationPlan` with action/proposal set hashes, effective operations,
+and `MaterializationId`. Plans are immutable values: any plan payload change
 yields a new `plan_id`. Proposal approvals bind to the plan and proposal
-content hash; conflict decisions bind to the plan, conflict ID, and conflict
-content hash. V1 external conflict decisions are policy waivers only, as
-defined by ADR-0009.
+content hash; conflict decisions bind to the plan, conflict ID, conflict
+content hash, curator, policy, and an ADR-0017 typed action.
 
-The current `0.1.0` `DraftPlan` seals schema/compiler version, plan/projection/
+The current `0.2.0` `DraftPlan` seals schema/compiler version, plan/projection/
 inspection identities, policy, snapshots, canonical workspace, Document,
 Asset, Canvas, and Base output maps, operations, duplicate reports, conflicts,
-and diagnostics. Canvas and Markdown rewrite operations seal their ordered
+resource estimates, and diagnostics. Canvas and Markdown rewrite operations seal their ordered
 rewrites and expected output hashes. Markdown planning reopens each affected
 source once, validates sealed source slices, applies the recipe, reparses the
 result, and discards the bytes after hashing. The artifact verifier reverses
 the recipe against output bytes to reconstruct a source candidate and compare
-its sealed source hash without embedding raw source copies. Resource estimates
-are still missing. Approved generated proposals carry a required tagged
+its sealed source hash without embedding raw source copies. Approved generated proposals carry a required tagged
 materialization that seals destination, canonical emitted-body hash, complete
 rendered-output hash, ordered EvidenceId values, and operation ID. Compilation
 and verification independently rebuild that value; pre-materialization
@@ -135,7 +138,7 @@ is not an ingestion or compilation fallback.
 All traversal, candidate, diagnostic, manifest, JSON line, and archive member
 orderings are explicit. Locale, wall clock, random process seed, hostname,
 absolute input path, filesystem inode, and thread scheduling MUST NOT affect
-semantic identities or emitted Compiled Vault/VaultPack bytes. Runtime source
+semantic identities or emitted Compiled Vault/OKCPack bytes. Runtime source
 locators may appear only in non-semantic build control state and MUST be
 redacted from artifacts. Parallel processing may be used only with
 deterministic collection and reduction.

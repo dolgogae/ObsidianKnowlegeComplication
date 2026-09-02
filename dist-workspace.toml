@@ -1,0 +1,26 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.32.0"
+packages = ["okc"]
+ci = "github"
+installers = ["shell", "powershell"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+checksum = "sha256"
+source-tarball = true
+cargo-cyclonedx = true
+github-attestations = true
+ssldotcom-windows-sign = "prod"
+pr-run-mode = "plan"
+fail-fast = false
+hosting = ["github"]
+
+# The repository owns a stricter release gate than cargo-dist's generated
+# default because two same-SHA CI passes and Apple notarization are mandatory.
+allow-dirty = ["ci"]

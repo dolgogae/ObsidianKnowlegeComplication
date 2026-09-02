@@ -4,14 +4,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use vaultc::{DraftPlan, RecordedAugmentation, VaultCompiler};
+use okc_core::{DraftPlan, OkcCompiler, RecordedAugmentation};
 
 const EXIT_PROVIDER: i32 = 5;
 const EXIT_OUTPUT: i32 = 6;
-const LOCAL_CAPABILITIES_RESPONSE: &str = r#"{"protocol_version":1,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"cli-replay-fixture","model":"strict-wire","version":"1"},"protocol_versions":[1],"operations":["knowledge_augmentation"],"max_input_bytes":10485760,"max_output_bytes":10485760,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"local"}}}"#;
+const LOCAL_CAPABILITIES_RESPONSE: &str = r#"{"protocol_version":2,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"cli-replay-fixture","model":"strict-wire","version":"1"},"protocol_versions":[2],"operations":["knowledge_augmentation"],"max_input_bytes":10485760,"max_output_bytes":10485760,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"local"}}}"#;
 
 fn binary() -> &'static str {
-    env!("CARGO_BIN_EXE_vaultc")
+    env!("CARGO_BIN_EXE_okc")
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -24,7 +24,7 @@ fn run(arguments: &[&str]) -> Output {
     Command::new(binary())
         .args(arguments)
         .output()
-        .unwrap_or_else(|error| panic!("run vaultc {arguments:?}: {error}"))
+        .unwrap_or_else(|error| panic!("run okc {arguments:?}: {error}"))
 }
 
 fn assert_exit(output: &Output, expected: i32) {
@@ -73,10 +73,10 @@ fn cli_replay_matches_sdk_and_never_invokes_a_provider() {
         &provider,
         r#"#!/bin/sh
 IFS= read -r capabilities_request || exit 20
-printf '%s\n' '{"protocol_version":1,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"cli-replay-fixture","model":"local-zero","version":"1"},"protocol_versions":[1],"operations":["knowledge_augmentation"],"max_input_bytes":10485760,"max_output_bytes":10485760,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"local"}}}'
+printf '%s\n' '{"protocol_version":2,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"cli-replay-fixture","model":"local-zero","version":"1"},"protocol_versions":[2],"operations":["knowledge_augmentation"],"max_input_bytes":10485760,"max_output_bytes":10485760,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"local"}}}'
 IFS= read -r augmentation_request || exit 21
 printf '%s\n' invoked > "$1"
-printf '%s\n' '{"protocol_version":1,"request_id":"augmentation-1","message_type":"augmentation_response","payload":{"proposals":[]}}'
+printf '%s\n' '{"protocol_version":2,"request_id":"augmentation-1","message_type":"augmentation_response","payload":{"proposals":[]}}'
 "#,
     )
     .expect("write local provider fixture");
@@ -107,7 +107,7 @@ printf '%s\n' '{"protocol_version":1,"request_id":"augmentation-1","message_type
     let plan: DraftPlan =
         serde_json::from_slice(&fs::read(&plan_path).expect("read plan for SDK replay parity"))
             .expect("decode plan for SDK replay parity");
-    let compiler = VaultCompiler::builder()
+    let compiler = OkcCompiler::builder()
         .policy(plan.policy.clone())
         .build()
         .expect("build SDK replay compiler");
@@ -252,10 +252,10 @@ fn cli_remote_provider_requires_policy_and_runtime_consent() {
         &provider,
         r#"#!/bin/sh
 IFS= read -r capabilities_request || exit 20
-printf '%s\n' '{"protocol_version":1,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"cli-replay-fixture","model":"remote-zero","version":"1"},"protocol_versions":[1],"operations":["knowledge_augmentation"],"max_input_bytes":10485760,"max_output_bytes":10485760,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"remote","endpoint_label":"fixture-remote"}}}'
+printf '%s\n' '{"protocol_version":2,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"cli-replay-fixture","model":"remote-zero","version":"1"},"protocol_versions":[2],"operations":["knowledge_augmentation"],"max_input_bytes":10485760,"max_output_bytes":10485760,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"remote","endpoint_label":"fixture-remote"}}}'
 IFS= read -r augmentation_request || exit 21
 printf '%s\n' disclosed > "$1"
-printf '%s\n' '{"protocol_version":1,"request_id":"augmentation-1","message_type":"augmentation_response","payload":{"proposals":[]}}'
+printf '%s\n' '{"protocol_version":2,"request_id":"augmentation-1","message_type":"augmentation_response","payload":{"proposals":[]}}'
 "#,
     )
     .expect("write remote provider fixture");
@@ -367,11 +367,11 @@ fn cli_provider_rejects_nested_unknown_and_duplicate_json_fields() {
     for (case, response) in [
         (
             "unknown",
-            r#"{"protocol_version":1,"request_id":"augmentation-1","message_type":"augmentation_response","payload":{"proposals":[],"unexpected":true}}"#,
+            r#"{"protocol_version":2,"request_id":"augmentation-1","message_type":"augmentation_response","payload":{"proposals":[],"unexpected":true}}"#,
         ),
         (
             "duplicate",
-            r#"{"protocol_version":1,"request_id":"augmentation-1","message_type":"augmentation_response","payload":{"proposals":[],"proposals":[]}}"#,
+            r#"{"protocol_version":2,"request_id":"augmentation-1","message_type":"augmentation_response","payload":{"proposals":[],"proposals":[]}}"#,
         ),
     ] {
         let provider = temporary.path().join(format!("{case}-provider.sh"));

@@ -3,7 +3,7 @@ title: Open Questions
 status: normative-future
 owners:
   - architect
-last_updated: 2026-08-18
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0002
   - ADR-0004
@@ -12,6 +12,10 @@ decision_refs:
   - ADR-0011
   - ADR-0013
   - ADR-0014
+  - ADR-0017
+  - ADR-0019
+  - ADR-0020
+  - ADR-0021
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -19,12 +23,21 @@ source_refs:
 
 # Open Questions
 
+## Resolved documentation conflict — updater runtime boundary (2026-09-02)
+
+ADR-0019 originally said “Tokio is not introduced,” while ADR-0020 required
+the blocking API of `axoupdater 0.10.0`, which internally creates a private
+current-thread Tokio runtime. ADR-0021 resolves the conflict narrowly: no
+Tokio application/TUI/worker architecture is permitted, but the updater's
+library-owned runtime may exist only for an explicit receipt-aware update
+operation. A literal dependency-graph exclusion is no longer claimed.
+
 These questions are not permission to improvise defaults. Resolve a
 behavior-changing answer through an ADR and specification update. Current
 implementation gaps are also summarized in
 [`../CURRENT_STATE.md`](../CURRENT_STATE.md).
 
-## Stable V1 implementation
+## Stable V2 implementation
 
 - Freeze the complete Comrak/Unicode/normalization compatibility contract and
   golden vectors, including Unix raw filenames, invalid UTF-8, NFC/NFD, and
@@ -34,10 +47,10 @@ implementation gaps are also summarized in
   and supported-filesystem vectors.
 - Freeze full MinHash seed/candidate vectors and short-document behavior beyond
   the implemented threshold arithmetic test.
-- Define typed conflict actions for selected link targets, path mappings, and
-  other real `user_resolved` operations. Until then, ADR-0009 permits only an
-  explicit policy waiver overlay.
-- Move typed-provenance explanation indexing from the bounded in-memory V1
+- Decide whether a future schema may add typed actions beyond V2's sealed
+  Markdown/Canvas link-target selection. Path mappings and semantic merges are
+  intentionally not V2 curator actions.
+- Move typed-provenance explanation indexing from the bounded in-memory V2
   implementation to a bounded on-disk/streaming representation before the
   large-Vault performance gate can pass.
 - Decide which trust anchor authenticates a wholly resealed but internally
@@ -47,15 +60,16 @@ implementation gaps are also summarized in
   ancestors against replacement races. ADR-0014 specifies final-leaf atomic
   no-replace directory publication; ancestor handle pinning remains separate.
 - Define whether nested archives remain opaque permanently or gain a separately
-  bounded recursive-inspection profile. Current source and VaultPack container,
+  bounded recursive-inspection profile. Current source and OKCPack container,
   every-member, aggregate, and expansion-ratio accounting is complete for the
-  non-recursive V1 boundary.
-- Define SQLite migrations, reload/resume/cleanup, batching, and workspace
-  encryption policy; the current schema is reset-and-write-only version 1.
+  non-recursive V2 boundary.
+- Complete crash-resume checkpoints and orphan cleanup above the implemented
+  explicit SQLite schema-2 migration. Project encryption is explicitly out of
+  scope; plaintext warnings and private permissions remain mandatory.
 - Define the deterministic tar/zstd compatibility contract across compressor,
   library, architecture, and operating-system versions.
-- Define schema migration/version compatibility for IR, plan, protocol,
-  manifest, decisions, transcript, and provenance records.
+- Define compatibility beyond the frozen V1 read-only verify/explain reader
+  and source-relink V1-to-V2 reconstruction workflow.
 - Define the signature profile and key lifecycle before marketplace
   distribution.
 
@@ -95,9 +109,8 @@ implementation gaps are also summarized in
   Compose becomes insufficient.
 - Define OSS MCP compatibility, licensing, version pinning, and fallback
   maintenance.
-- Replace the placeholder repository URL and add CI, vulnerability/license
-  policy, SBOM, build provenance, release archives/checksums, and clean-room
-  reproducibility before the first public release.
+- Finish protected native signing/notarization automation, vulnerability and
+  license policy, and clean-room evidence before the first public release.
 
 ## Closed on 2026-08-16
 
@@ -105,39 +118,40 @@ The following questions from the documentation baseline are now answered for
 schema/API version 1. Reopening one requires an ADR or versioned compatibility
 change.
 
-- Public crates are `vaultc`, `vaultc-protocol`, and `vaultc-cli`; the CLI
-  commands are `inspect`, `plan`, `augment`, `replay`, `approve`, `compile`,
-  `verify`, and `explain`.
+- The historical V1 public crates were `vaultc`, `vaultc-protocol`, and
+  `vaultc-cli`; ADR-0019 and ADR-0018 supersede that package/executable layout
+  for V2 while retaining read-only compatibility.
 - Exit codes are frozen as `0`, `2`, `3`, `4`, `5`, `6`, `7`, and `70` with
   the families specified in
   [`../specs/public-sdk-and-cli.md`](../specs/public-sdk-and-cli.md).
-- V1 proposal kinds are `create_generated_note` and `explain_conflict`.
+- V2 proposal kinds are `create_generated_note` and `explain_conflict`.
 - The default near-duplicate configuration is 128 MinHash components in 32×4
   bands, threshold `0.85`, and at most 100 candidates per document; the full
   golden-vector question above remains open.
-- Default safety limits are 10 sources, 250,000 files, 40 GiB total input, 2
+- Historical V1 default safety limits were 10 sources, 250,000 files, 40 GiB total input, 2
   GiB per file, 16 MiB structured text, 100× archive expansion, 1,024-byte
   logical paths, and 240-byte components.
 - SQLite uses WAL, foreign keys, `FULL` synchronous mode, schema
-  `user_version = 1`, deterministic transaction order, and Unix mode `0600`.
+  `user_version = 2`, deterministic transaction order, and Unix mode `0600`.
   Migration/resume/encryption remain open.
-- Conflict approvals are immutable plan/content-hash-bound overlays and V1
-  accepts only `waived_by_policy` (ADR-0009).
-- V1 evidence is either file/body-level with no block/span, or block-level with
+- Conflict approvals are immutable plan/content-hash-bound overlays. V2 adds
+  sealed Markdown/Canvas target actions through ADR-0017 without changing V1
+  waiver interpretation.
+- V2 evidence is either file/body-level with no block/span, or block-level with
   the exact block content hash and an omitted or exact block span. Arbitrary
   byte spans are rejected. `DocumentProjection.snapshot_id` makes that evidence
   constructible by a stateless provider and is revalidated during approval.
 - A documentation defect found during REQ-PAR-002 work named
   `BaseArtifactId` in the canonical IR but omitted its stable formula.
   ALG-SNP-001 now defines Document, Canvas, and Base file-level identities with
-  separate domains over the sealed `SnapshotId` and `SourceFileId`; the Base
+  separate domains over the sealed `SnapshotId` and `SourceFileId`; the V1 Base
   formula is `H("vaultc:base:v1\0" || lp(raw(SnapshotId)) ||
   lp(raw(SourceFileId)))`.
 - Canvas file references resolve through sealed source-local indexes to typed
   Document, Asset, Canvas, or Base targets. Zero candidates preserve a
   root-contained raw path with a diagnostic; multiple candidates create a
-  node-scoped required conflict and V1 can publish it only through an explicit
-  policy waiver. Rewritten Canvas seals an expected output hash and is
+  node-scoped required conflict and V2 requires either one exact sealed target
+  selection or an explicit preserve-original waiver. Rewritten Canvas seals an expected output hash and is
   independently reconstructed; unchanged Canvas remains byte-identical.
 - A same-precedence documentation ambiguity said `Document` and
   `BaseArtifact` contained source bytes, while the architecture contract and
@@ -162,7 +176,7 @@ change.
   hashes, proposal-order EvidenceId values, and operation ID. Compile and
   verify reconstruct the exact note; older development approvals without this
   field fail closed.
-- The current `.vaultpack` is deterministic but unsigned. The lower-precedence
+- The V1 `.vaultpack` is deterministic but unsigned. The lower-precedence
   project-context phrase that called it signed conflicted with the output
   specification; it was corrected in favor of the normative future signing
   profile.
@@ -170,16 +184,17 @@ change.
   record order, dependent-to-prerequisite edge matrix, author/license
   declaration retention, and bounded cursor-bound explanation. Content plus
   plan/conflict/diagnostic/transcript outputs live in the stored graph.
-  Provenance/manifest/checksums and an explicitly queried VaultPack package
+  Provenance/manifest/checksums and an explicitly queried OKCPack package
   subject are deterministic virtual records constructed after final bytes
   exist, eliminating self-hash fixed points. Legacy flat development ledgers
   fail closed.
-- ADR-0011 assigns projection construction, provider exchange recording,
+- ADR-0011 assigned V1 projection construction, provider exchange recording,
   canonical augmentation JSONL, redacted-request hydration, and offline replay
   to `vaultc::augmentation`. Live remote disclosure requires sealed policy and
   per-call consent; offline replay never calls a provider and needs no new
   consent. Non-empty validations require the exact four-record transcript, and
-  canonical schema-1 recordings replay byte-for-byte.
+  canonical schema-1 recordings replay byte-for-byte. V2 retains the contract
+  under schema 2 and `okc_core::augmentation`.
 - ADR-0013 connects `CompileOptions.create_pack`, assigns verified atomic
   no-replace Pack publication to one SDK/CLI implementation, and distinguishes
   pre-commit absence from a complete post-commit publication with uncertain

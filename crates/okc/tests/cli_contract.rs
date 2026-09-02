@@ -5,9 +5,9 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use vaultc::config::CompilerPolicy;
-use vaultc::plan::DraftPlan;
-use vaultc::{SourceSpec, VaultCompiler};
+use okc_core::config::CompilerPolicy;
+use okc_core::plan::DraftPlan;
+use okc_core::{OkcCompiler, SourceSpec};
 
 const EXIT_USAGE: i32 = 2;
 const EXIT_INPUT: i32 = 3;
@@ -17,7 +17,7 @@ const EXIT_OUTPUT: i32 = 6;
 const EXIT_VERIFY: i32 = 7;
 
 fn binary() -> &'static str {
-    env!("CARGO_BIN_EXE_vaultc")
+    env!("CARGO_BIN_EXE_okc")
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -30,7 +30,7 @@ fn run(arguments: &[&str]) -> Output {
     Command::new(binary())
         .args(arguments)
         .output()
-        .unwrap_or_else(|error| panic!("run vaultc {arguments:?}: {error}"))
+        .unwrap_or_else(|error| panic!("run okc {arguments:?}: {error}"))
 }
 
 fn run_compile(approved: &Path, output: &Path, pack: Option<&Path>) -> Output {
@@ -45,7 +45,7 @@ fn run_compile(approved: &Path, output: &Path, pack: Option<&Path>) -> Output {
     }
     command
         .output()
-        .unwrap_or_else(|error| panic!("run vaultc compile: {error}"))
+        .unwrap_or_else(|error| panic!("run okc compile: {error}"))
 }
 
 fn staging_entries(parent: &Path) -> Vec<PathBuf> {
@@ -55,7 +55,7 @@ fn staging_entries(parent: &Path) -> Vec<PathBuf> {
         .filter(|path| {
             path.file_name().is_some_and(|name| {
                 let name = name.to_string_lossy();
-                name.starts_with(".vaultc-staging-") || name.starts_with(".vaultc-pack-")
+                name.starts_with(".okc-staging-") || name.starts_with(".okc-pack-")
             })
         })
         .collect();
@@ -87,7 +87,7 @@ fn as_utf8(path: &Path) -> &str {
 }
 
 fn write_basic_approved_plan(parent: &Path) -> PathBuf {
-    let compiler = VaultCompiler::builder()
+    let compiler = OkcCompiler::builder()
         .build()
         .expect("build approved-plan fixture compiler");
     let inspection = compiler
@@ -103,7 +103,7 @@ fn write_basic_approved_plan(parent: &Path) -> PathBuf {
     let path = parent.join("approved.json");
     fs::write(
         &path,
-        vaultc::canonical::to_canonical_json_pretty(&approved)
+        okc_core::canonical::to_canonical_json_pretty(&approved)
             .expect("encode approved-plan fixture"),
     )
     .expect("write approved-plan fixture");
@@ -175,7 +175,7 @@ fn augmentation_payload_hash(payload: &serde_json::Value, plan: &DraftPlan) -> S
             projected_block["text"] = serde_json::Value::String(block.comparison_text.clone());
         }
     }
-    vaultc::canonical::canonical_hash("vaultc:provider-transcript-payload:v1\0", &hydrated)
+    okc_core::canonical::canonical_hash("okc:provider-transcript-payload:v2\0", &hydrated)
         .expect("hash hydrated augmentation request")
         .hex()
 }
@@ -204,9 +204,7 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     let cli_plan: DraftPlan =
         serde_json::from_slice(&fs::read(&plan_path).expect("read plan emitted by CLI"))
             .expect("decode CLI plan");
-    let compiler = VaultCompiler::builder()
-        .build()
-        .expect("build SDK compiler");
+    let compiler = OkcCompiler::builder().build().expect("build SDK compiler");
     let sdk_inspection = compiler
         .inspect([SourceSpec::directory("basic", &source).expect("SDK source descriptor")])
         .expect("SDK inspection");
@@ -217,7 +215,7 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     fs::write(
         &decisions_path,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "plan_id": cli_plan.plan_id.to_string(),
             "decisions": [],
             "conflicts": []
@@ -237,7 +235,7 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     assert_exit(&output, 0);
 
     let compiled_vault = temporary.path().join("compiled");
-    let pack = temporary.path().join("compiled.vaultpack");
+    let pack = temporary.path().join("compiled.okcpack");
     let output = run(&[
         "compile",
         as_utf8(&approved_path),
@@ -252,25 +250,25 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     let compile_json: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("decode compile success JSON");
     assert_eq!(compile_json["artifact"]["path"], as_utf8(&compiled_vault));
-    assert_eq!(compile_json["vaultpack"], as_utf8(&pack));
-    assert!(compiled_vault.join(".vaultc/manifest.json").is_file());
+    assert_eq!(compile_json["okcpack"], as_utf8(&pack));
+    assert!(compiled_vault.join(".okc/manifest.json").is_file());
     assert!(pack.is_file());
 
-    let sdk_pack = temporary.path().join("sdk-published.vaultpack");
-    vaultc::pack::create_pack(
+    let sdk_pack = temporary.path().join("sdk-published.okcpack");
+    okc_core::pack::create_pack(
         &compiled_vault,
         &sdk_pack,
         compiler.policy().output.zstd_level,
     )
     .expect("publish SDK comparison pack");
     assert_eq!(
-        fs::read(&pack).expect("read CLI VaultPack"),
-        fs::read(&sdk_pack).expect("read SDK VaultPack"),
+        fs::read(&pack).expect("read CLI OKCPack"),
+        fs::read(&sdk_pack).expect("read SDK OKCPack"),
         "CLI and SDK must use the same deterministic pack writer"
     );
 
     let human_compiled = temporary.path().join("human-compiled");
-    let human_pack = temporary.path().join("human-compiled.vaultpack");
+    let human_pack = temporary.path().join("human-compiled.okcpack");
     let human = run(&[
         "compile",
         as_utf8(&approved_path),
@@ -282,10 +280,10 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     assert_exit(&human, 0);
     let human_stdout = String::from_utf8_lossy(&human.stdout);
     assert!(human_stdout.contains(&format!("path: {}", human_compiled.display())));
-    assert!(human_stdout.contains(&format!("vaultpack: {}", human_pack.display())));
+    assert!(human_stdout.contains(&format!("okcpack: {}", human_pack.display())));
     assert_eq!(
-        fs::read(&pack).expect("read JSON-mode VaultPack"),
-        fs::read(&human_pack).expect("read human-mode VaultPack"),
+        fs::read(&pack).expect("read JSON-mode OKCPack"),
+        fs::read(&human_pack).expect("read human-mode OKCPack"),
         "output format must not affect pack bytes"
     );
 
@@ -312,7 +310,7 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
         inner_page_json.push(output.stdout.clone());
         let page: serde_json::Value =
             serde_json::from_slice(&output.stdout).expect("decode provenance JSON");
-        assert_eq!(page["schema_version"], 1);
+        assert_eq!(page["schema_version"], 2);
         assert!(page["graph_hash"].as_str().is_some());
         assert_eq!(
             page["subject"],
@@ -332,11 +330,11 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     }
     assert_eq!(
         inner_pages[0], inner_pages[1],
-        "inner-path provenance pages must be identical for a directory and its VaultPack"
+        "inner-path provenance pages must be identical for a directory and its OKCPack"
     );
     assert_eq!(
         inner_page_json[0], inner_page_json[1],
-        "inner-path JSON bytes must be identical for a directory and its VaultPack"
+        "inner-path JSON bytes must be identical for a directory and its OKCPack"
     );
 
     let first_page = run(&[
@@ -398,7 +396,7 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     assert_exit(&package_page, 0);
     let package_page: serde_json::Value =
         serde_json::from_slice(&package_page.stdout).expect("decode package provenance page");
-    assert_eq!(package_page["schema_version"], 1);
+    assert_eq!(package_page["schema_version"], 2);
     assert!(
         package_page["records"]
             .as_array()
@@ -447,7 +445,7 @@ fn cli_plan_matches_sdk_and_full_artifact_lifecycle() {
     assert_exit(&output, EXIT_OUTPUT);
 
     fs::write(
-        compiled_vault.join(".vaultc/provenance.jsonl"),
+        compiled_vault.join(".okc/provenance.jsonl"),
         b"not a provenance record\n",
     )
     .expect("tamper provenance graph");
@@ -653,9 +651,7 @@ fn cli_directory_race_losers_do_not_publish_distinct_packs() {
         .map(|index| {
             let approved = approved.clone();
             let output = output.clone();
-            let pack = temporary
-                .path()
-                .join(format!("candidate-{index}.vaultpack"));
+            let pack = temporary.path().join(format!("candidate-{index}.okcpack"));
             let barrier = Arc::clone(&barrier);
             thread::spawn(move || {
                 barrier.wait();
@@ -701,7 +697,7 @@ fn cli_compile_rejects_source_overlapping_outputs_and_packs_without_staging() {
 
     let mut policy = CompilerPolicy::default();
     policy.output.retain_failed_staging = true;
-    let compiler = VaultCompiler::builder()
+    let compiler = OkcCompiler::builder()
         .policy(policy)
         .build()
         .expect("build retained-stage compiler");
@@ -717,13 +713,13 @@ fn cli_compile_rejects_source_overlapping_outputs_and_packs_without_staging() {
     let approved_path = temporary.path().join("source-approved.json");
     fs::write(
         &approved_path,
-        vaultc::canonical::to_canonical_json_pretty(&approved)
+        okc_core::canonical::to_canonical_json_pretty(&approved)
             .expect("encode source-overlap approved plan"),
     )
     .expect("write source-overlap approved plan");
 
     let output = source.join("nested-output");
-    let pack = temporary.path().join("must-not-publish.vaultpack");
+    let pack = temporary.path().join("must-not-publish.okcpack");
     assert_exit(
         &run_compile(&approved_path, &output, Some(&pack)),
         EXIT_OUTPUT,
@@ -736,7 +732,7 @@ fn cli_compile_rejects_source_overlapping_outputs_and_packs_without_staging() {
     );
 
     let outside_output = temporary.path().join("outside-output");
-    let pack_inside_source = source.join("nested.vaultpack");
+    let pack_inside_source = source.join("nested.okcpack");
     assert_exit(
         &run_compile(&approved_path, &outside_output, Some(&pack_inside_source)),
         EXIT_OUTPUT,
@@ -778,7 +774,7 @@ fn cli_compile_pack_preflight_rejects_existing_and_path_aliases_without_output()
     let temporary = tempfile::tempdir().expect("temporary pack-preflight workspace");
     let approved = write_basic_approved_plan(temporary.path());
 
-    let existing_pack = temporary.path().join("existing.vaultpack");
+    let existing_pack = temporary.path().join("existing.okcpack");
     let sentinel = b"owned by another publisher\n";
     fs::write(&existing_pack, sentinel).expect("write existing pack sentinel");
     let existing_output = temporary.path().join("existing-pack-output");
@@ -801,26 +797,26 @@ fn cli_compile_pack_preflight_rejects_existing_and_path_aliases_without_output()
 
     let cases = [
         (
-            temporary.path().join("equal.vaultpack"),
-            temporary.path().join("equal.vaultpack"),
+            temporary.path().join("equal.okcpack"),
+            temporary.path().join("equal.okcpack"),
         ),
         (
             temporary.path().join("direct-inside"),
             temporary
                 .path()
-                .join("direct-inside/nested/release.vaultpack"),
+                .join("direct-inside/nested/release.okcpack"),
         ),
         (
-            temporary.path().join("reserved.vaultpack/compiled"),
-            temporary.path().join("reserved.vaultpack"),
+            temporary.path().join("reserved.okcpack/compiled"),
+            temporary.path().join("reserved.okcpack"),
         ),
         (
             temporary.path().join("StraßeVault"),
-            temporary.path().join("STRASSEVAULT/release.vaultpack"),
+            temporary.path().join("STRASSEVAULT/release.okcpack"),
         ),
         (
             temporary.path().join("CaféVault"),
-            temporary.path().join("CAFE\u{301}VAULT/release.vaultpack"),
+            temporary.path().join("CAFE\u{301}VAULT/release.okcpack"),
         ),
     ];
     for (output, pack) in cases {
@@ -859,7 +855,7 @@ fn cli_compile_pack_preflight_rejects_symlink_aliases_without_output() {
     symlink(&real_parent, &parent_alias).expect("create destination-parent alias");
 
     let output = real_parent.join("compiled");
-    let pack = parent_alias.join("compiled/nested.vaultpack");
+    let pack = parent_alias.join("compiled/nested.okcpack");
     assert_exit(
         &run(&[
             "compile",
@@ -879,8 +875,8 @@ fn cli_compile_pack_preflight_rejects_symlink_aliases_without_output() {
             .is_symlink()
     );
 
-    let dangling_target = temporary.path().join("must-not-be-created.vaultpack");
-    let dangling_pack = temporary.path().join("dangling.vaultpack");
+    let dangling_target = temporary.path().join("must-not-be-created.okcpack");
+    let dangling_pack = temporary.path().join("dangling.okcpack");
     symlink(&dangling_target, &dangling_pack).expect("create dangling pack leaf");
     let dangling_output = temporary.path().join("dangling-output");
     assert_exit(
@@ -916,7 +912,7 @@ fn cli_runtime_pack_failure_leaves_verified_output_and_no_pack() {
     fs::create_dir(&pack_parent).expect("create pack parent");
     fs::set_permissions(&pack_parent, fs::Permissions::from_mode(0o500))
         .expect("make pack parent read-only");
-    let pack = pack_parent.join("runtime-failure.vaultpack");
+    let pack = pack_parent.join("runtime-failure.okcpack");
 
     let result = run(&[
         "compile",
@@ -930,10 +926,10 @@ fn cli_runtime_pack_failure_leaves_verified_output_and_no_pack() {
         .expect("restore pack-parent permissions");
 
     assert_exit(&result, EXIT_OUTPUT);
-    assert!(output.join(".vaultc/manifest.json").is_file());
+    assert!(output.join(".okc/manifest.json").is_file());
     assert!(!pack.exists());
     assert!(
-        String::from_utf8_lossy(&result.stderr).contains("remains published after VaultPack"),
+        String::from_utf8_lossy(&result.stderr).contains("remains published after OKCPack"),
         "runtime failure must expose the two-publication state: {}",
         String::from_utf8_lossy(&result.stderr)
     );
@@ -966,7 +962,7 @@ fn cli_exit_codes_follow_the_public_contract() {
     );
 
     let invalid_artifact = temporary.path().join("not-an-artifact");
-    fs::write(&invalid_artifact, b"not a vaultpack").expect("write invalid artifact");
+    fs::write(&invalid_artifact, b"not a okcpack").expect("write invalid artifact");
     assert_exit(
         &run(&[
             "explain",
@@ -1030,7 +1026,7 @@ fn approve_rejects_pre_hash_markdown_plan_as_decision_error() {
     fs::write(
         &decisions_path,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "plan_id": plan_id,
             "decisions": [],
             "conflicts": []
@@ -1089,7 +1085,7 @@ fn approve_rejects_pre_original_path_plan_as_decision_error() {
     fs::write(
         &decisions_path,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "plan_id": plan_id,
             "decisions": [],
             "conflicts": []
@@ -1144,16 +1140,16 @@ fn cli_reports_unresolved_required_conflicts_as_decision_exit() {
     fs::write(
         &decisions,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "plan_id": plan.plan_id.to_string(),
             "decisions": [],
             "conflicts": [{
                 "plan_id": plan.plan_id.to_string(),
                 "conflict_id": conflict.conflict_id,
                 "conflict_content_hash": conflict.content_hash,
-                "resolution": "waived_by_policy",
-                "resolver": "cli-integration-test",
-                "policy_version": "test-v1",
+                "action": {"type": "waive_preserve_original"},
+                "decided_by": "cli-integration-test",
+                "policy_version": "test-v2",
                 "rationale": "preserve the unresolved source link under explicit test policy"
             }]
         }))
@@ -1172,7 +1168,7 @@ fn cli_reports_unresolved_required_conflicts_as_decision_exit() {
         ]),
         0,
     );
-    let approved: vaultc::ApprovedPlan =
+    let approved: okc_core::ApprovedPlan =
         serde_json::from_slice(&fs::read(&approved_path).expect("read conflict-approved plan"))
             .expect("decode conflict-approved plan");
     assert_eq!(approved.plan.plan_id, plan.plan_id);
@@ -1216,14 +1212,14 @@ fn cli_round_trips_a_redacted_command_provider_transcript() {
         &provider,
         r##"#!/bin/sh
 IFS= read -r capabilities_request || exit 20
-printf '%s\n' '{"protocol_version":1,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"fixture","model":"snapshot-bound","version":"1"},"protocol_versions":[1],"operations":["knowledge_augmentation"],"max_input_bytes":10485760,"max_output_bytes":10485760,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"local"}}}'
+printf '%s\n' '{"protocol_version":2,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"fixture","model":"snapshot-bound","version":"1"},"protocol_versions":[2],"operations":["knowledge_augmentation"],"max_input_bytes":10485760,"max_output_bytes":10485760,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"local"}}}'
 IFS= read -r augmentation_request || exit 21
 case "$augmentation_request" in *\"snapshot_id\":\"$1\"*) ;; *) exit 22 ;; esac
 case "$augmentation_request" in *\"id\":\"$2\"*) ;; *) exit 23 ;; esac
 case "$augmentation_request" in *\"content_hash\":\"$3\"*) ;; *) exit 24 ;; esac
 case "$augmentation_request" in *\"id\":\"$6\"*) ;; *) exit 25 ;; esac
 case "$augmentation_request" in *\"content_hash\":\"$7\"*) ;; *) exit 26 ;; esac
-printf '%s\n' "{\"protocol_version\":1,\"request_id\":\"augmentation-1\",\"message_type\":\"augmentation_response\",\"payload\":{\"proposals\":[{\"schema_version\":1,\"proposal_id\":\"snapshot-bound-1\",\"plan_id\":\"$4\",\"projection_hash\":\"$5\",\"provider\":{\"provider\":\"fixture\",\"model\":\"snapshot-bound\",\"version\":\"1\"},\"kind\":{\"type\":\"create_generated_note\",\"title\":\"Snapshot bound\",\"markdown_body\":\"# Snapshot bound\\n\",\"suggested_path\":\"snapshot-bound.md\"},\"evidence\":[{\"snapshot_id\":\"$1\",\"document_id\":\"$2\",\"block_id\":null,\"byte_start\":null,\"byte_end\":null,\"content_hash\":\"$3\"},{\"snapshot_id\":\"$1\",\"document_id\":\"$2\",\"block_id\":\"$6\",\"byte_start\":null,\"byte_end\":null,\"content_hash\":\"$7\"}],\"uncertainty\":null,\"rationale\":\"snapshot projection contract\"}]}}"
+printf '%s\n' "{\"protocol_version\":2,\"request_id\":\"augmentation-1\",\"message_type\":\"augmentation_response\",\"payload\":{\"proposals\":[{\"schema_version\":2,\"proposal_id\":\"snapshot-bound-1\",\"plan_id\":\"$4\",\"projection_hash\":\"$5\",\"provider\":{\"provider\":\"fixture\",\"model\":\"snapshot-bound\",\"version\":\"1\"},\"kind\":{\"type\":\"create_generated_note\",\"title\":\"Snapshot bound\",\"markdown_body\":\"# Snapshot bound\\n\",\"suggested_path\":\"snapshot-bound.md\"},\"evidence\":[{\"snapshot_id\":\"$1\",\"document_id\":\"$2\",\"block_id\":null,\"byte_start\":null,\"byte_end\":null,\"content_hash\":\"$3\"},{\"snapshot_id\":\"$1\",\"document_id\":\"$2\",\"block_id\":\"$6\",\"byte_start\":null,\"byte_end\":null,\"content_hash\":\"$7\"}],\"uncertainty\":null,\"rationale\":\"snapshot projection contract\"}]}}"
 "##,
     )
     .expect("write provider fixture");
@@ -1300,7 +1296,7 @@ printf '%s\n' "{\"protocol_version\":1,\"request_id\":\"augmentation-1\",\"messa
     fs::write(
         &decisions,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "plan_id": plan.plan_id.to_string(),
             "decisions": [{
                 "plan_id": plan.plan_id.to_string(),
@@ -1308,7 +1304,7 @@ printf '%s\n' "{\"protocol_version\":1,\"request_id\":\"augmentation-1\",\"messa
                 "proposal_content_hash": proposal_content_hash,
                 "approved": true,
                 "approver": "cli-integration-test",
-                "policy_version": "test-v1"
+                "policy_version": "test-v2"
             }],
             "conflicts": []
         }))
@@ -1469,7 +1465,7 @@ fn cli_cancels_blocked_provider_input_and_reaps_its_process_group() {
         r#"#!/bin/sh
 printf '%s\n' "$$" > "$1"
 IFS= read -r capabilities_request || exit 20
-printf '%s\n' '{"protocol_version":1,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"fixture","model":"blocked","version":"1"},"protocol_versions":[1],"operations":["knowledge_augmentation"],"max_input_bytes":16777216,"max_output_bytes":1048576,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"local"}}}'
+printf '%s\n' '{"protocol_version":2,"request_id":"capabilities-1","message_type":"capabilities_response","payload":{"provider":{"provider":"fixture","model":"blocked","version":"1"},"protocol_versions":[2],"operations":["knowledge_augmentation"],"max_input_bytes":16777216,"max_output_bytes":1048576,"structured_output":true,"streaming":false,"deterministic_controls":true,"data_boundary":{"kind":"local"}}}'
 sleep 30
 "#,
     )
@@ -1496,7 +1492,7 @@ sleep 30
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn cancellable vaultc");
+        .expect("spawn cancellable okc");
 
     wait_for_file(&provider_pid_file, Duration::from_secs(2));
     let provider_pid = fs::read_to_string(&provider_pid_file)
@@ -1507,10 +1503,10 @@ sleep 30
     let signal_status = Command::new("/bin/kill")
         .args(["-INT", &child.id().to_string()])
         .status()
-        .expect("signal vaultc");
+        .expect("signal okc");
     assert!(signal_status.success());
 
-    let output = child.wait_with_output().expect("wait for cancelled vaultc");
+    let output = child.wait_with_output().expect("wait for cancelled okc");
     assert_exit(&output, EXIT_PROVIDER);
     assert!(
         started.elapsed() < Duration::from_secs(4),

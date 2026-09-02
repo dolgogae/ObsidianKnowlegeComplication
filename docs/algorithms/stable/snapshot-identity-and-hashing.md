@@ -3,11 +3,13 @@ title: ALG-SNP-001 — Snapshot Identity and Hashing
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0003
   - ADR-0004
   - ADR-0012
+  - ADR-0015
+  - ADR-0016
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -20,24 +22,38 @@ Produce stable, domain-separated identities for bytes, files, records, and compl
 
 ## Inputs and outputs
 
-Input is a `SourceId`, versioned identity policy, and a safely enumerated set of `(logical_path, kind, bytes)`. Output is a sorted manifest, `SourceFileId` values, one `SnapshotId`, and typed identities for parsed file-level IR items.
+Input is a `SourceId`, optional non-identifying owner display name, versioned
+identity policy, and a safely enumerated set of `(logical_path, kind, bytes)`.
+Output is a sorted manifest, `SourceFileId` values, one `SnapshotId`, one
+source-independent `VaultContentId`, and typed identities for parsed IR items.
 
 ## Formula
 
 Let `H(x) = SHA-256(x)` and `||` be byte concatenation. Each component is length-prefixed unsigned LEB128 to prevent ambiguity.
 
 ```text
-ContentHash  = H("vaultc:content:v1\0" || bytes)
-SourceFileId = H("vaultc:file:v1\0" || lp(path) || lp(kind) || ContentHash)
-SnapshotId   = H("vaultc:snapshot:v1\0" || lp(SourceId) || lp(policy_id)
+ContentHash  = H("okc:content:v2\0" || bytes)
+SourceFileId = H("okc:file:v2\0" || lp(path) || lp(kind) || ContentHash)
+SnapshotId   = H("okc:snapshot:v2\0" || lp(SourceId) || lp(policy_id)
                  || concat(sorted(lp(path) || SourceFileId)))
-DocumentId     = H("vaultc:document:v1\0" || lp(raw(SnapshotId))
+DocumentId     = H("okc:document:v2\0" || lp(raw(SnapshotId))
                     || lp(raw(SourceFileId)))
-CanvasId       = H("vaultc:canvas:v1\0" || lp(raw(SnapshotId))
+CanvasId       = H("okc:canvas:v2\0" || lp(raw(SnapshotId))
                     || lp(raw(SourceFileId)))
-BaseArtifactId = H("vaultc:base:v1\0" || lp(raw(SnapshotId))
+BaseArtifactId = H("okc:base:v2\0" || lp(raw(SnapshotId))
                     || lp(raw(SourceFileId)))
+SectionId      = H("okc:section:v2\0" || lp(raw(DocumentId))
+                    || lp(index_u64_be) || lp(heading_utf8))
+BlockId        = H("okc:block:v2\0" || lp(raw(DocumentId))
+                    || lp(index_u64_be) || lp(BlockContentHash))
 ```
+
+`VaultContentId` is the V2 canonical-JSON hash under
+`"okc:vault-content:v2\0"` of the strictly path-sorted sequence of
+`(logical_path, SourceFileId)`. It deliberately excludes `SourceId`, owner
+display name, timestamps, permissions, and enumeration order. It therefore
+detects registering the same Vault bytes twice under different source IDs,
+while `SnapshotId` remains source-specific.
 
 Hex rendering uses lowercase 64-character SHA-256. Typed IDs carry a textual prefix outside the hash, for example `snap_...`; the prefix is not part of the formula unless a schema explicitly says so.
 `raw(TypedId)` means its 32 hash bytes without the textual prefix. The three
@@ -58,7 +74,8 @@ substitute identity.
 | `SourceId` | stable user/domain source identity | non-empty UTF-8, policy-limited | required |
 | `SourceFileId` | immutable normalized-path/kind/content identity | 256-bit ID | required |
 | `SnapshotId` | immutable source snapshot identity | 256-bit ID | required |
-| `policy_id` | identity-affecting inclusion/normalization policy | versioned ASCII ID | `vaultc-source-v1` |
+| `VaultContentId` | source-independent identity of the accepted Vault manifest | 256-bit hash | required |
+| `policy_id` | identity-affecting inclusion/normalization policy | versioned ASCII ID | `okc-source-v2` |
 | `sorted` | ascending comparison | unsigned UTF-8 bytes of path | required |
 | `concat` | unambiguous concatenation | bytes | required |
 
@@ -71,11 +88,13 @@ for entry in safe_enumerate(source):
     path = normalize_logical_path(original_path)
     content_hash = sha256(domain_content || entry.bytes_stream)
     file_id = sha256(domain_file || lp(path) || lp(entry.kind) || content_hash)
-    manifest.append(path, entry.kind, entry.size, content_hash, file_id)
+    manifest.append(path, entry.kind, entry.size, raw_sha256, content_hash, file_id)
 sort manifest by unsigned UTF-8 path bytes
 snapshot_id = sha256(domain_snapshot || lp(source_id) || lp(policy_id)
                      || encode_each(manifest.path, manifest.file_id))
-seal manifest; return snapshot_id, manifest
+vault_content_id = canonical_hash(domain_vault_content,
+                                  encode_json_each(manifest.path, manifest.file_id))
+seal manifest; return snapshot_id, vault_content_id, manifest
 ```
 
 `original_path` is carried in the sealed manifest/IR and later Plan and
@@ -85,13 +104,24 @@ post-plan spelling change is stale even when these lower semantic IDs match.
 
 Hashing MUST stream bytes, check byte count, and re-stat/reopen according to platform race policy. A changed file during inspection invalidates the snapshot attempt.
 
+Before planning, snapshots are canonical-sorted by `SourceId` and MUST have
+strictly unique `SourceId` and `VaultContentId` values. Reordering input Vaults
+therefore cannot affect inspection or plan identity. Reusing one `SourceId`
+for another snapshot or registering identical accepted Vault content twice is
+an error.
+
 ## Complexity
 
 For `B` total bytes and `F` files: time `O(B + F log F)`, retained manifest memory `O(F)` (or external/SQLite sort), streaming buffer `O(1)` relative to `B`.
 
 ## Edge and security cases
 
-Reject duplicate normalized paths, unsafe symlinks, special devices, changing files, paths outside the root, unsupported raw filename encodings under policy, and resource-limit violations. Hashes are integrity identities, not signatures; authenticity requires a signing layer.
+Reject duplicate normalized paths, duplicate `SourceId`, duplicate
+`VaultContentId`, unsafe symlinks or reparse points, special devices, changing
+files, paths outside the root, unsupported raw filename encodings under
+policy, and resource-limit violations. Owner display names and MCP product
+names MUST NOT enter identity or policy. Hashes are integrity identities, not
+signatures; authenticity requires a signing layer.
 
 ## Worked example
 
@@ -106,8 +136,12 @@ These primitives MUST match standard SHA-256:
 | empty bytes | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 | ASCII `abc` | `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad` |
 
-Repository fixtures MUST freeze complete domain-separated IDs after the encoder is implemented. A schema encoder change requires a new domain version and migration ADR; it must never silently update V1 vectors.
+Repository fixtures MUST freeze complete domain-separated IDs after the encoder is implemented. A schema encoder change requires a new domain version and migration ADR; it must never silently update V2 vectors.
 
 ## Correctness and rollback
 
-Correctness metrics are byte-for-byte manifest equality, permutation invariance of enumeration, platform semantic-ID equality, and mutation detection. On any mismatch or race, fail the snapshot; do not fall back to timestamps, file sizes, or partial manifests.
+Correctness metrics are byte-for-byte manifest equality, file- and
+source-permutation invariance, MCP-origin neutrality, platform semantic-ID
+equality, duplicate-Vault rejection, and mutation detection. On any mismatch
+or race, fail the snapshot; do not fall back to timestamps, file sizes, or
+partial manifests.

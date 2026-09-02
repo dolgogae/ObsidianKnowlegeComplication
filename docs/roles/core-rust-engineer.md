@@ -3,12 +3,15 @@ title: Core Rust Engineer Role Guide
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0001
   - ADR-0003
   - ADR-0005
   - ADR-0008
+  - ADR-0015
+  - ADR-0017
+  - ADR-0019
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -29,7 +32,8 @@ Read [`../../AGENTS.md`](../../AGENTS.md), [`../../PROJECT_CONTEXT.md`](../../PR
 
 ## Owned interfaces and invariants
 
-- public `vaultc` and `vaultc-cli` behavior;
+- public `okc-core` and sole `okc` executable behavior, plus the deprecated
+  `vaultc` facade and frozen V1 reader boundary;
 - source byte immutability and streaming limits;
 - deterministic ordered serialization and IDs;
 - stage-verify-atomic-publish workflow;

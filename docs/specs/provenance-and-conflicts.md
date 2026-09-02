@@ -4,13 +4,15 @@ status: normative-v1
 owners:
   - architect
   - core-rust-engineer
-last_updated: 2026-08-16
+last_updated: 2026-09-02
 decision_refs:
   - ADR-0003
   - ADR-0006
   - ADR-0009
   - ADR-0010
   - ADR-0012
+  - ADR-0016
+  - ADR-0017
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -36,7 +38,7 @@ The detailed record algorithm is [`../algorithms/stable/provenance-and-evidence.
 
 Every physical content path and the plan/conflict/diagnostic/transcript audit
 paths are represented in the stored typed graph. The graph uses required
-schema-1 `record_` identities, the fixed record order, dependent-to-prerequisite
+schema-2 `record_` identities, the fixed record order, dependent-to-prerequisite
 edge direction, relation/type matrix, and closure rules in ADR-0010. The graph
 is canonical JSON Lines with exactly one canonical record per non-empty line
 and a final LF.
@@ -44,7 +46,7 @@ and a final LF.
 The ledger cannot contain its own final hash. Therefore provenance, manifest,
 and checksums are a narrow virtual audit envelope constructed from final bytes
 by verification and explanation. This is not missing provenance and MUST NOT
-be replaced by a forged self-referential stored edge. A VaultPack package
+be replaced by a forged self-referential stored edge. A OKCPack package
 subject is also virtual and separately requested. Stored and virtual records
 share the same identity formula and public record schema.
 
@@ -74,21 +76,20 @@ When exact notes are unified:
 
 Near-duplicate analysis uses MinHash/LSH only for candidate generation. A score
 at or above the default `0.85` threshold means “review similarity,” not semantic
-equivalence. V1 retains both candidates. A curator may record a
-`waived_by_policy` overlay, but cannot merge, delete, or select content through
-an untyped decision.
+equivalence. V2 retains both candidates. Near-duplicate review never authorizes
+a merge, deletion, or replacement.
 
 ## Conflict kinds
 
-| Code family | Meaning | Default V1 behavior |
+| Code family | Meaning | Default V2 behavior |
 |---|---|---|
-| `PATH_EXACT` | multiple non-identical files request same path | stable suffix; typed external action unavailable in V1 |
+| `PATH_EXACT` | multiple non-identical files request same path | stable suffix; typed external action unavailable in V2 |
 | `PATH_CASEFOLD` | names collide on case-insensitive targets | stable suffix; error if impossible |
 | `UNICODE_NORMALIZATION` | distinct source names normalize alike | stable suffix and warning |
 | `TITLE_AMBIGUITY` | multiple documents claim same title | retain both; links may require rewrite/decision |
 | `ALIAS_AMBIGUITY` | alias resolves to multiple targets | record ambiguous link conflict |
 | `FRONTMATTER_VALUE` | same semantic field has differing values | retain source-specific values; no silent union |
-| `LINK_AMBIGUITY` | link has multiple candidates | required conflict; preserve raw target until a future typed action |
+| `LINK_AMBIGUITY` | link has multiple candidates | required conflict; select one sealed target or explicitly preserve the original |
 | `CONTENT_NEAR_DUPLICATE` | high candidate similarity | review only |
 
 A link with zero candidates is preserved and emits an unresolved-link
@@ -98,7 +99,7 @@ the normalized output remains unique and provenance retains both spellings.
 
 Future, unimplemented conflict families include `CLAIM_CONTRADICTION` (retain
 context/time-scoped claims with evidence) and `LICENSE_INCOMPATIBLE` (hard
-policy error). They are not variants of the V1 `ConflictKind` enum.
+policy error). They are not variants of the V2 `ConflictKind` enum.
 
 ## Resolution states and approval overlays
 
@@ -115,16 +116,20 @@ and raw file path. Each ambiguous Markdown link or Canvas file node receives
 its own subject and conflict even when its human-readable target and candidate
 documents equal another node's. External decisions live
 in `ApprovedPlan.conflict_decisions` and bind the sealed `plan_id`,
-`conflict_id`, `conflict_content_hash`, resolver, and policy version. Unknown,
+`conflict_id`, `conflict_content_hash`, curator ID, policy version, and typed action. Unknown,
 duplicate, wrong-plan, stale-hash, or already-resolved decisions fail closed.
 All required unresolved conflicts need decision coverage before compilation.
 
-V1 external decisions support only `waived_by_policy`. A waiver means policy
-explicitly accepts preserving the unresolved source representation; it does
-not claim the ambiguity was fixed. `user_resolved` and `provider_suggested`
-remain reserved until the decision schema carries a typed target/rewrite action
-that the planner, compiler, provenance writer, and verifier can validate. See
-ADR-0009.
+V2 actions are `waive_preserve_original`, `select_markdown_target`, and
+`select_canvas_target`. A selected target MUST be an exact element of the
+sealed candidate set. Markdown display/embed/heading/block suffixes and Canvas
+unknown fields are preserved; arbitrary text and paths are forbidden.
+
+The immutable `DraftPlan` is not edited. The canonical action and approved
+proposal sets derive a `MaterializationPlan` containing effective operations
+and a `MaterializationId`. Approval, compilation, provenance, and verification
+rederive the same value. See ADR-0017, which supersedes only ADR-0009's V1
+waiver-only restriction.
 
 ## Future claim semantics
 
@@ -132,11 +137,11 @@ Claims are first-class, context- and time-scoped propositions. Contradictory cla
 
 ## Explanation API
 
-The normative V1 explanation result is a versioned page of the reachable typed
+The normative V2 explanation result is a versioned page of the reachable typed
 directed derivation graph required by ALG-PRV-001: source, operation, decision,
 proposal, approval, output, and edge records, including compiler-generated
 administrative files and author/license declarations. It accepts either a
-Compiled Vault directory or a `.vaultpack` and never calls an AI provider or
+Compiled Vault directory or a `.okcpack` and never calls an AI provider or
 original network location.
 
 The default page limit is 256 records and 4 MiB; hard limits are 4,096 records
@@ -145,11 +150,11 @@ tampered, cross-artifact, or cross-subject cursor fails closed. A convenience
 full explanation may collect pages only within the hard bounds and otherwise
 returns a resource-limit error.
 
-Inner-path explanations from a directory and VaultPack are identical. An
+Inner-path explanations from a directory and OKCPack are identical. An
 explicit package query returns a virtual package output/operation binding the
 observed outer bytes and inner artifact identity; it is not added to inner
 queries and does not authenticate the publisher.
 
 An explanation value is not itself a trust verdict. A caller must run `verify`
 before treating an artifact or explanation as internally consistent; the full
-sealed plan and conflict/proposal audit remain under `.vaultc/`.
+sealed plan and conflict/proposal audit remain under `.okc/`.

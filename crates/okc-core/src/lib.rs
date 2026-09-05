@@ -10,6 +10,7 @@ pub mod diagnostic;
 pub mod error;
 mod generated;
 pub mod identity;
+pub mod integration;
 pub mod ir;
 pub mod materialization;
 pub mod pack;

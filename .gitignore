@@ -5,3 +5,7 @@
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+/.quickstart/
+/guide/node_modules/
+/guide/.vitepress/cache/
+/guide/.vitepress/dist/

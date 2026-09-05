@@ -8,13 +8,16 @@ repository.workspace = true
 
 [dependencies]
 axoupdater.workspace = true
+keyring = { version = "=4.2.0", default-features = false, features = ["v1"] }
 okc-core = { path = "../okc-core" }
+okc-ai = { path = "../okc-ai" }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

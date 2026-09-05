@@ -4,10 +4,14 @@ status: normative-future
 owners:
   - architect
   - release-maintainer
-last_updated: 2026-08-16
+last_updated: 2026-09-05
 decision_refs:
   - ADR-0001
   - ADR-0002
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
+  - ADR-0025
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -15,7 +19,7 @@ source_refs:
 
 # Roadmap
 
-## Progress marker: 2026-08-16
+## Progress marker: 2026-09-05
 
 - Phase 0 is complete.
 - Phases 1 and 2 have an implemented `0.2.0` vertical slice with local macOS
@@ -24,6 +28,22 @@ source_refs:
 - Phase 3 has deterministic unsigned OKCPack creation/verification only. The
   signing profile, MCP adapter, and Obsidian plugin have not started.
 - Phases 4–6 remain documentation/research direction only.
+- V3 now has an accepted AI-required format/provider/integration contract and a
+  development vertical slice: schema-3 projects and journals, HTTP providers,
+  sensitive routing, organizer/synthesis/critic review, approval closure, and
+  provider-free directory compile/verify/explain. It is not a stable milestone:
+  `ALG-SEM-001` HNSW/chunking parity, manual amendment, V3 Pack and
+  non-Markdown carry-through, command adapter, PTY qualification, scale, and hosted
+  cross-platform evidence are open.
+
+## V3 stabilization milestone
+
+Complete `ALG-SEM-001` and `ALG-INT-001` end to end, including hierarchical
+synthesis, manual section amendments, persisted remote
+disclosure exceptions, deterministic V3 Pack, attachment/Canvas/Base
+materialization and link rewriting, and
+all V3-specific quality gates. Stable release language is prohibited until
+the 100k-note performance/cost report and existing QG-001–008 blockers close.
 
 This marker is a navigation aid; [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 and [`../TRACEABILITY.md`](../TRACEABILITY.md) are authoritative for current

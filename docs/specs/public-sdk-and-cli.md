@@ -3,7 +3,7 @@ title: Public SDK and CLI Contract
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-05
 decision_refs:
   - ADR-0001
   - ADR-0004
@@ -17,13 +17,72 @@ decision_refs:
   - ADR-0018
   - ADR-0019
   - ADR-0020
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
+  - ADR-0025
 source_refs:
   - HIST-COMPILER-PLAN
 ---
 
 # Public SDK and CLI Contract
 
-## SDK workflow
+## Schema-3 application workflow
+
+`--project PATH` always selects that project. Otherwise schema-3 CLI commands
+and the no-argument TUI discover the current directory's hidden default,
+eligible sibling, and direct-child `.okc-project` candidates. Ambiguous
+interactive discovery is reviewed in the TUI; non-interactive ambiguity or a
+missing required project fails with a specific diagnostic. CLI and TUI call
+the same `WorkspaceBootstrap`, `ProviderService`, and `IntegrationService`
+implementations and never invoke each other.
+
+The `0.3.0` application surface is project-first:
+
+```text
+okc project create PATH --name NAME --curator ID [--language BCP-47]
+okc project upgrade V2_PROJECT --out V3_PROJECT
+okc --project PATH project source add SOURCE_ID SOURCE_PATH
+okc provider add|list|show|test|remove
+okc --project PATH project ai-route set [ROLE] PROFILE
+okc --project PATH integrate [--allow-remote-provider --yes]
+okc --project PATH review taxonomy show|export|approve
+okc --project PATH review cluster list|show|export|approve|regenerate
+okc --project PATH integration status [--format json]
+okc [--project PATH] compile --integration-plan FILE --output PATH
+okc verify PATH
+okc explain PATH OUTPUT_PATH
+```
+
+Project format schema 3 uses private application-state schema 4 to store
+append-only source-set revisions, runs, task definitions/events, provider
+exchanges, cluster revisions/feedback, approvals, plan pointers, and verified
+outputs plus content-addressed objects.
+`integrate` automatically resumes a task only when its complete cache key
+matches. Taxonomy edits are imported as a complete cluster array and resealed
+before approval. Cluster approval requires a separate exact ID/rationale entry
+for every omission and minor critic waiver; major and critical findings cannot
+be waived. Regeneration feedback binds the prior proposal/critic hashes and
+creates a new synthesis plus critic revision that immediately stales old
+authority.
+
+The sealed integration plan is printed as a content-addressed project object.
+`compile --integration-plan` makes no provider call, refuses an incomplete or
+stale approval closure, and publishes a new directory without replacement.
+`verify` and `explain` auto-detect schema 3, V2, and V1. ADR-0022 requires those
+two read operations to become the complete public V1/V2 compatibility boundary.
+The `0.3.0` development binary still exposes schema-2 writer commands for the
+existing regression harness, so this part of the release contract is not yet
+implemented and MUST NOT be described as complete.
+
+The following planned surfaces are not implemented in this development slice:
+manual section amendment, persisted sensitive-finding exceptions, V3 Pack, and
+provider-backed PTY/platform qualification. The command adapter profile is
+reserved but fails capability testing until its schema-3 supervisor lands.
+
+## Frozen schema-2 SDK workflow
+
+### SDK workflow
 
 The public API exposes explicit, typed phases rather than one opaque merge
 call. The implemented deterministic path is:

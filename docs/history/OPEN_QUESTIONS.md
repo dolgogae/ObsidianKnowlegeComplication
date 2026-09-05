@@ -3,7 +3,7 @@ title: Open Questions
 status: normative-future
 owners:
   - architect
-last_updated: 2026-09-02
+last_updated: 2026-09-05
 decision_refs:
   - ADR-0002
   - ADR-0004
@@ -16,12 +16,53 @@ decision_refs:
   - ADR-0019
   - ADR-0020
   - ADR-0021
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
+  - ADR-0025
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
 ---
 
 # Open Questions
+
+## Resolved documentation defects — V3 desktop workflow (2026-09-05)
+
+Two same-change documentation defects were found before the cwd-first TUI was
+implemented. First, [`../TRACEABILITY.md`](../TRACEABILITY.md) described
+`REQ-INT-003` through `REQ-INT-006` as critic, offline compile, resume, and
+human review even though the authoritative product specification defines them
+as evidence/contradiction closure, critic closure, immutable approval, and V3
+materialization respectively. Second, ADR-0023 required environment-variable-
+only provider credentials, which conflicted with the requested OS-keychain
+credential boundary.
+
+ADR-0025 resolves both defects without weakening either security invariant. It
+realigns traceability to the existing requirement text, adds `REQ-APP-002` for
+cwd discovery and the shared worker service, and adds `REQ-SEC-003` for opaque
+environment or OS-keychain credential references. The project/artifact schema
+remains 3; only the private SQLite application-state schema advances to 4.
+
+## Resolved documentation conflict — V3 mandatory integration (2026-09-03)
+
+The requested V3 product requires semantic clustering and evidence-complete
+synthesis for every Markdown document before a new Vault may be compiled. That
+requirement conflicted with the same-precedence V2 contract in
+[`../specs/product-and-scope.md`](../specs/product-and-scope.md),
+[`../specs/vault-compilation-pipeline.md`](../specs/vault-compilation-pipeline.md),
+and [`../specs/ai-provider-and-augmentation.md`](../specs/ai-provider-and-augmentation.md),
+which makes AI optional and forbids semantic near-duplicate merging in the V2
+default path.
+
+ADR-0022 through ADR-0024 resolve the defect by creating a new schema-3
+contract rather than reinterpreting V2. V1 and V2 remain read-only artifact
+families through `verify` and `explain`; a V2 project upgrade creates a separate
+V3 project and recomputes every downstream integration decision from immutable
+source bindings. V3 compilation requires a complete recorded integration plan,
+taxonomy approval, per-cluster approval, and a passing critic result. This
+resolution does not promote `ALG-MEM-006` or Bayesian claim confidence into the
+compiler path.
 
 ## Resolved documentation conflict — updater runtime boundary (2026-09-02)
 
@@ -37,6 +78,21 @@ behavior-changing answer through an ADR and specification update. Current
 implementation gaps are also summarized in
 [`../CURRENT_STATE.md`](../CURRENT_STATE.md).
 
+## V3 stabilization work (not design authority)
+
+- Finish `ALG-SEM-001` deterministic block chunking/batching, fixed-seed HNSW,
+  and union with exact/MinHash/title/alias/link candidates at the 100k-note
+  target. The current exact cosine development path is not the normative scale
+  implementation.
+- Define and implement manual section amendment as a new revision with a critic
+  rerun; add persisted exact-hash sensitive scanner exceptions. Feedback-driven
+  regeneration is implemented as an append-only hash-bound revision.
+- Complete the supervised schema-3 command adapter, V3 OKCPack, and
+  attachment/Canvas/Base carry-through with canonical Markdown/Canvas link
+  rewriting and directory/Pack provenance parity.
+- Remove the development CLI's V2 writer surface after replacing its public
+  regression harness; ADR-0022 requires V1/V2 to expose only `verify` and
+  `explain` in the V3 product.
 ## Stable V2 implementation
 
 - Freeze the complete Comrak/Unicode/normalization compatibility contract and

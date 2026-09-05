@@ -4,12 +4,16 @@ status: normative-v1
 owners:
   - algorithms-ai-engineer
   - qa-security-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-05
 decision_refs:
   - ADR-0004
   - ADR-0009
   - ADR-0011
   - ADR-0017
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
+  - ADR-0025
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -18,11 +22,90 @@ source_refs:
 
 ## Principle
 
-AI is optional, replaceable, and outside the trusted compiler core. OpenAI,
-Anthropic, Google, local vLLM, command-line models, and future providers connect
-through the same provider-neutral boundaries. No provider is required for
-correct V2 compilation, and no provider can mutate a Vault or approve its own
-proposal.
+AI remains replaceable and outside the trusted compiler core. In schema 3 it is
+required to create the integration proposal and critic record; it is not
+required to replay a complete recording, compile an approved integration plan,
+verify an artifact, or explain provenance. No provider can mutate a Vault or
+approve its own proposal. The older optional-AI contract below applies only to
+the frozen schema-2 compatibility path.
+
+## Schema-3 semantic capabilities
+
+`okc-ai` defines two vendor-neutral blocking traits:
+
+```rust,ignore
+trait StructuredGenerator {
+    fn capabilities(&self) -> ProviderCapabilitiesV3;
+    fn generate_structured(
+        &self,
+        request: &StructuredGenerationRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<StructuredGenerationResponse, ProviderError>;
+}
+
+trait Embedder {
+    fn capabilities(&self) -> ProviderCapabilitiesV3;
+    fn embed(
+        &self,
+        request: &EmbeddingBatchRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<EmbeddingBatchResponse, ProviderError>;
+}
+```
+
+Capabilities and responses bind provider, configured model, adapter version,
+actual response model when supplied, resource limits, data boundary, usage,
+request hash, and response hash. Rust-owned structured-output schemas are
+restricted to a portable JSON Schema subset. The same schema is validated
+before transmission and again locally against the returned JSON. Unknown
+fields, missing required properties, invalid enum values, reordered or
+wrong-sized embedding batches, dimension drift, non-finite values, and zero
+norms fail closed.
+
+The synchronous HTTP adapter uses OS trust roots, forbids redirects, bounds
+global time and response bytes, permits plaintext HTTP only on loopback, and
+treats LAN endpoints as remote. It retries only 408, 409, 429, 5xx, and
+pre-response transport failures, at most twice, while respecting bounded
+`Retry-After`. Authentication, authorization, rate limiting, timeout, context
+limit, refusal, malformed response, and cancellation are normalized without
+including credentials in diagnostics.
+
+OpenAI Responses/Embeddings, Anthropic Messages structured output, Gemini
+Interactions/embedding, Ollama chat/embed, and generic OpenAI-compatible HTTP
+shapes are implemented. The schema-3 command envelope is defined in
+`okc-protocol`; supervised execution for that new envelope remains a release
+blocker, so a `command` profile currently fails capability testing rather than
+falling back to a shell.
+
+Provider profiles live in user-global TOML and contain only endpoint, explicit
+model, limits/options, and either an `api_key_env` variable name or an
+`os_keychain` account reference under the fixed OKC service ID. Projects store only
+the `default`, `embedding`, `organizer`, `synthesis`, and `critic` profile
+names. Secret values MUST NOT enter project state, recordings, errors, or
+artifacts. Keychain locked/unavailable errors permit an environment reference
+or cancellation, never plaintext file fallback. `provider test` uses fixed
+synthetic data rather than Vault content.
+
+## Schema-3 disclosure and recording
+
+Before any provider call, the versioned deterministic scanner records only
+category, document/block location, byte range, and content hash. A finding
+forces embedding and organizer to one local model space and forces every
+affected synthesis/critic cluster to a local route. A missing local route
+stops before disclosure. The current CLI does not yet expose persisted
+false-positive exceptions; that is a release blocker.
+
+Non-interactive remote execution requires both `--allow-remote-provider` and
+`--yes`. Each complete exchange is canonicalized into the project's immutable
+object store and bound into the task journal. A task key includes stage,
+prompt, schema, source, provider profile, model, adapter, and options hashes.
+Only a complete response is reusable; failed tasks resume at that task. The
+current pipeline performs one embedding input per Markdown document and an
+exact bounded cosine candidate pass. Deterministic block chunking, batching,
+HNSW, and union with every V2 candidate reason required by `ALG-SEM-001` remain
+unfinished and therefore the 100k-note gate is not passed.
+
+## Frozen schema-2 contract
 
 ## Rust capability interfaces
 

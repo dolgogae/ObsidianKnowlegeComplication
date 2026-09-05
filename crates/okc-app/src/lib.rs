@@ -10,7 +10,20 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub const PROJECT_SCHEMA_VERSION: u32 = 2;
+mod integration_execution;
+pub mod integration_service;
+pub mod provider_service;
+pub mod v3;
+pub mod worker;
+pub mod workspace_bootstrap;
+
+pub use integration_execution::IntegrationExecution;
+pub use integration_service::{IntegrationCheckpoint, IntegrationService};
+pub use provider_service::{CredentialStore, ProviderService};
+pub use workspace_bootstrap::{VaultCandidate, WorkspaceBootstrap, WorkspaceDiscovery};
+
+pub const PROJECT_SCHEMA_VERSION: u32 = 3;
+pub const APPLICATION_STATE_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -22,6 +35,10 @@ pub enum AppError {
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
     Core(#[from] okc_core::OkcError),
+    #[error(transparent)]
+    Provider(#[from] okc_ai::ProviderError),
+    #[error(transparent)]
+    Credential(#[from] provider_service::CredentialError),
     #[error("invalid OKC project: {0}")]
     InvalidProject(String),
     #[error("project is already locked: {0}")]
@@ -141,6 +158,10 @@ pub struct ProjectManifest {
     pub name: String,
     pub curator_id: String,
     pub policy_version: String,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub ai_routes: v3::AiRouteConfig,
     pub sources: Vec<SourceBinding>,
 }
 
@@ -166,6 +187,10 @@ impl ProjectManifest {
                 "name, curator_id, or policy_version is empty or unsafe".into(),
             ));
         }
+        if let Some(language) = &self.language {
+            v3::validate_bcp47(language)?;
+        }
+        self.ai_routes.validate()?;
         if self.sources.len() > 10 {
             return Err(AppError::InvalidProject(
                 "a project supports at most 10 sources".into(),
@@ -201,8 +226,12 @@ impl ProjectStore {
     ) -> Result<Self> {
         let root = root.as_ref();
         validate_project_path(root)?;
+        if let Some(parent) = root.parent().filter(|value| !value.as_os_str().is_empty()) {
+            fs::create_dir_all(parent)?;
+        }
         fs::create_dir(root)?;
-        set_private_directory(root)?;
+        let root = fs::canonicalize(root)?;
+        set_private_directory(&root)?;
         fs::create_dir(root.join("objects"))?;
         fs::create_dir(root.join("workspace"))?;
         set_private_directory(&root.join("objects"))?;
@@ -214,16 +243,15 @@ impl ProjectStore {
             name: name.into(),
             curator_id: curator_id.into(),
             policy_version: policy_version.into(),
+            language: None,
+            ai_routes: v3::AiRouteConfig::default(),
             sources: Vec::new(),
         };
         manifest.validate()?;
         write_new_json(&root.join("manifest.json"), &manifest)?;
         initialize_state(&root.join("state.sqlite3"))?;
         create_private_empty_file(&root.join("workspace/build.sqlite3"))?;
-        Ok(Self {
-            root: root.to_path_buf(),
-            manifest,
-        })
+        Ok(Self { root, manifest })
     }
 
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
@@ -235,14 +263,12 @@ impl ProjectStore {
                 "project root must be a non-symlink directory".into(),
             ));
         }
+        let root = fs::canonicalize(root)?;
         let manifest: ProjectManifest =
             serde_json::from_reader(File::open(root.join("manifest.json"))?)?;
         manifest.validate()?;
         initialize_state(&root.join("state.sqlite3"))?;
-        Ok(Self {
-            root: root.to_path_buf(),
-            manifest,
-        })
+        Ok(Self { root, manifest })
     }
 
     pub fn root(&self) -> &Path {
@@ -299,15 +325,9 @@ impl ProjectStore {
                 binding.source_id
             )));
         }
-        self.manifest.sources.push(binding);
-        self.manifest.sources.sort_by(|left, right| {
-            left.source_id
-                .cmp(&right.source_id)
-                .then_with(|| left.path.as_os_str().cmp(right.path.as_os_str()))
-        });
-        self.manifest.validate()?;
-        self.save_manifest()?;
-        self.invalidate_downstream("source added")
+        let mut sources = self.manifest.sources.clone();
+        sources.push(binding);
+        self.replace_sources(sources)
     }
 
     pub fn rebind_source(
@@ -317,20 +337,83 @@ impl ProjectStore {
         observed_snapshot_id: Option<String>,
     ) -> Result<()> {
         let path = path.into();
-        let source = self
-            .manifest
-            .sources
+        let mut sources = self.manifest.sources.clone();
+        let source = sources
             .iter_mut()
             .find(|source| &source.source_id == source_id)
             .ok_or_else(|| AppError::InvalidProject(format!("unknown source `{source_id}`")))?;
-        let changed =
-            source.path != path || source.snapshot_id.as_ref() != observed_snapshot_id.as_ref();
+        if source.path == path && source.snapshot_id.as_ref() == observed_snapshot_id.as_ref() {
+            return Ok(());
+        }
         source.path = path;
         source.snapshot_id = observed_snapshot_id;
-        self.save_manifest()?;
-        if changed {
-            self.invalidate_downstream("source rebound or snapshot changed")?;
+        self.replace_sources(sources)
+    }
+
+    /// Atomically replace the complete active source set while retaining all
+    /// historical runs and approvals in the append-only journal.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the public mutation boundary intentionally takes ownership of the replacement set"
+    )]
+    pub fn replace_sources(&mut self, sources: Vec<SourceBinding>) -> Result<()> {
+        let _lock = self.acquire_writer_lock()?;
+        let cwd = std::env::current_dir()?;
+        let bootstrap = workspace_bootstrap::WorkspaceBootstrap::new(cwd)?;
+        let sources = bootstrap.validate_source_selection(&sources)?;
+        if sources
+            .iter()
+            .any(|source| workspace_bootstrap::paths_overlap(&self.root, &source.path))
+        {
+            return Err(AppError::InvalidProject(
+                "project storage must be outside every immutable source".into(),
+            ));
         }
+        if self.manifest.sources == sources {
+            return Ok(());
+        }
+        let mut next_manifest = self.manifest.clone();
+        next_manifest.sources = sources;
+        next_manifest.validate()?;
+        let source_bytes = serde_json::to_vec(&next_manifest.sources)?;
+        let source_object = self.put_object(&source_bytes)?;
+        let revision_hash = domain_digest(b"okc:source-set:v3\0", &source_bytes);
+        let config_bytes = serde_json::to_vec(&(
+            &next_manifest.policy_version,
+            &next_manifest.language,
+            &next_manifest.ai_routes,
+        ))?;
+        let config_hash = domain_digest(b"okc:integration-config:v3\0", &config_bytes);
+        let connection = Connection::open(self.root.join("state.sqlite3"))?;
+        connection.pragma_update(None, "foreign_keys", "ON")?;
+        let transaction = connection.unchecked_transaction()?;
+        let sequence: u64 = transaction.query_row(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs",
+            [],
+            |row| row.get(0),
+        )?;
+        let run_id = format!(
+            "run_{}",
+            domain_digest(
+                b"okc:run:v3\0",
+                format!("{revision_hash}:{config_hash}:{sequence}").as_bytes()
+            )
+        );
+        transaction.execute(
+            "INSERT INTO runs(run_id,input_hash,config_hash,sequence) VALUES (?1,?2,?3,?4)",
+            params![run_id, revision_hash, config_hash, sequence],
+        )?;
+        transaction.execute(
+            "INSERT INTO source_set_revisions_v4(revision_hash,object_id,run_id) VALUES (?1,?2,?3)",
+            params![revision_hash, source_object, run_id],
+        )?;
+        transaction.execute(
+            "INSERT INTO project_events(kind, detail) VALUES ('source_invalidation', 'active source set replaced')",
+            [],
+        )?;
+        self.save_manifest_value(&next_manifest)?;
+        transaction.commit()?;
+        self.manifest = next_manifest;
         Ok(())
     }
 
@@ -371,9 +454,13 @@ impl ProjectStore {
     }
 
     fn save_manifest(&self) -> Result<()> {
+        self.save_manifest_value(&self.manifest)
+    }
+
+    fn save_manifest_value(&self, manifest: &ProjectManifest) -> Result<()> {
         let destination = self.root.join("manifest.json");
         let mut staged = tempfile::NamedTempFile::new_in(&self.root)?;
-        serde_json::to_writer_pretty(&mut staged, &self.manifest)?;
+        serde_json::to_writer_pretty(&mut staged, manifest)?;
         staged.write_all(b"\n")?;
         staged.as_file_mut().sync_all()?;
         staged.persist(&destination).map_err(|error| error.error)?;
@@ -384,18 +471,20 @@ impl ProjectStore {
     fn invalidate_downstream(&self, reason: &str) -> Result<()> {
         let connection = Connection::open(self.root.join("state.sqlite3"))?;
         let transaction = connection.unchecked_transaction()?;
-        transaction.execute("DELETE FROM stage_state WHERE stage != 'sources'", [])?;
-        transaction.execute("DELETE FROM decisions", [])?;
-        transaction.execute("DELETE FROM approvals", [])?;
         transaction.execute(
-            "INSERT INTO stage_state(stage, object_id, invalidation_reason)\
-             VALUES ('sources', NULL, ?1)\
-             ON CONFLICT(stage) DO UPDATE SET object_id=NULL, invalidation_reason=excluded.invalidation_reason",
+            "INSERT INTO project_events(kind, detail) VALUES ('source_invalidation', ?1)",
             params![reason],
         )?;
         transaction.commit()?;
         Ok(())
     }
+}
+
+fn domain_digest(domain: &[u8], bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
 }
 
 #[derive(Debug)]
@@ -417,6 +506,7 @@ pub enum OperationKind {
     Inspect,
     Plan,
     Augment,
+    Integrate,
     Compile,
     Pack,
     Verify,
@@ -440,6 +530,8 @@ pub struct ProgressEvent {
     pub phase: OperationPhase,
     pub completed: u64,
     pub total: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_item: Option<String>,
 }
 
 pub trait ProgressObserver: Send + Sync {
@@ -450,6 +542,22 @@ pub trait ProgressObserver: Send + Sync {
 pub struct OperationControl {
     pub cancellation: CancellationToken,
     pub observer: Arc<dyn ProgressObserver>,
+}
+
+impl OperationControl {
+    pub fn quiet() -> Self {
+        Self {
+            cancellation: CancellationToken::default(),
+            observer: Arc::new(NoopProgressObserver),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct NoopProgressObserver;
+
+impl ProgressObserver for NoopProgressObserver {
+    fn observe(&self, _event: &ProgressEvent) {}
 }
 
 fn validate_project_path(path: &Path) -> Result<()> {
@@ -465,15 +573,19 @@ fn validate_project_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one auditable SQLite schema definition"
+)]
 fn initialize_state(path: &Path) -> Result<()> {
     let connection = Connection::open(path)?;
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
     connection.pragma_update(None, "synchronous", "FULL")?;
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version > PROJECT_SCHEMA_VERSION {
+    if version > APPLICATION_STATE_SCHEMA_VERSION {
         return Err(AppError::InvalidProject(format!(
-            "state schema {version} is newer than supported schema {PROJECT_SCHEMA_VERSION}"
+            "state schema {version} is newer than supported schema {APPLICATION_STATE_SCHEMA_VERSION}"
         )));
     }
     connection.execute_batch(
@@ -490,7 +602,85 @@ fn initialize_state(path: &Path) -> Result<()> {
              proposal_id TEXT PRIMARY KEY,\
              object_id TEXT NOT NULL\
          );\
-         PRAGMA user_version = 2;",
+         CREATE TABLE IF NOT EXISTS project_events (\
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,\
+             kind TEXT NOT NULL,\
+             detail TEXT NOT NULL\
+         );\
+         CREATE TABLE IF NOT EXISTS runs (\
+             run_id TEXT PRIMARY KEY,\
+             input_hash TEXT NOT NULL,\
+             config_hash TEXT NOT NULL,\
+             sequence INTEGER NOT NULL UNIQUE\
+         );\
+         CREATE TABLE IF NOT EXISTS task_definitions (\
+             task_id TEXT PRIMARY KEY,\
+             run_id TEXT NOT NULL REFERENCES runs(run_id),\
+             stage TEXT NOT NULL,\
+             cache_key TEXT NOT NULL,\
+             request_object TEXT NOT NULL,\
+             UNIQUE(run_id, cache_key)\
+         );\
+         CREATE TABLE IF NOT EXISTS task_events (\
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,\
+             task_id TEXT NOT NULL REFERENCES task_definitions(task_id),\
+             status TEXT NOT NULL,\
+             response_object TEXT,\
+             error_kind TEXT\
+         );\
+         CREATE TABLE IF NOT EXISTS exchanges_v3 (\
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,\
+             run_id TEXT NOT NULL REFERENCES runs(run_id),\
+             task_id TEXT NOT NULL REFERENCES task_definitions(task_id),\
+             recording_object TEXT NOT NULL,\
+             recording_hash TEXT NOT NULL\
+         );\
+         CREATE TABLE IF NOT EXISTS cluster_revisions_v3 (\
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,\
+             run_id TEXT NOT NULL REFERENCES runs(run_id),\
+             cluster_id TEXT NOT NULL,\
+             revision_hash TEXT NOT NULL,\
+             object_id TEXT NOT NULL\
+         );\
+         CREATE TABLE IF NOT EXISTS approvals_v3 (\
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,\
+             run_id TEXT NOT NULL REFERENCES runs(run_id),\
+             approval_kind TEXT NOT NULL,\
+             target_id TEXT NOT NULL,\
+             target_hash TEXT NOT NULL,\
+             object_id TEXT NOT NULL\
+         );\
+         CREATE TABLE IF NOT EXISTS source_set_revisions_v4 (\
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,\
+             revision_hash TEXT NOT NULL,\
+             object_id TEXT NOT NULL,\
+             run_id TEXT NOT NULL REFERENCES runs(run_id)\
+         );\
+         CREATE TABLE IF NOT EXISTS integration_plans_v4 (\
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,\
+             run_id TEXT NOT NULL REFERENCES runs(run_id),\
+             plan_id TEXT NOT NULL,\
+             plan_hash TEXT NOT NULL,\
+             object_id TEXT NOT NULL\
+         );\
+         CREATE TABLE IF NOT EXISTS verified_outputs_v4 (\
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,\
+             run_id TEXT NOT NULL REFERENCES runs(run_id),\
+             plan_id TEXT NOT NULL,\
+             output_path TEXT NOT NULL,\
+             manifest_object TEXT NOT NULL\
+         );\
+         CREATE TABLE IF NOT EXISTS cluster_feedback_v4 (\
+             sequence INTEGER PRIMARY KEY AUTOINCREMENT,\
+             run_id TEXT NOT NULL REFERENCES runs(run_id),\
+             cluster_id TEXT NOT NULL,\
+             revision INTEGER NOT NULL,\
+             feedback_hash TEXT NOT NULL,\
+             feedback_object TEXT NOT NULL,\
+             previous_proposal_hash TEXT NOT NULL,\
+             previous_critic_hash TEXT NOT NULL\
+         );\
+         PRAGMA user_version = 4;",
     )?;
     set_private_file(path)?;
     Ok(())
@@ -513,7 +703,7 @@ fn create_private_empty_file(path: &Path) -> Result<()> {
 
 fn hex_digest(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"okc:project-object:v2\0");
+    hasher.update(b"okc:project-object:v3\0");
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
 }
@@ -528,14 +718,14 @@ fn is_probably_shared_location(path: &Path) -> bool {
 }
 
 #[cfg(unix)]
-fn set_private_file(path: &Path) -> Result<()> {
+pub(crate) fn set_private_file(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn set_private_file(_path: &Path) -> Result<()> {
+pub(crate) fn set_private_file(_path: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -577,21 +767,38 @@ mod tests {
         );
 
         let source_id = SourceId::new("alpha").expect("source ID");
+        let first_source = temporary.path().join("alpha");
+        let moved_source = temporary.path().join("moved");
+        fs::create_dir(&first_source).expect("first source");
+        fs::create_dir(&moved_source).expect("moved source");
+        fs::write(first_source.join("note.md"), b"first").expect("first note");
+        fs::write(moved_source.join("note.md"), b"moved").expect("moved note");
+        let first_metadata = fs::metadata(first_source.join("note.md")).expect("metadata");
         project
             .add_source(SourceBinding {
                 source_id: source_id.clone(),
                 owner_display_name: Some("Alice".into()),
-                path: PathBuf::from("/vault/alpha"),
+                path: first_source.clone(),
                 snapshot_id: Some("snap_old".into()),
             })
             .expect("add source");
         project
-            .rebind_source(&source_id, "/vault/moved", Some("snap_new".into()))
+            .rebind_source(&source_id, &moved_source, Some("snap_new".into()))
             .expect("rebind source");
+        assert_eq!(
+            fs::read(first_source.join("note.md")).expect("unchanged source"),
+            b"first"
+        );
+        let after_metadata = fs::metadata(first_source.join("note.md")).expect("metadata");
+        assert_eq!(first_metadata.len(), after_metadata.len());
+        assert_eq!(
+            first_metadata.modified().expect("modified time"),
+            after_metadata.modified().expect("modified time")
+        );
         let reopened = ProjectStore::open(&root).expect("reopen project");
         assert_eq!(
             reopened.manifest().sources[0].path,
-            PathBuf::from("/vault/moved")
+            fs::canonicalize(moved_source).expect("canonical moved source")
         );
     }
 

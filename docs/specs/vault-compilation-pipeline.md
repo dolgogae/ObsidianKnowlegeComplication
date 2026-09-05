@@ -3,7 +3,7 @@ title: Vault Compilation Pipeline
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-03
 decision_refs:
   - ADR-0003
   - ADR-0005
@@ -13,13 +13,44 @@ decision_refs:
   - ADR-0014
   - ADR-0016
   - ADR-0017
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
 source_refs:
   - HIST-COMPILER-PLAN
 ---
 
 # Vault Compilation Pipeline
 
-## Ordered stages
+## Schema-3 integration stages
+
+1. Run the existing safe snapshot, parse, exact-duplicate, and link analysis.
+2. Seal every Markdown block and frontmatter value into an integration corpus.
+3. Run sensitive-data preflight before any provider disclosure and authorize
+   each role/cluster against its local or remote boundary.
+4. Generate and validate ordered embeddings, then record the complete semantic
+   candidate set.
+5. Ask the organizer for exactly-one document clustering and safe canonical
+   paths; locally validate and obtain one whole-taxonomy human approval.
+6. For every cluster, including singletons, obtain typed synthesis sections,
+   evidence, dispositions, related links, and contradiction sets.
+7. Run a separate critic comparison. `critical` or `major` findings block the
+   revision; only `minor` findings may receive curator/rationale-bound waivers.
+8. Obtain one exact cluster approval, including every omission approval.
+9. Seal taxonomy, proposals, critic reports, approvals, and provider recording
+   hashes into `ApprovedIntegrationPlan`.
+10. Compile offline into canonical notes and source-path redirect stubs, write
+    audit metadata, publish atomically, and independently verify reproduction.
+
+`okc integrate` journals preflight, embedding, local candidates, organizer,
+synthesis, and critic tasks and resumes complete task responses. `review
+taxonomy` and `review cluster` expose the implemented approval boundary. The
+current development slice does not yet implement block-size chunk batching,
+HNSW/candidate-union parity, manual amendments,
+Canvas/attachment/Base carry-through, or V3 Pack publication. These missing
+stages MUST NOT be represented as a stable or complete V3 compiler.
+
+## Frozen schema-2 ordered stages
 
 1. **Open safely:** resolve input kind, establish resource limits, reject unsafe archives and paths.
 2. **Enumerate:** traverse with deterministic logical-path ordering and exclusions.

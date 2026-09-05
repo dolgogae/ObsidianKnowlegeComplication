@@ -3,11 +3,13 @@ title: Glossary
 status: normative-v1
 owners:
   - architect
-last_updated: 2026-09-02
+last_updated: 2026-09-03
 decision_refs:
   - ADR-0003
   - ADR-0015
   - ADR-0017
+  - ADR-0022
+  - ADR-0024
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
 ---
@@ -26,10 +28,15 @@ source_refs:
 | Claim | A proposition represented with context, evidence, time, and confidence; conflicting claims may coexist. |
 | Compilation plan | Deterministic, reviewable set of intended output operations, conflicts, and diagnostics. |
 | Materialization plan | Immutable effective operation set derived from one Draft Plan, sealed conflict actions, and approved proposals. |
-| Proposal | Optional provider-generated suggestion that is untrusted until validated and explicitly approved. |
+| Proposal | Provider-generated suggestion that is untrusted until locally validated and explicitly approved; V3 requires proposals but never trusts them as authority. |
 | Approval | Immutable user or policy decision permitting a validated proposal to enter a particular plan revision. |
+| Integration corpus | Schema-3 sealed inventory of all Markdown documents, blocks, and individual frontmatter values. |
+| Taxonomy | Complete, exactly-once assignment of every V3 Markdown document to an approved cluster and canonical path. |
+| Disposition | Exactly one V3 treatment for a block or metadata value: integrated, preserved verbatim, or omission proposed. |
+| Critic report | Independent structured comparison of a synthesis proposal with its complete source evidence; major/critical findings block approval. |
+| Approved integration plan | Complete schema-3 offline compilation authority binding corpus, taxonomy, synthesis, critic, approvals, waivers/omissions, and provider recordings. |
 | Compiled Vault | Newly materialized Obsidian-compatible output containing selected and generated knowledge, not embedded raw source snapshots. |
-| OKCPack | V2 deterministic `tar.zst` distribution artifact with content, manifest, provenance, and checksums; user-created V2 Packs are unsigned. |
+| OKCPack | Deterministic `tar.zst` distribution artifact with content, manifest, provenance, and checksums; V2 is implemented, while the V3 profile remains unimplemented. |
 | MCP adapter | Thin Model Context Protocol surface over framework operations or an external retrieval engine. |
 | Derived index | Replaceable BM25, vector, or graph representation built from canonical data; never the source of truth. |
 | Conflict | Two or more inputs or decisions that cannot safely share the same semantic or output identity without explicit handling. |

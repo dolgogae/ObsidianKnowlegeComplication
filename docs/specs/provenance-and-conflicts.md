@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - architect
   - core-rust-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-03
 decision_refs:
   - ADR-0003
   - ADR-0006
@@ -13,6 +13,8 @@ decision_refs:
   - ADR-0012
   - ADR-0016
   - ADR-0017
+  - ADR-0022
+  - ADR-0024
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -35,6 +37,21 @@ source exists: an unrelated valid source is not provenance for an output.
 Standalone audit summaries and the embedded approved plan MUST agree exactly.
 
 The detailed record algorithm is [`../algorithms/stable/provenance-and-evidence.md`](../algorithms/stable/provenance-and-evidence.md).
+
+For schema 3, each canonical-note record binds output hash, integration plan,
+taxonomy cluster, synthesis proposal, critic report, approved cluster revision,
+and the deduplicated exact block evidence used by its sections and
+contradictions. Each legacy redirect binds the same chain plus its source
+document and every source block. `okc explain` first performs full V3
+verification, then returns exactly one record for the requested safe relative
+path. Missing or duplicate records fail closed.
+
+Taxonomy changes stale every cluster proposal. Proposal/manual-section changes
+stale the critic and approval. Critic changes stale the cluster approval.
+Omission approvals bind exact disposition target and hash; minor waivers bind
+exact finding ID, curator, and rationale. Schema-3 contradiction sets preserve
+at least two independently evidenced, context-scoped claims and never grant an
+AI authority to select a winner.
 
 Every physical content path and the plan/conflict/diagnostic/transcript audit
 paths are represented in the stored typed graph. The graph uses required

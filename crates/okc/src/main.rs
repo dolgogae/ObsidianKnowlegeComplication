@@ -1,5 +1,6 @@
 mod command_provider;
 mod tui;
+mod v3_cli;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -61,6 +62,40 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CommandKind {
+    /// Create, upgrade, and configure a schema-3 project.
+    Project {
+        #[command(subcommand)]
+        command: v3_cli::ProjectCommand,
+    },
+
+    /// Manage global AI provider profiles with environment or OS-keychain references.
+    Provider {
+        #[command(subcommand)]
+        command: v3_cli::ProviderCommand,
+    },
+
+    /// Start or resume the schema-3 integration journal.
+    Integrate {
+        /// Permit this run to disclose non-sensitive content to a remote profile.
+        #[arg(long)]
+        allow_remote_provider: bool,
+        /// Confirm a non-interactive remote disclosure.
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Inspect schema-3 integration progress.
+    Integration {
+        #[command(subcommand)]
+        command: v3_cli::IntegrationCommand,
+    },
+
+    /// Review and approve schema-3 taxonomy and cluster proposals.
+    Review {
+        #[command(subcommand)]
+        command: v3_cli::ReviewCommand,
+    },
+
     /// Launch the interactive terminal interface.
     Tui,
 
@@ -153,7 +188,10 @@ enum CommandKind {
     /// Materialize an approved plan into a new destination atomically.
     Compile {
         #[arg(value_name = "APPROVED_PLAN")]
-        approved_plan: PathBuf,
+        approved_plan: Option<PathBuf>,
+        /// Fully approved schema-3 integration plan; compilation remains provider-free.
+        #[arg(long, value_name = "FILE", conflicts_with = "approved_plan")]
+        integration_plan: Option<PathBuf>,
         #[arg(long, value_name = "PATH")]
         output: PathBuf,
         #[arg(
@@ -328,6 +366,20 @@ fn main() -> ExitCode {
         }
         cli.command = Some(CommandKind::Tui);
     }
+    if cli.project.is_none()
+        && cli
+            .command
+            .as_ref()
+            .is_some_and(command_requires_discovered_project)
+    {
+        match discover_single_project() {
+            Ok(path) => cli.project = Some(path),
+            Err(error) => {
+                eprintln!("okc: {}", sanitize_terminal(&error.message));
+                return ExitCode::from(error.code);
+            }
+        }
+    }
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -337,12 +389,60 @@ fn main() -> ExitCode {
     }
 }
 
+fn command_requires_discovered_project(command: &CommandKind) -> bool {
+    match command {
+        CommandKind::Integrate { .. }
+        | CommandKind::Integration { .. }
+        | CommandKind::Review { .. }
+        | CommandKind::Project {
+            command: v3_cli::ProjectCommand::Source { .. } | v3_cli::ProjectCommand::AiRoute { .. },
+        } => true,
+        CommandKind::Compile {
+            approved_plan,
+            integration_plan,
+            ..
+        } => approved_plan.is_none() && integration_plan.is_none(),
+        _ => false,
+    }
+}
+
+fn discover_single_project() -> CliResult<PathBuf> {
+    let bootstrap = okc_app::WorkspaceBootstrap::from_current_dir()
+        .map_err(|error| CliFailure::from_error(EXIT_INPUT, error))?;
+    let projects = bootstrap
+        .discover_projects(None)
+        .map_err(|error| CliFailure::from_error(EXIT_INPUT, error))?;
+    match projects.as_slice() {
+        [project] => Ok(project.path.clone()),
+        [] => Err(CliFailure::new(
+            EXIT_USAGE,
+            "no cwd project found; use --project PATH or start interactive `okc` to create one",
+        )),
+        _ => Err(CliFailure::new(
+            EXIT_USAGE,
+            "multiple cwd projects found; select one with --project PATH",
+        )),
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn run(cli: Cli) -> CliResult<()> {
     let command = cli
         .command
         .ok_or_else(|| CliFailure::new(EXIT_USAGE, "a command is required"))?;
     match command {
+        CommandKind::Project { command } => {
+            v3_cli::project_command(command, cli.project.as_deref())
+        }
+        CommandKind::Provider { command } => v3_cli::provider_command(command),
+        CommandKind::Integrate {
+            allow_remote_provider,
+            yes,
+        } => v3_cli::integrate_command(cli.project.as_deref(), allow_remote_provider, yes),
+        CommandKind::Integration { command } => {
+            v3_cli::integration_command(command, cli.project.as_deref())
+        }
+        CommandKind::Review { command } => v3_cli::review_command(command, cli.project.as_deref()),
         CommandKind::Tui => {
             tui::run(cli.project.as_deref()).map_err(|error| CliFailure::new(EXIT_INTERNAL, error))
         }
@@ -424,16 +524,43 @@ fn run(cli: Cli) -> CliResult<()> {
         } => approve_command(&plan, &decisions, proposals.as_deref(), &out),
         CommandKind::Compile {
             approved_plan,
+            integration_plan,
             output,
             pack,
             format,
-        } => compile_command(
-            cli.policy.as_deref(),
-            &approved_plan,
-            &output,
-            pack.as_deref(),
-            format,
-        ),
+        } => {
+            if let Some(integration_plan) = integration_plan {
+                if pack.is_some() {
+                    return Err(CliFailure::new(
+                        EXIT_USAGE,
+                        "schema-3 OKCPack publication is not yet enabled; compile the verified directory",
+                    ));
+                }
+                v3_cli::compile_command(cli.project.as_deref(), &integration_plan, &output, format)
+            } else if let Some(approved_plan) = approved_plan {
+                compile_command(
+                    cli.policy.as_deref(),
+                    &approved_plan,
+                    &output,
+                    pack.as_deref(),
+                    format,
+                )
+            } else {
+                if pack.is_some() {
+                    return Err(CliFailure::new(
+                        EXIT_USAGE,
+                        "schema-3 OKCPack publication is not yet enabled",
+                    ));
+                }
+                v3_cli::compile_latest_command(
+                    cli.project.as_deref().ok_or_else(|| {
+                        CliFailure::new(EXIT_USAGE, "compile requires a cwd project")
+                    })?,
+                    &output,
+                    format,
+                )
+            }
+        }
         CommandKind::Verify { artifact, format } => verify_command(&artifact, format),
         CommandKind::Explain {
             artifact,
@@ -459,6 +586,9 @@ fn run(cli: Cli) -> CliResult<()> {
 }
 
 fn verify_command(artifact: &Path, format: OutputFormat) -> CliResult<()> {
+    if v3_cli::is_v3_artifact(artifact) {
+        return v3_cli::verify_command(artifact, format);
+    }
     if is_legacy_artifact(artifact) {
         let compiler = okc_legacy_v1::VaultCompiler::builder()
             .build()
@@ -478,8 +608,9 @@ fn verify_command(artifact: &Path, format: OutputFormat) -> CliResult<()> {
             }
         };
     }
-    let compiler = build_compiler(CompilerPolicy::default(), None, EXIT_VERIFY)?;
-    let mut report = compiler
+    let reader = okc_legacy_v2::LegacyV2Reader::new()
+        .map_err(|error| CliFailure::from_okc(EXIT_VERIFY, error))?;
+    let mut report = reader
         .verify(artifact)
         .map_err(|error| CliFailure::from_okc(EXIT_VERIFY, error))?;
     // Pack verification happens in a private extraction directory. Do not
@@ -496,6 +627,9 @@ fn explain_command(
     cursor: Option<&str>,
     format: OutputFormat,
 ) -> CliResult<()> {
+    if v3_cli::is_v3_artifact(artifact) {
+        return v3_cli::explain_command(artifact, output_path, package, format);
+    }
     if is_legacy_artifact(artifact) {
         let compiler = okc_legacy_v1::VaultCompiler::builder()
             .build()
@@ -527,7 +661,8 @@ fn explain_command(
             }
         };
     }
-    let compiler = build_compiler(CompilerPolicy::default(), None, EXIT_VERIFY)?;
+    let reader = okc_legacy_v2::LegacyV2Reader::new()
+        .map_err(|error| CliFailure::from_okc(EXIT_VERIFY, error))?;
     let mut query = if package {
         okc_core::provenance::ProvenanceQuery::package()
     } else {
@@ -545,8 +680,8 @@ fn explain_command(
     if let Some(cursor) = cursor {
         query = query.with_cursor(cursor.to_owned());
     }
-    let page = compiler
-        .explain_provenance_page(artifact, &query)
+    let page = reader
+        .explain(artifact, &query)
         .map_err(|error| CliFailure::from_okc(EXIT_VERIFY, error))?;
     print_provenance(&page, format)
 }
@@ -723,7 +858,7 @@ fn validate_augmentation_command(plan_path: &Path, augmentation_path: &Path) -> 
 
 fn doctor_command(project: Option<&Path>) -> CliResult<()> {
     println!("OKC {}", env!("CARGO_PKG_VERSION"));
-    println!("format: okc schema 2");
+    println!("format: okc schema 3 (V1/V2 verify/explain read-only compatibility)");
     println!("stdin TTY: {}", std::io::stdin().is_terminal());
     println!("stdout TTY: {}", std::io::stdout().is_terminal());
     println!(

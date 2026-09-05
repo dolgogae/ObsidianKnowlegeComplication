@@ -4,13 +4,15 @@ status: normative-v1
 owners:
   - architect
   - core-rust-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-03
 decision_refs:
   - ADR-0003
   - ADR-0008
   - ADR-0012
   - ADR-0015
   - ADR-0016
+  - ADR-0022
+  - ADR-0024
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -69,9 +71,32 @@ Timestamps from the input filesystem MAY be preserved as informational metadata 
 - `BaseArtifact`: `BaseArtifactId` and an opaque source-file reference/path; no inferred internal semantics in V2. Its bytes remain in the immutable source snapshot and are copied without interpretation.
 - `EvidenceRef`: snapshot ID, document ID, optional block ID/span, and content hash.
 
-### Future semantic records
+### V3 integration records
 
-`Entity`, `Claim`, `Relationship`, `Topic`, and `SourceEvidence` are `normative-future`. They may be emitted by experimental packages but MUST NOT be required for deterministic V2 file compilation. A `Claim` cannot exist without one or more `EvidenceRef` records.
+Schema 3 adds a sealed `IntegrationCorpus` containing every Markdown
+`DocumentId`, its ordered source blocks with content hash and retained text,
+and every individual frontmatter value with identity, content hash, and typed
+value. It then uses:
+
+- `TaxonomyProposal` and `TaxonomyCluster` for exactly-one cluster assignment;
+- `SynthesisSection` plus exact `SectionEvidence`;
+- one `SourceDisposition` per source block and metadata value;
+- typed `RelatedLink` and `ContradictionSet` records;
+- `CriticReport`, omission approvals, minor waivers, and cluster approvals;
+- `ApprovedIntegrationPlan` as the complete offline compilation authority.
+
+The three legal dispositions are `integrated`, `preserved_verbatim`, and
+`omission_proposed`. Integrated blocks MUST be cited by an output section or
+preserved contradiction claim. Preserved blocks and non-omitted metadata MUST
+remain materialized. An omission has no effect without an exact curator-bound
+approval. All schema-3 semantic IDs and hashes use `okc:*:v3\0` domains.
+
+### Research semantic records
+
+`Entity`, probabilistic `Claim`, `Relationship`, `Topic`, and calibrated
+`SourceEvidence` graphs remain `normative-future`. V3 uses explicit section and
+contradiction evidence, not `ALG-MEM-006` or an uncalibrated claim-confidence
+number. A future `Claim` cannot exist without one or more evidence records.
 
 ## Parsing and preservation
 
@@ -111,11 +136,11 @@ fail closed because they cannot be preserved or addressed unambiguously.
 Every serialized IR document includes `schema_version`. Readers must support
 explicitly listed older versions through pure migrations and reject unknown
 newer major versions. Migration MUST preserve IDs and provenance unless the
-version notes define an intentional identity break through an ADR. The current
-`0.2.0` reader accepts only schema version 2; no older-version migrations are
-implemented yet. Before the first published release, schema 1 was completed
-with typed Canvas-reference states and `BaseArtifactId`; working-tree artifacts
-from earlier development commits are not a supported compatibility version.
+version notes define an intentional identity break through an ADR. The schema-3
+project reader accepts only schema 3. V1 and V2 artifact readers are frozen
+behind `verify` and `explain`; they are not general IR migrations. `project
+upgrade --out` reconstructs schema-3 source bindings in a new path and carries
+no downstream V2 plans, proposals, or approvals.
 
 ## Invariants
 
@@ -127,3 +152,7 @@ from earlier development commits are not a supported compatibility version.
 6. Unknown Canvas fields are preserved through round trips.
 7. V2 rejects non-UTF-8 source paths and never labels CP437 or replacement-
    decoded archive names as UTF-8.
+8. V3 assigns every Markdown document to exactly one taxonomy cluster.
+9. V3 assigns every source block and frontmatter value exactly one disposition.
+10. Every generated section and contradiction claim has locally validated,
+    cluster-owned evidence.

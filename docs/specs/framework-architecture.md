@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - architect
   - core-rust-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-05
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -15,6 +15,10 @@ decision_refs:
   - ADR-0017
   - ADR-0019
   - ADR-0021
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
+  - ADR-0025
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -38,7 +42,7 @@ Obsidian plugin       MCP server       Other applications
                          |
        filesystem / SQLite workspace / pack
 
-Provider process -> versioned NDJSON -> untrusted proposals
+Provider process/HTTP -> `okc-ai` -> recorded untrusted proposals
 External MCP engines -> adapters -> derived candidates only
 ```
 
@@ -48,16 +52,19 @@ Dependencies point inward. The compiler core MUST NOT import Obsidian, MCP, host
 
 | Package | State | Responsibility |
 |---|---|---|
-| `okc-core` | implemented public library | identifiers, IR, snapshotting, parsing/normalization, deduplication, planning, immutable materialization, compilation, packing, provenance, verification, workspace persistence |
-| `okc-protocol` | implemented public library | versioned serializable request/response, provider capabilities, proposal/evidence, and transcript schemas |
-| `okc-app` | partially implemented application library | implemented project persistence, writer lock, immutable object storage, updater and progress/cancellation types; worker orchestration remains |
-| `okc` | implemented sole binary | Clap CLI, Ratatui/Crossterm TUI, human/JSON output, supervised subprocess provider execution |
+| `okc-core` | implemented public library | V2 deterministic compiler plus provider-free V3 integration validation, offline canonical/stub materialization, and independent directory verification |
+| `okc-protocol` | implemented public library | frozen schema-2 augmentation plus strict schema-3 command-provider envelopes |
+| `okc-ai` | implemented application-side library | semantic structured-generation/embedding traits, portable schema validation, injected zeroized credentials, bounded synchronous HTTP, and initial vendor adapters |
+| `okc-app` | implemented application library | schema-3 projects, cwd/Vault discovery, provider/keychain services, immutable objects, append-only run/task/exchange/cluster/approval/plan journal, shared integration orchestration, sensitive preflight/routing, updater and worker control types |
+| `okc` | implemented sole binary | thin Clap CLI and Ratatui/Crossterm TUI adapters over `okc-app`, human/JSON output, and supervised subprocess provider execution |
 | `vaultc` | deprecated facade, no binary | one-minor Rust compatibility aliases over `okc-core` |
-| internal V1 readers | private compatibility packages | frozen schema-1 verify/explain implementation and literal goldens only |
+| internal V1/V2 readers | private compatibility packages | frozen schema-1 and read-only schema-2 verify/explain boundaries and literal goldens only |
 | `okc-mcp` | future adapter | MCP tools that call public library operations |
 | `okc-memory` | future experimental | calibrated memory/retrieval models isolated from file compilation |
 
-Circular dependencies are forbidden. `okc-core` may depend on protocol data types but MUST NOT launch provider processes. Process supervision belongs to `okc-app` or the `okc` binary.
+Circular dependencies are forbidden. `okc-core` may depend on protocol data
+types but MUST NOT launch provider processes or make HTTP requests. Process
+supervision and HTTP belong to `okc-ai`, `okc-app`, or the `okc` binary.
 
 ## Module boundaries
 
@@ -78,6 +85,8 @@ Circular dependencies are forbidden. `okc-core` may depend on protocol data type
 - `provenance`: emit and explain exact output-to-source derivations.
 - `verify`: independently verify manifest, paths, hashes, sealed audit linkage, approvals, and provenance closure.
 - `workspace`: bounded SQLite-backed intermediate state.
+- `integration`: schema-3 corpus/taxonomy/disposition/evidence/critic/approval
+  validation plus provider-free canonical-note and redirect-stub materialization.
 
 ## State machine
 
@@ -97,6 +106,19 @@ Sources
 
 Operations MUST reject inputs from the wrong state. Any change to source hashes, compiler semantic version, policy configuration, or proposal payload invalidates dependent approvals.
 
+The schema-3 state machine is:
+
+```text
+Immutable corpus -> sensitive preflight -> recorded embeddings/candidates
+  -> taxonomy proposal -> taxonomy approval
+  -> per-cluster synthesis -> critic -> cluster approval
+  -> ApprovedIntegrationPlan -> offline materialization -> verification
+```
+
+Every transition appends a journal event or immutable object. A source, policy,
+route, prompt, schema, taxonomy, proposal, critic, or manual-section change
+creates a new dependent identity; it never rewrites earlier authority.
+
 ## Data ownership
 
 - Raw snapshots own original bytes.
@@ -111,10 +133,14 @@ Operations MUST reject inputs from the wrong state. Any change to source hashes,
 `okc-app` owns `Name.okc-project/manifest.json`, `state.sqlite3`, immutable
 `objects/`, `workspace/build.sqlite3`, and the single-writer `project.lock`.
 SQLite uses WAL, foreign keys, `FULL` synchronous mode, deterministic
-transactions, explicit migration through `user_version = 2`, and private Unix
+transactions, explicit migration through private `user_version = 4`, and private Unix
 permissions. The build workspace has its own core schema and MUST NOT be
-initialized with the application-state tables. A source rebind or changed
-snapshot invalidates all downstream plan, decision, and approval references.
+initialized with the application-state tables. A source rebind, route, policy,
+or language change appends an invalidation event and creates a new run identity;
+prior task, exchange, revision, and approval rows remain immutable history.
+Project and artifact JSON remain schema 3. State schema 4 appends source-set
+revisions and approved-integration-plan object pointers rather than rewriting
+historical runs.
 
 Project data is plaintext. Applications MUST warn for likely shared/network
 locations and MUST NOT imply encryption.

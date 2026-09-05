@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - core-rust-engineer
   - release-maintainer
-last_updated: 2026-09-02
+last_updated: 2026-09-03
 decision_refs:
   - ADR-0003
   - ADR-0004
@@ -18,13 +18,46 @@ decision_refs:
   - ADR-0017
   - ADR-0018
   - ADR-0020
+  - ADR-0022
+  - ADR-0024
 source_refs:
   - HIST-COMPILER-PLAN
 ---
 
 # Compiled Vault and OKCPack Format
 
-## Output layout
+## Schema-3 directory profile
+
+The implemented V3 directory layout is:
+
+```text
+CompiledVault/
+├── knowledge/<approved taxonomy>/<slug>.md
+├── legacy/<source-id>/<original path>.md
+└── .okc/
+    ├── manifest.json
+    ├── integration-plan.json
+    ├── provenance.jsonl
+    └── checksums.txt
+```
+
+Every canonical note is reconstructed solely from the approved typed sections,
+contradiction sets, retained non-omitted metadata, and blocks explicitly marked
+`preserved_verbatim`. Every legacy stub links to its canonical note. Both note
+and stub provenance bind the integration plan, cluster, proposal, critic,
+cluster approval, and exact source block evidence. The verifier reseals the
+plan and regenerates every materialized byte before accepting the inventory.
+
+Compilation rejects an existing destination and makes no provider call. The
+manifest uses schema 3, product version `0.3.0`, V3 domains, and the reserved
+profile name `okc-tar-zstd-deterministic-v3`. V3 OKCPack encoding/publication is
+not implemented in this development slice, so the profile name is not evidence
+of a supported Pack writer. Attachments, Canvas, Base, and their V3 link
+rewrites are also not yet materialized and remain release blockers.
+
+## Frozen schema-2 output layout
+
+### Output layout
 
 ```text
 CompiledVault/

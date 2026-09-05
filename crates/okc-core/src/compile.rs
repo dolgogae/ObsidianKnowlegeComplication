@@ -975,7 +975,7 @@ fn classify_publish_error(destination: &Path, source: std::io::Error) -> OkcErro
 fn publish_directory_noreplace(staging: &Path, destination: &Path) -> std::io::Result<()> {
     let staging_parent = destination_parent(staging);
     let destination_parent = destination_parent(destination);
-    if staging_parent != destination_parent {
+    if staging_parent.canonicalize()? != destination_parent.canonicalize()? {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "staging and destination are not siblings",
@@ -1133,6 +1133,18 @@ mod tests {
     use crate::config::CompilerPolicy;
     use crate::error::{OkcError, StagingDispositionAction};
     use crate::{ApprovedPlan, OkcCompiler, SourceSpec};
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn relative_destination_and_absolute_stage_share_the_same_parent() {
+        let current = std::env::current_dir().expect("current directory");
+        let error = publish_directory_noreplace(
+            &current.join(".okc-missing-relative-stage"),
+            Path::new(".okc-missing-relative-destination"),
+        )
+        .expect_err("missing stage must fail");
+        assert_ne!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
 
     #[derive(Debug, Clone, Copy)]
     enum LateWinner {

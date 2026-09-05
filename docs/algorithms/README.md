@@ -5,12 +5,14 @@ owners:
   - architect
   - algorithms-ai-engineer
   - core-rust-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-05
 decision_refs:
   - ADR-0003
   - ADR-0004
   - ADR-0015
   - ADR-0017
+  - ADR-0022
+  - ADR-0024
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -23,7 +25,7 @@ The word “brain” is an engineering analogy. Immutable snapshots resemble epi
 ## Status meanings
 
 - `normative-v1`: first normative revision, required in the deterministic compiler path.
-- `normative-future`: specified direction, not required or enabled in the V2 default path.
+- `normative-future`: specified direction, not required or enabled in the current default compiler path.
 - `experimental`: isolated opt-in research; cannot affect default outputs.
 - `research-only`: exploratory; no product commitment.
 - `historical`: context only.
@@ -38,6 +40,8 @@ The word “brain” is an engineering analogy. Immutable snapshots resemble epi
 | ALG-DED-002 | MinHash/LSH near-duplicate candidates | normative-v1, review-only | [`stable/exact-and-near-deduplication.md`](stable/exact-and-near-deduplication.md) |
 | ALG-CNF-001 | conflict resolution and output layout | normative-v1 | [`stable/conflict-resolution-and-output-layout.md`](stable/conflict-resolution-and-output-layout.md) |
 | ALG-PRV-001 | provenance and evidence closure | normative-v1 | [`stable/provenance-and-evidence.md`](stable/provenance-and-evidence.md) |
+| ALG-SEM-001 | semantic candidates and complete taxonomy | normative-v1 for V3 | [`stable/semantic-candidate-and-taxonomy.md`](stable/semantic-candidate-and-taxonomy.md) |
+| ALG-INT-001 | evidence-complete synthesis and critic gate | normative-v1 for V3 | [`stable/evidence-complete-integration.md`](stable/evidence-complete-integration.md) |
 | ALG-CLM-001 | Bayesian claim confidence | normative-future | [`stable/bayesian-claim-confidence.md`](stable/bayesian-claim-confidence.md) |
 | ALG-MEM-001 | ACT-R-inspired activation and topic decay | experimental | [`experimental/memory-activation-and-topic-decay.md`](experimental/memory-activation-and-topic-decay.md) |
 | ALG-MEM-002 | graph spreading activation | experimental | [`experimental/spreading-activation.md`](experimental/spreading-activation.md) |
@@ -56,16 +60,20 @@ conflict/output rules, typed ambiguity actions, immutable materialization,
 provenance, approval, and atomic compilation. It MUST work without an
 embedding model, LLM, graph server, or MCP server.
 
-Bayesian claim confidence is housed with stable knowledge-model mathematics because its semantics must remain auditable, but its status is `normative-future`; V2 has no mandatory Claim layer.
+Bayesian claim confidence is housed with stable knowledge-model mathematics because its semantics must remain auditable, but its status is `normative-future`; V2 has no mandatory Claim layer and V3 does not use its uncalibrated score as an approval signal.
+
+The V3 path additionally requires ALG-SEM-001 and ALG-INT-001. These algorithms
+use provider output only as recorded proposals; deterministic local validation,
+critic closure, and curator approval remain compiler gates.
 
 ## Experimental isolation
 
 ACT-R activation, spreading activation, plasticity, consolidation, retrieval
 fusion, engine routing, and merge scores belong in a future `okc-memory`
 package or evaluation harness. Hopfield retrieval is research-only.
-Experimental results may annotate reports but MUST NOT change V2 default file
-selection, conflict resolution, approval, provenance, or safe output
-operations.
+Experimental results may annotate reports but MUST NOT change frozen V1/V2
+compatibility behavior or V3 default taxonomy, disposition, conflict
+resolution, approval, provenance, or safe output operations.
 
 ## Promotion gate
 

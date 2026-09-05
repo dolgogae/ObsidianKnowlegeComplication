@@ -4,11 +4,15 @@ status: normative-v1
 owners:
   - release-maintainer
   - qa-security-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-05
 decision_refs:
   - ADR-0007
   - ADR-0020
   - ADR-0021
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
+  - ADR-0025
 source_refs:
   - HIST-CURRENT-PLAN
 ---
@@ -48,5 +52,8 @@ the TUI and compiler never run on it.
 
 The config and receipt-aware client are present, but the protected signing
 environment, Apple certificate/notarization workflow, remote two-pass CI
-evidence, and QG-006 benchmark evidence do not exist in this checkout.
-Therefore publishing stable `0.2.0` is currently prohibited.
+evidence, and QG-006 benchmark evidence do not exist in this checkout. The V3
+semantic scale, Pack/non-Markdown materialization, manual-section review,
+schema-3 command adapter, provider conformance, and TUI PTY/platform gates in
+the testing specification are also open.
+Therefore publishing stable `0.3.0` is currently prohibited.

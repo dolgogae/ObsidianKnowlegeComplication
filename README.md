@@ -2,18 +2,39 @@
 
 `okc` compiles immutable Obsidian Vault snapshots into a new deterministic,
 auditable Compiled Vault. The Rust SDK owns inspection, planning, approval,
-compilation, verification, and provenance. AI providers, MCP servers, and
-Obsidian plugins are optional adapters.
+compilation, verification, and provenance. V3 requires recorded AI integration
+proposals; live providers remain replaceable adapters and are never required
+for offline replay/compile/verify. MCP servers and Obsidian plugins are optional
+adapters.
 
 The implementation contract starts at [`AGENTS.md`](AGENTS.md) and
 [`docs/INDEX.md`](docs/INDEX.md).
 
-> **Development status (2026-09-02):** the `0.2.0` OKC V2 tree is locally
-> verified on macOS arm64 (323 tests plus doctests), but it is **not a public
-> stable release**. Remote four-platform evidence, the reference performance
-> run, fuzz/PTY coverage, and native signing/notarization are still required.
+> **Development status (2026-09-05):** `0.3.0` contains a locally verified
+> schema-3 AI integration/directory-compilation slice plus frozen V1/V2 readers,
+> but it is **not a complete or public stable release**. V3 HNSW/chunking,
+> manual amendment, Pack and non-Markdown materialization, command-provider,
+> remote four-platform evidence, performance, fuzz/PTY, and native signing are
+> still required.
 > See [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) and
 > [`docs/RELEASE.md`](docs/RELEASE.md) before packaging or publishing it.
+
+## Implementation status at a glance
+
+| Surface | Current `0.3.0` development state |
+|---|---|
+| Schema-3 projects | Implemented: cwd discovery/creation, V2 source-binding-only upgrade, absolute source sets, AI routes, append-only schema-4 application journal |
+| AI integration | Implemented development path: sensitive preflight, embedding, organizer, taxonomy approval, per-cluster synthesis/critic/approval |
+| Offline output | Implemented for V3 directories: canonical Markdown, legacy redirect stubs, manifest, checksums, closed provenance, verify, explain |
+| Provider adapters | OpenAI, Anthropic, Gemini, Ollama, and OpenAI-compatible HTTP adapters are mock-conformance tested; environment references and native OS-keychain references are supported; live smoke tests are opt-in |
+| V3 Pack and non-Markdown output | Not implemented: attachment/Canvas/Base carry-through, complete link rewriting, and V3 OKCPack remain blockers |
+| TUI | Functional cwd workflow: provider setup, Vault selection, preflight/consent, taxonomy editing, cluster review/regeneration, compile, verify, and provenance; PTY/platform evidence remains |
+| Legacy boundary | V1/V2 artifacts dispatch through read-only readers, but development-only V2 writer commands remain exposed for the regression harness |
+
+Start with the Korean [`V3 AI integration guide`](guide/v3-integration.md).
+The [`5-minute Quickstart`](guide/index.md) preserves the frozen V2 regression
+walkthrough; the focused [`CLI`](guide/cli.md) and [`TUI`](guide/tui.md) guides
+cover the non-interactive and interactive workflows.
 
 ## Overview
 
@@ -59,19 +80,20 @@ Vaults and a publishable result. It:
   file references, and inventories Bases and attachments in a canonical IR;
 - plans exact deduplication, link rewrites, portable output paths, and typed
   conflicts before writing anything;
-- accepts optional provider-neutral AI proposals as data, then validates their
-  identities, evidence, and approvals;
-- materializes only a sealed `ApprovedPlan` through a verified sibling stage
-  and a native atomic no-replace directory commit, preserving any existing or
-  concurrently created destination;
-- creates deterministic `.okcpack` archives through one SDK/CLI verified,
-  atomic no-clobber publisher and independently verifies their checksums, plan
-  linkage, source-derived output commitments, audit files, and provenance.
+- obtains mandatory V3 organizer/synthesis/critic proposals through
+  provider-neutral interfaces, then validates identities, evidence,
+  dispositions, critic findings, and approvals;
+- materializes only a sealed approved plan (`ApprovedIntegrationPlan` in V3)
+  through a verified sibling stage and a native atomic no-replace directory
+  commit, preserving any existing or concurrently created destination;
+- preserves the frozen V2 deterministic `.okcpack` writer/verifier as a
+  regression surface; the schema-3 Pack writer is not implemented yet.
 
-User-created `.okcpack` files are deterministic and internally verifiable but
-unsigned. Application release signing/notarization is a separate mandatory
-release gate. See [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) for the exact
-implementation and verification boundary.
+Frozen V2 user-created `.okcpack` files are deterministic and internally
+verifiable but unsigned. A V3 Pack cannot currently be produced. Application
+release signing/notarization is a separate mandatory release gate. See
+[`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) for the exact implementation
+and verification boundary.
 
 ## Multi-Vault behavior
 
@@ -97,7 +119,26 @@ The V2 support contract is at most 10 input Vaults, 100,000 notes, and 20 GB
 per project. Those limits are enforced or estimated by the implementation, but
 the full reference performance workload has not yet passed QG-006.
 
-## V2 format and V1 compatibility
+## V3 format and legacy compatibility
+
+| Surface | OKC V3 value |
+|---|---|
+| Format family | `okc` |
+| Schema | `3` |
+| Identity domain prefix | `okc:*:v3\0` |
+| Audit directory | `.okc/` |
+| Canonical notes | `knowledge/<taxonomy>/<slug>.md` |
+| Source redirects | `legacy/<source-id>/<original-path>.md` |
+
+V3 compile requires a complete approved integration plan and sealed provider
+recordings, but performs no live provider call. ADR-0022 defines V1 and V2 as
+read-only through `okc verify` and `okc explain`; `project upgrade --out`
+constructs a separate V3 project from V2 source bindings without copying
+downstream authority. The development CLI still exposes V2 writer commands for
+the existing regression harness, so the public legacy boundary is not yet a
+completed release gate.
+
+### Frozen V2 literals
 
 | Surface | OKC V2 value |
 |---|---|
@@ -108,21 +149,20 @@ the full reference performance workload has not yet passed QG-006.
 | Pack extension | `.okcpack` |
 | Pack profile | `okc-tar-zstd-deterministic-v2` |
 
-V2 writers never create `.vaultc`, `.vaultpack`, or `vaultc:*:v1` artifacts.
-Frozen V1 artifacts and Packs remain available only through `okc verify` and
-`okc explain`. A V1 project must eventually reconnect and verify its original
-sources and generate a fresh V2 inspection and plan; that project-import
-workflow is not implemented yet, and old approvals, AI proposals, and conflict
-decisions will not migrate.
+The `0.2.0` core remains in-tree to verify/explain existing artifacts. New V3
+compatibility modules do not expose V1/V2 inspection, planning, approval,
+compilation, or Pack writing.
 
 ## Rust workspace
 
 - `okc-core`: compiler library and public phased API;
-- `okc-protocol`: provider-neutral capabilities, proposal, evidence, and
-  transcript schemas;
-- `okc-app`: project persistence and long-running application services;
+- `okc-ai`: provider-neutral structured generation/embedding and HTTP adapters;
+- `okc-protocol`: frozen V2 and schema-3 provider envelopes;
+- `okc-app`: schema-3 project persistence, schema-4 application journal,
+  disclosure, and services;
 - `okc`: the only executable, containing the CLI, Ratatui TUI, and supervised
   NDJSON subprocess adapter;
+- `okc-legacy-v1` / `okc-legacy-v2`: verify/explain-only readers;
 - `vaultc`: deprecated Rust facade for one minor release, with no executable.
 
 This repository currently targets Rust 1.97.1 and uses the Rust 2024 Edition.
@@ -139,6 +179,19 @@ cargo test --locked -p okc-core --test documentation_contract
 
 The toolchain is pinned by [`rust-toolchain.toml`](rust-toolchain.toml). The
 framework is dual-licensed under MIT OR Apache-2.0.
+
+### Guide website
+
+The source pages under [`guide/`](guide/index.md) are ordinary Markdown rendered
+as a VitePress website. Node.js 22 or newer is required for local preview:
+
+```sh
+cd guide
+npm ci
+npm run docs:dev
+```
+
+Run `npm run docs:build` in the same directory to validate a production build.
 
 [`CI`](.github/workflows/ci.yml) defines locked, host-native test jobs for Linux
 x86_64, Windows x86_64, macOS x86_64, and macOS arm64, plus formatting and
@@ -162,10 +215,11 @@ ProjectName.okc-project/
 ```
 
 Immutable objects are written without clobbering before SQLite references are
-committed. The store uses WAL, foreign keys, an explicit schema-2 migration,
-and a single-writer lock. Project data is intentionally not encrypted: source
-paths, plans, decisions, and AI records are plaintext. OKC applies restrictive
-local permissions where supported and warns about likely shared locations.
+committed. The store uses WAL, foreign keys, explicit schema-4 application-state
+migrations, and a single-writer lock; the project/artifact format remains
+schema 3. Project data is intentionally not encrypted: source paths, plans,
+decisions, and AI records are plaintext. OKC applies restrictive local
+permissions where supported and warns about likely shared locations.
 
 With an interactive terminal, running `okc` without a subcommand opens the
 TUI; non-TTY execution prints help and exits `2`.
@@ -176,13 +230,57 @@ cargo run -p okc -- tui
 cargo run -p okc -- --project Team.okc-project
 ```
 
-The current TUI implements the twelve-screen Ratatui/Crossterm navigation
-shell, English/Korean labels, keyboard reducer, 80×24 fallback, high-contrast
-and ASCII modes, hostile-control escaping, and terminal restoration. It does
-not yet run the real inspect/plan/provider/compile workers or persist review
-choices, so use the CLI or Rust API for end-to-end compilation today.
+The current TUI implements the ten-screen V3 workflow. From any desired folder,
+`okc` discovers projects and safe Vault candidates, configures and tests a live
+provider, performs local preflight before consent, persists taxonomy and cluster
+reviews, regenerates rejected clusters, and compiles then independently verifies
+a new directory. Network and compilation work runs on a bounded single-operation
+worker with cancellation before the publication barrier. The UI retains the
+80×24 fallback, hostile-control escaping, ASCII/high-contrast modes, and terminal
+restoration guard.
 
-## Rust SDK example
+### V3 CLI development flow
+
+Provider tests use fixed synthetic content rather than Vault data. Profiles
+store only an environment-variable name or OS-keychain account reference; a
+secret value is never written to TOML or project state.
+
+```sh
+okc project create Team.okc-project --name Team --curator alice --language ko-KR
+okc --project Team.okc-project project source add personal ./PersonalVault
+okc provider add default --kind ollama --endpoint http://127.0.0.1:11434 --model MODEL
+okc provider test default
+okc --project Team.okc-project integrate
+okc --project Team.okc-project integration status --format json
+okc --project Team.okc-project review taxonomy show
+okc --project Team.okc-project review taxonomy approve
+okc --project Team.okc-project integrate
+okc --project Team.okc-project review cluster list
+okc --project Team.okc-project review cluster show CLUSTER_ID
+okc --project Team.okc-project review cluster approve CLUSTER_ID
+okc --project Team.okc-project integrate
+```
+
+Approve every cluster and rerun `integrate`; the command prints the immutable
+object path containing the complete integration plan. Then compile and inspect
+the V3 directory without contacting a provider:
+
+```sh
+okc --project Team.okc-project compile \
+  --integration-plan Team.okc-project/objects/PLAN_OBJECT_HASH \
+  --output CompiledVault
+okc verify CompiledVault
+okc explain CompiledVault knowledge/TAXONOMY/NOTE.md --format json
+```
+
+Each omission needs its exact
+`--omission-rationale 'DOCUMENT_ID:TARGET_ID=reason'`; each minor critic finding
+needs `--minor-waiver 'FINDING_ID=reason'`. Major and critical findings cannot
+be approved and instead use `review cluster regenerate --feedback ...` before
+rerunning integration. Remote non-interactive runs require both
+`--allow-remote-provider` and `--yes`.
+
+## Frozen V2 Rust SDK example
 
 The API makes each state transition visible. A deterministic build without AI
 looks like this:
@@ -276,7 +374,7 @@ Required conflicts use a separate immutable `DecisionOverlayLog`. A curator
 may explicitly preserve the original or select one exact sealed Markdown or
 Canvas target; free-form replacement text is never accepted.
 
-## CLI example
+## Frozen V2 CLI example
 
 Sources use `ID=PATH`; a bare path derives its ID from the final path component.
 Input kind is detected from a directory or the `.zip`, `.tar.zst`, or `.tzst`
@@ -295,7 +393,7 @@ cargo run -p okc -- explain CompiledVault.okcpack knowledge/Topic.md --format js
 cargo run -p okc -- doctor
 ```
 
-The minimum decision document for a conflict-free, AI-free plan is:
+The minimum decision document for a conflict-free, AI-free V2 plan is:
 
 ```json
 {
@@ -313,7 +411,7 @@ are in [`docs/specs/public-sdk-and-cli.md`](docs/specs/public-sdk-and-cli.md).
 
 ## Installation, updates, and release
 
-There is no supported `0.2.0` stable installer yet. For development, build and
+There is no supported `0.3.0` stable installer yet. For development, build and
 run the repository-pinned source tree:
 
 ```sh
@@ -336,20 +434,24 @@ user-created `.okcpack` files.
 
 ## Stable-release blockers
 
-- Real TUI worker effects, persisted review flows, PTY keyboard/cancellation,
-  and terminal-restoration system tests.
+- Complete `ALG-SEM-001`, manual-amendment review, sensitive
+  exceptions, the schema-3 command adapter, V3 Pack, and attachment/Canvas/Base
+  carry-through with link/provenance parity.
+- PTY keyboard/cancellation and terminal-restoration system tests for the real
+  TUI worker workflow.
 - Streaming accepted files rather than bounded whole-member buffering, plus
   the 10-Vault/100,000-note/20 GB time and RSS benchmark.
 - Descriptor-relative no-follow source traversal, Windows reparse defenses,
   fuzz/property campaigns, and broader Markdown/Canvas corpora.
-- V1 project reconstruction, resumable long operations, consistent progress
-  and cancellation wiring, and cross-platform process-tree termination.
+- V1 project reconstruction, crash-injected end-to-end resume/cleanup, complete
+  inner-loop progress/cancellation wiring, and cross-platform process-tree
+  termination.
 - Two complete four-platform CI passes on one commit, supply-chain audit
   evidence, protected signing credentials, native signature verification, and
   Apple notarization.
 
 Stable publication is fail-closed: any unfinished QG-001 through QG-008 or
-native-signing requirement prohibits publishing `0.2.0`.
+native-signing requirement prohibits publishing `0.3.0`.
 
 ## Design contract
 

@@ -19,6 +19,12 @@ fn collect_markdown_files(directory: &Path, files: &mut Vec<PathBuf>) {
     entries.sort();
     for path in entries {
         if path.is_dir() {
+            if path
+                .file_name()
+                .is_some_and(|name| name == "node_modules" || name == ".vitepress")
+            {
+                continue;
+            }
             collect_markdown_files(&path, files);
         } else if path.extension().is_some_and(|extension| extension == "md") {
             files.push(path);
@@ -88,6 +94,7 @@ fn repository_relative_markdown_links_resolve() {
         .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
         .collect::<Vec<_>>();
     collect_markdown_files(&root.join("docs"), &mut files);
+    collect_markdown_files(&root.join("guide"), &mut files);
     files.sort();
 
     let mut failures = Vec::new();

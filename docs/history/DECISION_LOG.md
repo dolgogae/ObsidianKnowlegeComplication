@@ -3,7 +3,7 @@ title: Decision Log
 status: historical
 owners:
   - release-maintainer
-last_updated: 2026-09-02
+last_updated: 2026-09-05
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -21,6 +21,10 @@ decision_refs:
   - ADR-0019
   - ADR-0020
   - ADR-0021
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
+  - ADR-0025
 source_refs:
   - HIST-SHARED-CHAT
   - HIST-CURRENT-PLAN
@@ -403,3 +407,152 @@ Append-only. Normative details live in specifications and accepted ADRs.
 - Made the development status fail-closed: local macOS arm64 evidence is stated
   separately from the missing TUI, performance, hardening, remote CI, and
   native-signing gates. No normative behavior or release status changed.
+
+## 2026-09-02 — Current CLI and TUI operator guide
+
+- Added a Korean task-oriented guide for building the development binary and
+  running the complete AI-free CLI lifecycle from inspection through
+  provenance explanation, with optional NDJSON augmentation and remote-consent
+  guidance.
+- Documented the exact decision-file shapes, no-clobber destinations, command
+  outputs, global-option scope, exit families, and the special `plan` exit-4
+  review branch.
+- Made the TUI boundary explicit: it currently provides twelve-screen
+  navigation, existing-project opening, keyboard/accessibility settings, and
+  safe rendering, but it cannot create a project or execute/persist real
+  inspect, review, provider, compile, or verify work yet.
+- Linked the guide from the README and documentation index and mapped it to
+  REQ-SDK-001 and REQ-APP-001. No implementation, schema, architectural
+  decision, or release status changed.
+
+## 2026-09-03 — Task-oriented web guide
+
+- Replaced the single operator walkthrough with Markdown source pages for a
+  five-step Quickstart, CLI, TUI, conflict review, AI provider, troubleshooting,
+  and current implementation status. The information architecture follows the
+  goal, prerequisites, numbered steps, expected result, and next-guide pattern
+  of a task-oriented Quickstart while retaining OKC-specific wording and visual
+  identity.
+- Added a VitePress 1.6.4 site with local search, copyable platform-specific
+  command groups, responsive navigation, dark/light themes, and an explicit
+  development-status warning. Vite is overridden to 6.4.3; the production
+  build passes and `npm audit --audit-level=high` reports zero vulnerabilities.
+- Extended the repository-relative Markdown link contract to include `guide/`
+  and synchronized the README, current state, index, traceability matrix, and
+  documentation quality-gate wording. No compiler behavior, schema,
+  architectural decision, or release status changed.
+- Running the Quickstart verbatim exposed a current macOS/Linux relative-output
+  path normalization defect. The operator examples now use absolute output and
+  Pack destinations, and the limitation is recorded in current state and
+  troubleshooting; fixing compiler behavior remains separate implementation
+  work.
+
+## 2026-09-03 — V3 AI-required integration development slice
+
+- Recorded the V2/V3 normative conflict before code changes and accepted
+  ADR-0022 through ADR-0024 for schema-3 identities, frozen V1/V2 readers,
+  provider profiles/disclosure/recording, and evidence-complete synthesis with
+  critic and human approval gates.
+- Added `okc-ai`, `okc-legacy-v2`, schema-3 protocol envelopes, schema-3 project
+  manifests, append-only run/task/exchange/revision/approval journals, sensitive
+  preflight routing, and source-binding-only V2 project upgrade.
+- Added an initial resumable CLI path from embedding and deterministic semantic
+  candidates through organizer taxonomy, taxonomy review, per-cluster synthesis,
+  critic review, cluster approval, and sealed integration-plan creation.
+- Added provider-free V3 directory compilation, independent byte regeneration,
+  canonical-note and legacy-redirect provenance explanation, and strict closure
+  validation for every block/frontmatter disposition, section evidence,
+  contradiction, omission, critic finding, waiver, approval, and recording.
+- Kept release status explicitly partial. Deterministic block chunking/batching,
+  fixed-seed HNSW and complete candidate union, hierarchical/revision/manual
+  synthesis flows, sensitive exceptions, the schema-3 command supervisor, V3
+  Pack and non-Markdown materialization/link rewriting, shared TUI workers, scale,
+  fuzz/PTY, cross-platform, and signing evidence remain required.
+- Corrected the relative-directory publication sibling comparison and added a
+  regression so relative and absolute destinations follow the same no-replace
+  path.
+
+## 2026-09-03 — V3 command-surface validation follow-up
+
+- Exercised schema-3 project creation, source addition, default and
+  role-specific AI routing, and JSON status with the built CLI. This exposed a
+  Clap runtime assertion caused by an optional positional role before a
+  required profile.
+- Kept the documented `ai-route set [ROLE] PROFILE` contract by decoding one or
+  two required positional values explicitly, added parser coverage for both
+  forms and the missing-value failure, and repeated the CLI smoke successfully.
+- Recorded that the development binary still exposes V2 writer commands for
+  the regression harness. ADR-0022's public legacy read-only boundary remains
+  a stable-release blocker; no new architectural decision was introduced.
+
+## 2026-09-03 — V3 README and operator-documentation reconciliation
+
+- Added an implementation-status matrix and the complete current schema-3 CLI
+  loop to the repository README, including synthetic provider testing,
+  taxonomy/cluster approval, offline compile, verify, and explain.
+- Separated implemented V3 directory behavior from frozen V2 Pack and
+  non-Markdown regression behavior in the README, documentation index,
+  current-state guide, CLI contract, and traceability matrix.
+- Promoted the V3 integration guide in the VitePress navigation and relabeled
+  the existing five-minute guide as a V2 regression Quickstart. No normative
+  behavior, algorithm status, quality-gate result, or release status changed.
+
+## 2026-09-03 — TUI operator guide expansion
+
+- Expanded the TUI guide from a key list into a task-oriented walkthrough for
+  prerequisites, CLI project preparation, startup modes, screen layout, status
+  meanings, runtime-only display settings, safe exit, and troubleshooting.
+- Added an exact screen-by-screen table and CLI handoff map. The guide now
+  distinguishes static placeholders and disconnected worker requests from real
+  project state or failed source operations.
+- Corrected the obsolete claim that the CLI could not create a project and made
+  the current navigation-only boundary explicit. No TUI implementation,
+  normative behavior, requirement state, or release status changed.
+
+## 2026-09-05 — Cwd-first V3 TUI, shared services, and native credentials
+
+- Recorded the REQ-INT-003–006 traceability mismatch and the ADR-0023
+  environment-only credential conflict in `OPEN_QUESTIONS.md`, then accepted
+  ADR-0025 and added REQ-APP-002/REQ-SEC-003 before implementation.
+- Added bounded cwd project/Vault discovery, canonical absolute active source
+  replacement, internal SQLite schema 4 append-only source-set/plan/output/
+  feedback pointers, OS-keychain/environment credential resolution, zeroized
+  fixed-mask secret handling, shared provider/integration services, and a
+  bounded single-operation worker with publication-barrier cancellation.
+- Replaced the navigation-only shell with the ten-screen V3 TUI for provider
+  capability testing, Vault selection, local disclosure preflight, taxonomy
+  editing, three-pane cluster review, hash-bound regeneration, provider-free
+  compile, independent verify, and provenance/settings inspection.
+- Routed CLI provider, taxonomy/cluster approval, latest-plan compile, cwd
+  discovery, and TUI operations through the shared application boundaries.
+  Cluster CLI waivers now require exact per-item rationale mappings; completed
+  cache entries remain resumable without deleting historical runs or approvals.
+- Kept schema-3 command providers, manual section amendment, V3 Pack,
+  non-Markdown carry-through, scale, PTY, cross-platform, and release-signing
+  evidence as explicit blockers; no stable-release claim was made.
+
+## 2026-09-05 — Shared integration execution boundary completed
+
+- Moved embedding, deterministic candidate generation, organizer, synthesis,
+  critic, cache-resume, per-miss disclosure authorization, and plan sealing
+  behind `IntegrationService::execute` in `okc-app`.
+- Removed the TUI-to-CLI-module call. CLI and TUI now invoke the same
+  application service directly, and progress identifies the active cluster.
+- Made omission/minor rationales individually keyed in the TUI and restored
+  remote-route awareness when an existing project is reopened.
+
+## 2026-09-05 — V3 documentation and verification reconciliation
+
+- Reconciled the README with the schema-3 project/artifact boundary and the
+  private schema-4 application journal, and narrowed release blockers to the
+  still-missing manual-review, command-adapter, provider-conformance, and TUI
+  PTY/platform evidence.
+- Updated release, traceability, and algorithm-policy wording for ADR-0025 and
+  the current V3 default path. Removed two orphan workspace-member declarations
+  for nonexistent or targetless crates that were absent from the lockfile and
+  from the documented product surface.
+- Re-ran the complete locked all-feature workspace test suite and doctests,
+  warnings-as-errors Clippy, workspace rustfmt, repository Markdown-link test,
+  VitePress production build, and high-severity npm audit. All passed locally;
+  the demo inventory also matches its documented 112 Markdown files and 434
+  wikilinks. No stable-release or cross-platform-evidence claim was added.

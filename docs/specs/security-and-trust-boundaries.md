@@ -3,7 +3,7 @@ title: Security and Trust Boundaries
 status: normative-v1
 owners:
   - qa-security-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-05
 decision_refs:
   - ADR-0003
   - ADR-0004
@@ -16,6 +16,10 @@ decision_refs:
   - ADR-0017
   - ADR-0019
   - ADR-0020
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
+  - ADR-0025
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-ONPREM-STACK
@@ -54,6 +58,19 @@ Primary threats include path traversal, symlink escapes, archive bombs, parser d
 - Escape ANSI, OSC, C0/C1, DEL, and bidi controls before TUI rendering. Do not
   emit OSC8, OSC52, or terminal-title controls.
 - Redact secrets and source text from default logs and traces.
+- Before schema-3 disclosure, scan every Markdown block with a versioned
+  sensitive-data scanner. Store category, location, range, and content hash,
+  never the matched secret text.
+- If any effective finding exists, require local embedding and organizer
+  routes. Require local synthesis and critic routes for each affected cluster.
+- Treat only loopback endpoints and direct command adapters as local. LAN hosts
+  are remote; remote HTTP requires TLS, OS certificate validation, no redirect,
+  bounded response/deadline, and one-run consent.
+- Store only API-key environment variable names or OS-keychain account
+  references under the fixed OKC service ID. Never serialize resolved key
+  values or lengths, or include authorization header values in `Debug`, screen,
+  recording, or provider errors. A locked or unavailable keychain MUST NOT
+  trigger plaintext file fallback.
 
 ### Materialization and distribution
 
@@ -76,7 +93,12 @@ Primary threats include path traversal, symlink escapes, archive bombs, parser d
 
 ## Client and service scanning
 
-A future upload client SHOULD scan for cloud/API keys, private keys, credentials, connection strings, email/phone PII, dangerous extensions, and unexpectedly large files before transfer. Server-side or local-worker scanning remains necessary because client declarations are untrusted. Candidate tools include Gitleaks and ClamAV, but policy and signatures must be versioned.
+The schema-3 CLI implements deterministic detection for private keys, common
+API/cloud credentials, connection strings, email addresses, and phone numbers.
+Persisted hash-bound false-positive exceptions, malware scanning, and broader
+signature coverage are still required. A future upload client SHOULD repeat
+these checks before transfer; server-side or local-worker scanning remains
+necessary because client declarations are untrusted.
 
 ## Isolated processing profile
 

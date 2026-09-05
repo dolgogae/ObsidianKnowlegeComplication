@@ -9,6 +9,53 @@ use serde_json::Value;
 
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const PROPOSAL_SCHEMA_VERSION: u32 = 2;
+pub const V3_PROTOCOL_VERSION: u32 = 3;
+
+/// Schema-3 command-provider envelopes. Semantic request/response types live
+/// in `okc-ai`; this independent wire crate keeps command adapters decoupled
+/// from vendor HTTP formats.
+pub mod v3 {
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+
+    use super::V3_PROTOCOL_VERSION;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct Envelope {
+        pub protocol_version: u32,
+        pub request_id: String,
+        pub message_type: MessageType,
+        pub payload: Value,
+    }
+
+    impl Envelope {
+        pub fn new(
+            request_id: impl Into<String>,
+            message_type: MessageType,
+            payload: Value,
+        ) -> Self {
+            Self {
+                protocol_version: V3_PROTOCOL_VERSION,
+                request_id: request_id.into(),
+                message_type,
+                payload,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum MessageType {
+        CapabilitiesRequest,
+        CapabilitiesResponse,
+        StructuredGenerationRequest,
+        StructuredGenerationResponse,
+        EmbeddingBatchRequest,
+        EmbeddingBatchResponse,
+        Error,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Envelope<T> {
@@ -268,5 +315,20 @@ mod tests {
             serde_json::from_value::<DocumentProjection>(missing_snapshot).is_err(),
             "snapshot binding is a required V2 field"
         );
+    }
+
+    #[test]
+    fn schema_three_command_envelope_is_strict_and_versioned() {
+        let envelope = v3::Envelope::new(
+            "task-1",
+            v3::MessageType::StructuredGenerationRequest,
+            serde_json::json!({"synthetic": true}),
+        );
+        assert_eq!(envelope.protocol_version, V3_PROTOCOL_VERSION);
+        let encoded = serde_json::to_value(&envelope).expect("envelope");
+        assert!(serde_json::from_value::<v3::Envelope>(encoded.clone()).is_ok());
+        let mut forged = encoded;
+        forged["extra"] = Value::Bool(true);
+        assert!(serde_json::from_value::<v3::Envelope>(forged).is_err());
     }
 }

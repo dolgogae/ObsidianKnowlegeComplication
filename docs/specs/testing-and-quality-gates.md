@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - qa-security-engineer
   - core-rust-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-05
 decision_refs:
   - ADR-0004
   - ADR-0007
@@ -19,6 +19,10 @@ decision_refs:
   - ADR-0018
   - ADR-0019
   - ADR-0020
+  - ADR-0022
+  - ADR-0023
+  - ADR-0024
+  - ADR-0025
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -36,7 +40,41 @@ source_refs:
 - **QG-007 Documentation:** Markdown links resolve; traceability reflects code/tests; release changes and ADR impact are recorded.
 - **QG-008 Supply chain:** licenses, lockfiles, vulnerability policy, provenance/SBOM, and reproducible release process pass.
 
-## Current `0.2.0` evidence
+## V3-specific acceptance gates
+
+Before V3 can be called stable, automated evidence MUST cover:
+
+- every Markdown document exactly once in taxonomy and every block/frontmatter
+  value exactly once in dispositions;
+- source-owned evidence for each section and contradiction claim, exact
+  omission approvals, minor-only waivers, and stale taxonomy/proposal/critic
+  approvals;
+- provider conformance for all advertised HTTP/command adapters, portable
+  schemas, error normalization, timeout/cancel/retry/limits, missing credentials,
+  and non-disclosure of secret values;
+- deterministic block chunking, one embedding space, HNSW/candidate union,
+  resume after process/provider failure, and no repeat call for complete tasks;
+- byte-identical directory and OKCPack replay from one recording/approval set,
+  provider-free compile/verify/explain, and rejection without AI recordings;
+- canonical notes, legacy redirects, attachments, Canvas/Base behavior, link
+  rewrites, and complete provenance in directory and Pack;
+- TUI worker/reducer/snapshot/PTY coverage for setup, sensitive preflight,
+  taxonomy/cluster review, cancellation, resume, and terminal restoration;
+- cwd/project/Vault discovery, atomic source-set replacement, schema-4 journal
+  migration, OS-keychain mock behavior and complete secret non-disclosure;
+- V2 upgrade source immutability and source-binding-only reconstruction;
+- a 100,000-note semantic candidate benchmark with cost, latency, memory, and
+  cross-platform determinism reports.
+
+The current slice has local unit/contract coverage for strict schemas, initial
+HTTP shapes, retry/error/cancellation policy, secret-free profiles, sensitive
+routing, append-only resume, V2 upgrade, disposition/evidence/critic/approval
+closure, provider-free deterministic directory materialization, V3 verify and
+explain, and the frozen V1/V2 regression suite. HNSW, V3 Pack, passthrough
+assets/Canvas/Base, manual-edit loops, command profiles, provider-backed PTY,
+real provider smoke tests, and scale/cross-platform results remain open.
+
+## Current local evidence
 
 The exact local command results and test count are recorded in
 [`../CURRENT_STATE.md`](../CURRENT_STATE.md). Local evidence never substitutes
@@ -48,7 +86,7 @@ for the supported-platform or protected-release gates:
 | QG-002 | partial: same-host and cross-absolute-source-root byte equality pass; cross-platform/toolchain comparison remains |
 | QG-003 | implemented and locally verified: typed stored graph, virtual audit envelope, RecordIds, attribution retention, bounded explanation, and semantic reseal cases pass; supported-platform evidence remains |
 | QG-004 | partial: targeted hostile-input suite passes; fuzz/property campaigns and remaining platform/adversarial classes remain |
-| QG-005 | partial: frozen V1 verify/explain and schema-2 workspace migration exist; V1 project reconstruction and broader forward-compatibility evidence remain |
+| QG-005 | partial: frozen V1/V2 verify/explain readers and V2-to-new-V3 source-binding upgrade exist; broader forward-compatibility evidence remains |
 | QG-006 | not run at the 100,000-note/20 GB reference workload |
 | QG-007 | evaluated per change after link, traceability, current-state, ADR, and decision-log validation |
 | QG-008 | partial: licenses, lockfile, cargo-dist/SBOM/attestation configuration, and receipt-aware updater exist; protected native signing/notarization and published evidence do not |
@@ -68,7 +106,7 @@ others.
 
 At least one job MUST additionally enforce workspace rustfmt, all-feature
 all-target Clippy with warnings denied, and repository-relative Markdown link
-integrity. A canonical basic-Vault build MUST compare its complete OKCPack
+integrity across root, `docs/`, and `guide/` sources. A canonical basic-Vault build MUST compare its complete OKCPack
 bytes against a literal raw-SHA-256 golden on every host; same-run equality
 alone is not cross-platform evidence.
 

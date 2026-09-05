@@ -3,15 +3,17 @@ members = [
     "crates/okc-core",
     "crates/okc-protocol",
     "crates/okc-app",
+    "crates/okc-ai",
     "crates/okc",
     "crates/okc-legacy-v1",
+    "crates/okc-legacy-v2",
     "crates/okc-legacy-protocol",
     "crates/vaultc",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT OR Apache-2.0"
@@ -44,7 +46,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 unicode-normalization = "=0.1.25"
 unicode-segmentation = "1"
+ureq = { version = "=3.4.0", default-features = false, features = ["json", "platform-verifier", "rustls"] }
 zip = { version = "4", default-features = false, features = ["deflate", "zstd"] }
+zeroize = { version = "1", features = ["derive"] }
 zstd = "0.13"
 
 [profile.release]

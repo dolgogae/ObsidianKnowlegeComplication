@@ -3,7 +3,7 @@ title: ALG-NRM-001 — Markdown, Canvas, and Link Normalization
 status: normative
 owners:
   - core-rust-engineer
-last_updated: 2026-08-18
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0008
   - ADR-0012
@@ -12,6 +12,14 @@ source_refs:
 ---
 
 # ALG-NRM-001: Markdown, Canvas, and Link Normalization
+
+## Current scope
+
+These primitives remain in the private snapshot/parser/analysis path behind
+`CorpusBuilder`. Copy/rewrite rules describe that retained analysis, not a
+current non-Markdown output capability. Current artifact materialization and
+its remaining link-rewrite work are defined by ALG-INT-001 and the output
+specification under ADR-0027.
 
 ## Objective and non-goals
 

@@ -5,9 +5,10 @@ owners:
   - algorithms-ai-engineer
   - core-rust-engineer
   - qa-security-engineer
-last_updated: 2026-09-03
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0024
+  - ADR-0027
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -44,9 +45,10 @@ appear in the omission approval set.
 
 Every non-empty output section requires at least one unique evidence reference
 owned by a document in the cluster. Evidence IDs and hashes are revalidated
-against the source inventory. A verbatim section additionally binds exact
-source bytes. Related links must target an approved cluster or an existing
-opaque asset/Canvas/Base identity.
+against the source inventory. A preserved block binds its sealed source text.
+Current related links must target an approved cluster. Asset/Canvas/Base
+targets require future typed materialization support and are not current
+related-link variants.
 
 Each declared contradiction set contains at least two distinct evidence-bound
 claims and retains their source, optional observation time, and context. The
@@ -79,11 +81,13 @@ change makes it stale.
 3. Emit one source redirect stub under
    `legacy/<source-id>/<original-path>.md`, containing only canonical
    frontmatter, a relative link to the canonical note, and provenance identity.
-4. Rewrite Markdown and Canvas references through the sealed document-to-
-   canonical map. Deduplicate attachments by content hash. Copy Base opaquely
-   with a warning.
-5. Construct typed provenance from each output section/stub through proposal,
+4. Construct typed provenance from each output section/stub through proposal,
    critic, approval, dispositions, and immutable source evidence.
+
+Complete Markdown/Canvas reference rewriting, attachment deduplication and
+carry-through, opaque Base copying, and current Pack output are future release
+work. These steps are not implemented by the current Markdown materializer
+and MUST NOT be advertised as current capabilities.
 
 ## Complexity
 
@@ -105,7 +109,7 @@ approval not bound to the current exact hash.
 - One missing frontmatter sequence value fails.
 - A contradiction with two contexts remains present in rendered output.
 - An approved omission whose content hash changes becomes stale.
-- Replaying one complete plan produces byte-identical directory and pack data
+- Replaying one complete plan produces byte-identical directory data
   without a provider.
 
 ## Correctness and rollback

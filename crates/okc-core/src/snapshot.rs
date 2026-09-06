@@ -1,7 +1,10 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File};
-use std::io::{self, Cursor, Read, Seek, SeekFrom};
+#[cfg(feature = "archives")]
+use std::io::{self, Seek, SeekFrom};
+use std::io::{Cursor, Read};
 use std::path::{Component, Path};
+#[cfg(feature = "archives")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -113,6 +116,10 @@ pub fn inspect_sources(
         return Err(OkcError::InvalidConfig(
             "source IDs must be unique within an inspection".into(),
         ));
+    }
+    #[cfg(feature = "sqlite")]
+    if let Some(workspace) = workspace_path {
+        crate::workspace::validate_destination(workspace, &sources)?;
     }
 
     let mut snapshots = Vec::with_capacity(sources.len());
@@ -319,16 +326,18 @@ fn collect_directory(
     policy: &CompilerPolicy,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<Vec<RawEntry>> {
-    let metadata = fs::metadata(root).map_err(|error| OkcError::io(root, error))?;
-    if !metadata.is_dir() {
-        return Err(OkcError::UnsupportedSource(root.to_path_buf()));
-    }
+    let source_directory = crate::source_io::SourceDirectory::open(root)?;
     let canonical_root = fs::canonicalize(root).map_err(|error| OkcError::io(root, error))?;
     let excludes = build_excludes(policy)?;
     let mut builder = WalkBuilder::new(root);
     builder
         .hidden(false)
         .follow_links(false)
+        // Membership comes only from the sealed policy, never an ambient
+        // parent/global ignore file or a source-controlled .ignore directive.
+        .ignore(false)
+        .parents(false)
+        .git_global(false)
         .git_ignore(false)
         .git_exclude(false);
     let pruned_directories = Arc::new(Mutex::new(Vec::new()));
@@ -416,7 +425,11 @@ fn collect_directory(
                 reason: "resolved entry escaped source root".into(),
             });
         }
-        let bytes = read_limited_file(entry.path(), policy.limits.max_file_bytes)?;
+        let bytes = read_limited_file(
+            source_directory.open_file(relative)?,
+            entry.path(),
+            policy.limits.max_file_bytes,
+        )?;
         let canonical_after =
             fs::canonicalize(entry.path()).map_err(|error| OkcError::io(entry.path(), error))?;
         if !canonical_after.starts_with(&canonical_root) || canonical_after != canonical_file {
@@ -460,7 +473,7 @@ fn collect_zip(
     policy: &CompilerPolicy,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<Vec<RawEntry>> {
-    let mut file = File::open(path).map_err(|error| OkcError::io(path, error))?;
+    let mut file = crate::source_io::open_regular_source(path)?;
     let compressed_len = file
         .metadata()
         .map_err(|error| OkcError::io(path, error))?
@@ -796,18 +809,21 @@ fn read_zip_central_directory(
     })
 }
 
+#[cfg(feature = "archives")]
 fn read_u16_le(bytes: &[u8], offset: usize) -> Option<u16> {
     Some(u16::from_le_bytes(
         bytes.get(offset..offset + 2)?.try_into().ok()?,
     ))
 }
 
+#[cfg(feature = "archives")]
 fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes(
         bytes.get(offset..offset + 4)?.try_into().ok()?,
     ))
 }
 
+#[cfg(feature = "archives")]
 fn read_u64_le(bytes: &[u8], offset: usize) -> Option<u64> {
     Some(u64::from_le_bytes(
         bytes.get(offset..offset + 8)?.try_into().ok()?,
@@ -833,7 +849,9 @@ fn collect_tar_zst(
     policy: &CompilerPolicy,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<Vec<RawEntry>> {
-    let compressed_len = fs::metadata(path)
+    let file = crate::source_io::open_regular_source(path)?;
+    let compressed_len = file
+        .metadata()
         .map_err(|error| OkcError::io(path, error))?
         .len();
     if compressed_len > policy.limits.max_file_bytes {
@@ -842,7 +860,6 @@ fn collect_tar_zst(
             path.display()
         )));
     }
-    let file = File::open(path).map_err(|error| OkcError::io(path, error))?;
     let decoder = zstd::Decoder::new(file).map_err(|error| OkcError::io(path, error))?;
     let expansion_limit = compressed_len
         .max(1)
@@ -1133,6 +1150,20 @@ pub(crate) fn validate_output_logical_path(path: &str, policy: &CompilerPolicy) 
     Ok(())
 }
 
+/// Validate an exact portable spelling without normalizing original source
+/// names. Unlike host `Path::components`, this rejects redundant separators
+/// and dot components before they can alias another output.
+pub(crate) fn validate_portable_relative_path(path: &str, policy: &CompilerPolicy) -> Result<()> {
+    let decoded = decode_archive_path(path, false, policy)?;
+    if decoded.original_path != path {
+        return Err(OkcError::UnsafePath {
+            path: path.into(),
+            reason: "path contains a non-canonical relative component".into(),
+        });
+    }
+    Ok(())
+}
+
 fn validate_component(component: &str, policy: &CompilerPolicy) -> Result<()> {
     if component.is_empty()
         || component == "."
@@ -1301,15 +1332,7 @@ fn is_excluded(logical_path: &str, is_symlink: bool, is_dir: bool, excludes: &Gi
     )
 }
 
-fn read_limited_file(path: &Path, maximum: u64) -> Result<Vec<u8>> {
-    let link_metadata = fs::symlink_metadata(path).map_err(|error| OkcError::io(path, error))?;
-    if link_metadata.file_type().is_symlink() || !link_metadata.file_type().is_file() {
-        return Err(OkcError::UnsafePath {
-            path: path.display().to_string(),
-            reason: "source changed to a symlink or special file before it was opened".into(),
-        });
-    }
-    let mut file = File::open(path).map_err(|error| OkcError::io(path, error))?;
+fn read_limited_file(mut file: File, path: &Path, maximum: u64) -> Result<Vec<u8>> {
     let before = file.metadata().map_err(|error| OkcError::io(path, error))?;
     if !before.is_file() {
         return Err(OkcError::UnsafePath {
@@ -1361,6 +1384,7 @@ fn validate_structured_size(path: &str, bytes: &[u8], policy: &CompilerPolicy) -
     Ok(())
 }
 
+#[cfg(feature = "archives")]
 fn enforce_archive_limits(
     compressed: u64,
     expanded: u64,
@@ -1394,6 +1418,7 @@ fn enforce_file_limits(files: usize, total_bytes: u64, policy: &CompilerPolicy) 
     Ok(())
 }
 
+#[cfg(feature = "archives")]
 fn enforce_expansion_ratio(compressed: u64, expanded: u64, policy: &CompilerPolicy) -> Result<()> {
     let allowed = compressed
         .max(1)
@@ -1424,6 +1449,7 @@ fn reject_seen_path(seen: &mut BTreeSet<String>, logical_path: &str) -> Result<(
     Ok(())
 }
 
+#[cfg(feature = "archives")]
 fn read_exact_limited<R: Read>(
     reader: R,
     expected: u64,

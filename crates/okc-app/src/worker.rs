@@ -40,6 +40,7 @@ pub enum CancelOutcome {
 pub struct Worker {
     command_tx: SyncSender<WorkerCommand>,
     event_rx: Receiver<WorkerEvent>,
+    completion: Arc<Mutex<Option<WorkerEvent>>>,
     active: Arc<AtomicBool>,
     publication_barrier: Arc<AtomicBool>,
     cancellation: Arc<Mutex<Option<CancellationToken>>>,
@@ -63,12 +64,14 @@ impl Worker {
     pub fn spawn() -> Self {
         let (command_tx, command_rx) = sync_channel::<WorkerCommand>(1);
         let (event_tx, event_rx) = sync_channel::<WorkerEvent>(64);
+        let completion = Arc::new(Mutex::new(None));
         let active = Arc::new(AtomicBool::new(false));
         let publication_barrier = Arc::new(AtomicBool::new(false));
         let cancellation = Arc::new(Mutex::new(None));
         let thread_active = Arc::clone(&active);
         let thread_barrier = Arc::clone(&publication_barrier);
         let thread_cancellation = Arc::clone(&cancellation);
+        let thread_completion = Arc::clone(&completion);
         let join = thread::Builder::new()
             .name("okc-application-worker".into())
             .spawn(move || {
@@ -90,10 +93,12 @@ impl Worker {
                                 observer,
                             };
                             let result = job(control).map_err(|error| error.to_string());
-                            let _ = event_tx.send(WorkerEvent::Finished { operation, result });
-                            thread_active.store(false, Ordering::Release);
+                            let mut completion =
+                                thread_completion.lock().expect("worker completion");
                             thread_barrier.store(false, Ordering::Release);
                             *thread_cancellation.lock().expect("worker cancellation") = None;
+                            *completion = Some(WorkerEvent::Finished { operation, result });
+                            thread_active.store(false, Ordering::Release);
                         }
                     }
                 }
@@ -102,6 +107,7 @@ impl Worker {
         Self {
             command_tx,
             event_rx,
+            completion,
             active,
             publication_barrier,
             cancellation,
@@ -113,6 +119,12 @@ impl Worker {
     where
         F: FnOnce(OperationControl) -> Result<String> + Send + 'static,
     {
+        // One retained completion must be consumed before another job starts.
+        // Final results never compete with bounded progress for channel space.
+        let completion = self.completion.lock().expect("worker completion");
+        if completion.is_some() {
+            return false;
+        }
         if self
             .active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -136,7 +148,10 @@ impl Worker {
     }
 
     pub fn try_recv(&self) -> Option<WorkerEvent> {
-        self.event_rx.try_recv().ok()
+        self.event_rx
+            .try_recv()
+            .ok()
+            .or_else(|| self.completion.lock().expect("worker completion").take())
     }
 
     pub fn is_active(&self) -> bool {
@@ -206,6 +221,37 @@ mod tests {
 
     use super::*;
     use crate::{OperationKind, OperationPhase};
+
+    #[test]
+    fn a_full_progress_queue_cannot_block_worker_shutdown() {
+        let worker = Worker::spawn();
+        let (filled_tx, filled_rx) = mpsc::channel();
+        assert!(worker.submit("full-queue", move |control| {
+            for completed in 0..100 {
+                control.observer.observe(&ProgressEvent {
+                    operation: OperationKind::Integrate,
+                    phase: OperationPhase::Processing,
+                    completed,
+                    total: Some(100),
+                    current_item: None,
+                });
+            }
+            filled_tx.send(()).expect("queue filled");
+            Ok("finished".into())
+        }));
+        filled_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("progress produced");
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        let drop_thread = thread::spawn(move || {
+            drop(worker);
+            dropped_tx.send(()).expect("drop completed");
+        });
+        dropped_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("shutdown must not wait for progress consumption");
+        drop_thread.join().expect("drop thread");
+    }
 
     #[test]
     fn worker_is_bounded_single_operation_and_forwards_cancellation() {

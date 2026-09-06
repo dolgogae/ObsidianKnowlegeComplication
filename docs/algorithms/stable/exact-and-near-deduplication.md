@@ -4,7 +4,7 @@ status: normative
 owners:
   - core-rust-engineer
   - algorithms-ai-engineer
-last_updated: 2026-08-16
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0003
 source_refs:
@@ -12,6 +12,14 @@ source_refs:
 ---
 
 # ALG-DED-001/002: Exact and Near Deduplication
+
+## Current scope
+
+Exact groups and near candidates belong to the retained private analysis.
+Every source Markdown document still enters the Schema 3 integration corpus
+and requires taxonomy coverage, synthesis, critic, and curator approval under
+ALG-INT-001. The representative and output examples below describe private
+allocation; they never grant automatic current semantic merge authority.
 
 ## Objective and non-goals
 

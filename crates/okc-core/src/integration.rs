@@ -7,14 +7,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write as _;
-use std::path::{Component, Path, PathBuf};
+use std::io::{Read as _, Write as _};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
 use crate::canonical::{canonical_hash, to_canonical_json, to_canonical_json_pretty};
+use crate::config::CompilerPolicy;
 use crate::error::{OkcError, Result};
 use crate::identity::{BlockId, ContentHash, DocumentId};
 use crate::source::SourceId;
@@ -669,6 +670,7 @@ fn validate_corpus(corpus: &IntegrationCorpus) -> Result<()> {
     }
     let mut document_ids = BTreeSet::new();
     let mut source_paths = BTreeSet::new();
+    let mut output_paths = PortableOutputPaths::default();
     let mut previous = None;
     for document in &corpus.documents {
         if previous.is_some_and(|previous| previous >= document.document_id) {
@@ -682,7 +684,12 @@ fn validate_corpus(corpus: &IntegrationCorpus) -> Result<()> {
                 "integration corpus contains a duplicate document".into(),
             ));
         }
-        validate_relative_path(&document.original_path, true)?;
+        validate_relative_path(&document.original_path)?;
+        SourceId::new(document.source_id.as_str())?;
+        output_paths.insert(&format!(
+            "legacy/{}/{}",
+            document.source_id, document.original_path
+        ))?;
         if !source_paths.insert((document.source_id.clone(), document.original_path.clone())) {
             return Err(OkcError::ProposalInvalid(
                 "integration corpus contains a duplicate source path".into(),
@@ -708,15 +715,18 @@ fn validate_corpus(corpus: &IntegrationCorpus) -> Result<()> {
             }
         }
         let mut metadata_ids = BTreeSet::new();
+        let mut metadata_slots = BTreeSet::new();
         let mut previous_metadata: Option<&str> = None;
         for metadata in &document.metadata {
             validate_bounded_data("metadata ID", &metadata.metadata_id, 1, 128)?;
             validate_bounded_data("metadata key", &metadata.key, 1, 1_024)?;
             if previous_metadata.is_some_and(|previous| previous >= metadata.metadata_id.as_str())
                 || !metadata_ids.insert(metadata.metadata_id.as_str())
+                || !metadata_slots.insert((metadata.key.as_str(), metadata.value_index))
             {
                 return Err(OkcError::ProposalInvalid(
-                    "metadata values must be unique and strictly ID-sorted".into(),
+                    "metadata values and key/index slots must be unique and strictly ID-sorted"
+                        .into(),
                 ));
             }
             previous_metadata = Some(&metadata.metadata_id);
@@ -761,7 +771,7 @@ fn validate_taxonomy(corpus: &IntegrationCorpus, taxonomy: &TaxonomyProposal) ->
         .collect::<BTreeSet<_>>();
     let mut assigned = BTreeSet::new();
     let mut cluster_ids = BTreeSet::new();
-    let mut paths = BTreeSet::new();
+    let mut paths = PortableOutputPaths::default();
     let mut previous: Option<&str> = None;
     for cluster in &taxonomy.clusters {
         validate_bounded_data("cluster ID", &cluster.cluster_id, 1, 128)?;
@@ -774,14 +784,13 @@ fn validate_taxonomy(corpus: &IntegrationCorpus, taxonomy: &TaxonomyProposal) ->
             ));
         }
         previous = Some(&cluster.cluster_id);
-        validate_relative_path(&cluster.canonical_path, true)?;
-        if !cluster.canonical_path.to_ascii_lowercase().ends_with(".md")
-            || !paths.insert(cluster.canonical_path.to_ascii_lowercase())
-        {
+        validate_relative_path(&cluster.canonical_path)?;
+        if !cluster.canonical_path.to_ascii_lowercase().ends_with(".md") {
             return Err(OkcError::ProposalInvalid(
                 "taxonomy canonical paths must be unique Markdown paths".into(),
             ));
         }
+        paths.insert(&format!("knowledge/{}", cluster.canonical_path))?;
         if cluster.document_ids.is_empty() {
             return Err(OkcError::ProposalInvalid(
                 "taxonomy clusters cannot be empty".into(),
@@ -919,7 +928,7 @@ fn validate_cluster_revision(
     for section in &proposal.sections {
         validate_bounded_data("section ID", &section.section_id, 1, 128)?;
         validate_bounded_data("section heading", &section.heading, 1, 1_024)?;
-        validate_bounded_data("section body", &section.markdown_body, 1, 16 * 1024 * 1024)?;
+        validate_markdown_body(&section.markdown_body)?;
         if !section_ids.insert(section.section_id.as_str()) || section.evidence.is_empty() {
             return Err(OkcError::ProposalInvalid(format!(
                 "cluster `{}` sections require unique IDs and evidence",
@@ -1192,33 +1201,53 @@ fn validate_bounded_data(label: &str, value: &str, minimum: usize, maximum: usiz
     Ok(())
 }
 
-fn validate_relative_path(path: &str, require_file: bool) -> Result<()> {
-    if path.is_empty()
-        || path.starts_with('/')
-        || path.starts_with('\\')
-        || path.contains('\\')
-        || path.contains('\0')
-        || path.chars().any(char::is_control)
-        || path.len() > 1_024
+fn validate_markdown_body(value: &str) -> Result<()> {
+    if value.trim().is_empty()
+        || value.len() > 16 * 1024 * 1024
+        || value
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\t'))
     {
-        return Err(OkcError::UnsafePath {
-            path: path.into(),
-            reason: "Schema 3 logical paths must be bounded portable relative UTF-8 paths".into(),
-        });
-    }
-    let parsed = Path::new(path);
-    if parsed.components().any(|component| {
-        !matches!(component, Component::Normal(_))
-            || component.as_os_str().len() > 240
-            || matches!(component.as_os_str().to_str(), Some("." | ".."))
-    }) || (require_file && parsed.file_name().is_none())
-    {
-        return Err(OkcError::UnsafePath {
-            path: path.into(),
-            reason: "Schema 3 logical path contains a non-portable component".into(),
-        });
+        return Err(OkcError::ProposalInvalid(
+            "section body must contain bounded non-empty Markdown with only LF/tab controls".into(),
+        ));
     }
     Ok(())
+}
+
+fn validate_relative_path(path: &str) -> Result<()> {
+    crate::snapshot::validate_portable_relative_path(path, &CompilerPolicy::default())
+}
+
+#[derive(Default)]
+struct PortableOutputPaths(BTreeMap<String, (String, bool)>);
+
+impl PortableOutputPaths {
+    fn insert(&mut self, path: &str) -> Result<()> {
+        validate_relative_path(path)?;
+        let mut prefix = String::new();
+        let mut components = path.split('/').peekable();
+        while let Some(component) = components.next() {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(component);
+            let is_file = components.peek().is_none();
+            let key = crate::parse::full_casefold_nfc(&prefix);
+            if let Some((spelling, existing_is_file)) = self.0.get(&key) {
+                if spelling != &prefix || *existing_is_file || is_file {
+                    return Err(OkcError::UnsafePath {
+                        path: path.into(),
+                        reason: "output paths have a portable spelling or file/directory collision"
+                            .into(),
+                    });
+                }
+            } else {
+                self.0.insert(key, (prefix.clone(), is_file));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1273,8 +1302,31 @@ pub fn compile(
     plan: &ApprovedIntegrationPlan,
     destination: impl AsRef<Path>,
 ) -> Result<CompiledArtifact> {
+    compile_with_hook(plan, destination.as_ref(), &mut |_, _| Ok(()))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PublicationCheckpoint {
+    StageCreated,
+    Materialized,
+    TreeSynchronized,
+    Verified,
+    BeforePublish,
+    Published,
+    ParentSynchronized,
+    BeforeCleanup,
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "keep commit, guard lifetime, and failure disposition adjacent"
+)]
+fn compile_with_hook(
+    plan: &ApprovedIntegrationPlan,
+    destination: &Path,
+    hook: &mut impl FnMut(PublicationCheckpoint, &Path) -> std::io::Result<()>,
+) -> Result<CompiledArtifact> {
     plan.validate()?;
-    let destination = destination.as_ref();
     if fs::symlink_metadata(destination).is_ok() {
         return Err(OkcError::OutputExists(destination.to_path_buf()));
     }
@@ -1287,132 +1339,226 @@ pub fn compile(
         .prefix(".okc-stage-")
         .tempdir_in(parent)
         .map_err(|error| OkcError::io(parent, error))?;
-    let files = materialized_files(plan)?;
-    for (path, bytes) in &files {
-        write_new_file(stage.path(), path, bytes)?;
-    }
-    let plan_bytes = to_canonical_json_pretty(plan)?;
-    write_new_file(stage.path(), ".okc/integration-plan.json", &plan_bytes)?;
-    let provenance = provenance_jsonl(plan, &files)?;
-    write_new_file(stage.path(), ".okc/provenance.jsonl", &provenance)?;
-    let mut inventory_files =
-        inventory(stage.path(), &[".okc/manifest.json", ".okc/checksums.txt"])?;
-    let manifest = CompiledVaultManifest {
-        format_family: "okc".into(),
-        schema_version: INTEGRATION_SCHEMA_VERSION,
-        product_version: PRODUCT_VERSION.into(),
-        integration_plan_id: plan.integration_plan_id.clone(),
-        corpus_hash: plan.corpus.corpus_hash,
-        taxonomy_hash: plan.taxonomy.taxonomy_hash,
-        pack_profile: PACK_PROFILE.into(),
-        files: inventory_files.clone(),
-    };
-    write_new_file(
-        stage.path(),
-        ".okc/manifest.json",
-        &to_canonical_json_pretty(&manifest)?,
-    )?;
-    inventory_files = inventory(stage.path(), &[".okc/checksums.txt"])?;
-    let checksums = inventory_files
-        .iter()
-        .fold(String::new(), |mut output, file| {
-            writeln!(output, "{}  {}", file.raw_sha256, file.path)
-                .expect("writing to a String cannot fail");
-            output
-        });
-    write_new_file(stage.path(), ".okc/checksums.txt", checksums.as_bytes())?;
-    verify(stage.path())?;
-    sync_directory(stage.path()).map_err(|error| OkcError::io(stage.path(), error))?;
-    let staging = stage.keep();
-    match publish_directory_noreplace(&staging, destination) {
-        Ok(()) => {}
-        Err(error) => {
-            let _ = fs::remove_dir_all(&staging);
-            if error.kind() == std::io::ErrorKind::AlreadyExists
-                || fs::symlink_metadata(destination).is_ok()
-            {
-                return Err(OkcError::OutputExists(destination.to_path_buf()));
-            }
-            return Err(OkcError::io(destination, error));
+    let staged_result = (|| {
+        hook(PublicationCheckpoint::StageCreated, stage.path())
+            .map_err(|error| OkcError::io(stage.path(), error))?;
+        let files = materialized_files(plan)?;
+        for (path, bytes) in &files {
+            write_new_file(stage.path(), path, bytes)?;
         }
-    }
-    sync_directory(parent).map_err(|source| OkcError::PublishedButDurabilityUncertain {
-        path: destination.to_path_buf(),
-        source,
-    })?;
+        let plan_bytes = to_canonical_json_pretty(plan)?;
+        write_new_file(stage.path(), ".okc/integration-plan.json", &plan_bytes)?;
+        let provenance = provenance_jsonl(plan, &files)?;
+        write_new_file(stage.path(), ".okc/provenance.jsonl", &provenance)?;
+        let mut inventory_files =
+            inventory(stage.path(), &[".okc/manifest.json", ".okc/checksums.txt"])?;
+        let manifest = CompiledVaultManifest {
+            format_family: "okc".into(),
+            schema_version: INTEGRATION_SCHEMA_VERSION,
+            product_version: PRODUCT_VERSION.into(),
+            integration_plan_id: plan.integration_plan_id.clone(),
+            corpus_hash: plan.corpus.corpus_hash,
+            taxonomy_hash: plan.taxonomy.taxonomy_hash,
+            pack_profile: PACK_PROFILE.into(),
+            files: inventory_files.clone(),
+        };
+        write_new_file(
+            stage.path(),
+            ".okc/manifest.json",
+            &to_canonical_json_pretty(&manifest)?,
+        )?;
+        inventory_files = inventory(stage.path(), &[".okc/checksums.txt"])?;
+        let checksums = checksum_text(&inventory_files);
+        write_new_file(stage.path(), ".okc/checksums.txt", checksums.as_bytes())?;
+        hook(PublicationCheckpoint::Materialized, stage.path())
+            .map_err(|error| OkcError::io(stage.path(), error))?;
+        sync_directory_tree(stage.path())?;
+        hook(PublicationCheckpoint::TreeSynchronized, stage.path())
+            .map_err(|error| OkcError::io(stage.path(), error))?;
+        verify(stage.path())?;
+        hook(PublicationCheckpoint::Verified, stage.path())
+            .map_err(|error| OkcError::io(stage.path(), error))?;
+        hook(PublicationCheckpoint::BeforePublish, stage.path())
+            .map_err(|error| OkcError::io(stage.path(), error))?;
+        match publish_directory_noreplace(stage.path(), destination) {
+            Ok(()) => {}
+            Err(error) => {
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+                    || fs::symlink_metadata(destination).is_ok()
+                {
+                    return Err(OkcError::OutputExists(destination.to_path_buf()));
+                }
+                return Err(OkcError::io(destination, error));
+            }
+        }
+        Ok(inventory_files.len() + 1)
+    })();
+    let files = match staged_result {
+        Ok(files) => {
+            // The source name is now absent. Disarm immediately so Drop cannot
+            // remove an unrelated actor's reuse of that old staging name.
+            let _ = stage.keep();
+            files
+        }
+        Err(original) => {
+            let path = stage.path().to_path_buf();
+            let cleanup = match hook(PublicationCheckpoint::BeforeCleanup, &path) {
+                Ok(()) => stage.close(),
+                Err(error) => {
+                    let _ = stage.keep();
+                    Err(error)
+                }
+            };
+            return Err(match cleanup {
+                Ok(()) => original,
+                Err(source) => OkcError::StagingDispositionFailed {
+                    path,
+                    original: Box::new(original),
+                    source,
+                },
+            });
+        }
+    };
+    hook(PublicationCheckpoint::Published, destination)
+        .and_then(|()| sync_directory(parent))
+        .and_then(|()| hook(PublicationCheckpoint::ParentSynchronized, destination))
+        .map_err(|source| OkcError::PublishedButDurabilityUncertain {
+            path: destination.to_path_buf(),
+            source,
+        })?;
     Ok(CompiledArtifact {
         path: destination.to_path_buf(),
         integration_plan_id: plan.integration_plan_id.clone(),
-        files: inventory_files.len() + 1,
+        files,
     })
 }
 
 pub fn verify(root: impl AsRef<Path>) -> Result<CompiledVaultManifest> {
     let root = root.as_ref();
-    let manifest: CompiledVaultManifest = serde_json::from_slice(
-        &fs::read(root.join(".okc/manifest.json"))
-            .map_err(|error| OkcError::io(root.join(".okc/manifest.json"), error))?,
-    )?;
+    require_regular_directory(root)?;
+    require_regular_directory(&root.join(".okc"))?;
+    let manifest_bytes = read_regular_file(&root.join(".okc/manifest.json"), MAX_MANIFEST_BYTES)?;
+    let manifest: CompiledVaultManifest = serde_json::from_slice(&manifest_bytes)?;
     if manifest.format_family != "okc" || manifest.schema_version != INTEGRATION_SCHEMA_VERSION {
         return Err(OkcError::VerificationFailed(
             "artifact is not an OKC Schema 3 Compiled Vault".into(),
         ));
     }
-    let plan: ApprovedIntegrationPlan = serde_json::from_slice(
-        &fs::read(root.join(".okc/integration-plan.json"))
-            .map_err(|error| OkcError::io(root.join(".okc/integration-plan.json"), error))?,
-    )?;
+    let plan: ApprovedIntegrationPlan =
+        serde_json::from_value(crate::parse_json_strict(&read_regular_file(
+            &root.join(".okc/integration-plan.json"),
+            MAX_APPROVED_PLAN_BYTES,
+        )?)?)?;
     plan.validate()?;
-    if manifest.integration_plan_id != plan.integration_plan_id
-        || manifest.corpus_hash != plan.corpus.corpus_hash
-        || manifest.taxonomy_hash != plan.taxonomy.taxonomy_hash
-        || manifest.pack_profile != PACK_PROFILE
+    let mut files = materialized_files(&plan)?;
+    let provenance = provenance_jsonl(&plan, &files)?;
+    files.push((
+        ".okc/integration-plan.json".into(),
+        to_canonical_json_pretty(&plan)?,
+    ));
+    files.push((".okc/provenance.jsonl".into(), provenance));
+    let mut expected_inventory = inventory_from_bytes(&files);
+    let expected_manifest = CompiledVaultManifest {
+        format_family: "okc".into(),
+        schema_version: INTEGRATION_SCHEMA_VERSION,
+        product_version: PRODUCT_VERSION.into(),
+        integration_plan_id: plan.integration_plan_id,
+        corpus_hash: plan.corpus.corpus_hash,
+        taxonomy_hash: plan.taxonomy.taxonomy_hash,
+        pack_profile: PACK_PROFILE.into(),
+        files: expected_inventory.clone(),
+    };
+    if manifest != expected_manifest
+        || manifest_bytes != to_canonical_json_pretty(&expected_manifest)?
     {
         return Err(OkcError::VerificationFailed(
-            "Schema 3 manifest does not match its approved integration plan".into(),
+            "Schema 3 manifest is not the canonical inventory derived from its approved plan"
+                .into(),
         ));
     }
-    let expected_files = inventory(root, &[".okc/manifest.json", ".okc/checksums.txt"])?;
-    if manifest.files != expected_files {
-        return Err(OkcError::VerificationFailed(
-            "Schema 3 manifest inventory does not match artifact files".into(),
-        ));
-    }
-    let checksum_inventory = inventory(root, &[".okc/checksums.txt"])?;
-    let expected_checksums = checksum_inventory
+    expected_inventory.push(manifest_file(".okc/manifest.json".into(), &manifest_bytes));
+    expected_inventory.sort_by(|left, right| left.path.cmp(&right.path));
+    let checksums = checksum_text(&expected_inventory);
+    expected_inventory.push(manifest_file(
+        ".okc/checksums.txt".into(),
+        checksums.as_bytes(),
+    ));
+    expected_inventory.sort_by(|left, right| left.path.cmp(&right.path));
+    let allowed = expected_inventory
         .iter()
-        .fold(String::new(), |mut output, file| {
-            writeln!(output, "{}  {}", file.raw_sha256, file.path)
-                .expect("writing to a String cannot fail");
-            output
-        });
-    let observed_checksums = fs::read(root.join(".okc/checksums.txt"))
-        .map_err(|error| OkcError::io(root.join(".okc/checksums.txt"), error))?;
-    if observed_checksums != expected_checksums.as_bytes() {
+        .map(|file| (file.path.clone(), file.byte_len))
+        .collect();
+    if inventory_checked(root, &[], Some(&allowed))? != expected_inventory {
         return Err(OkcError::VerificationFailed(
-            "Schema 3 checksums are incomplete or stale".into(),
-        ));
-    }
-    let expected_materialized = materialized_files(&plan)?;
-    for (path, bytes) in expected_materialized {
-        let observed =
-            fs::read(root.join(&path)).map_err(|error| OkcError::io(root.join(&path), error))?;
-        if observed != bytes {
-            return Err(OkcError::VerificationFailed(format!(
-                "Schema 3 materialized file `{path}` is not reproducible from the plan"
-            )));
-        }
-    }
-    let expected_provenance = provenance_jsonl(&plan, &materialized_files(&plan)?)?;
-    if fs::read(root.join(".okc/provenance.jsonl"))
-        .map_err(|error| OkcError::io(root.join(".okc/provenance.jsonl"), error))?
-        != expected_provenance
-    {
-        return Err(OkcError::VerificationFailed(
-            "Schema 3 provenance is not closed over the approved integration".into(),
+            "Schema 3 artifact bytes do not reproduce its approved plan and audit envelope".into(),
         ));
     }
     Ok(manifest)
+}
+
+pub const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+const MAX_APPROVED_PLAN_BYTES: u64 = 512 * 1024 * 1024;
+
+fn require_regular_directory(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| OkcError::io(path, error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(OkcError::VerificationFailed(
+            "artifact directories must be regular non-symlink directories".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn read_regular_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| OkcError::io(path, error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(OkcError::VerificationFailed(
+            "artifact entries must be regular non-symlink files".into(),
+        ));
+    }
+    if metadata.len() > limit {
+        return Err(OkcError::VerificationFailed(
+            "artifact file exceeds its expected byte limit".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    File::open(path)
+        .map_err(|error| OkcError::io(path, error))?
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| OkcError::io(path, error))?;
+    if bytes.len() as u64 > limit {
+        return Err(OkcError::VerificationFailed(
+            "artifact file grew beyond its expected byte limit".into(),
+        ));
+    }
+    Ok(bytes)
+}
+
+fn manifest_file(path: String, bytes: &[u8]) -> ManifestFile {
+    ManifestFile {
+        path,
+        byte_len: bytes.len() as u64,
+        raw_sha256: format!("{:x}", Sha256::digest(bytes)),
+        content_hash: ContentHash::from_domain_bytes("okc:content:v3\0", bytes),
+    }
+}
+
+fn inventory_from_bytes(files: &[(String, Vec<u8>)]) -> Vec<ManifestFile> {
+    let mut inventory = files
+        .iter()
+        .map(|(path, bytes)| manifest_file(path.clone(), bytes))
+        .collect::<Vec<_>>();
+    inventory.sort_by(|left, right| left.path.cmp(&right.path));
+    inventory
+}
+
+fn checksum_text(files: &[ManifestFile]) -> String {
+    files.iter().fold(String::new(), |mut output, file| {
+        writeln!(output, "{}  {}", file.raw_sha256, file.path)
+            .expect("writing to a String cannot fail");
+        output
+    })
 }
 
 /// Verify a Schema 3 directory and return the provenance record for one materialized
@@ -1421,7 +1567,7 @@ pub fn verify(root: impl AsRef<Path>) -> Result<CompiledVaultManifest> {
 pub fn explain(root: impl AsRef<Path>, output_path: &str) -> Result<ProvenanceRecord> {
     let root = root.as_ref();
     verify(root)?;
-    validate_relative_path(output_path, true)?;
+    validate_relative_path(output_path)?;
     let bytes = fs::read(root.join(".okc/provenance.jsonl"))
         .map_err(|error| OkcError::io(root.join(".okc/provenance.jsonl"), error))?;
     let mut matching = bytes
@@ -1456,7 +1602,7 @@ fn materialized_files(plan: &ApprovedIntegrationPlan) -> Result<Vec<(String, Vec
     for revision in &plan.clusters {
         let cluster = taxonomy[revision.proposal.cluster_id.as_str()];
         let canonical_path = format!("knowledge/{}", cluster.canonical_path);
-        validate_relative_path(&canonical_path, true)?;
+        validate_relative_path(&canonical_path)?;
         for document_id in &cluster.document_ids {
             document_targets.insert(*document_id, canonical_path.clone());
         }
@@ -1470,7 +1616,7 @@ fn materialized_files(plan: &ApprovedIntegrationPlan) -> Result<Vec<(String, Vec
             OkcError::Internal("taxonomy document target disappeared during materialization".into())
         })?;
         let stub_path = format!("legacy/{}/{}", document.source_id, document.original_path);
-        validate_relative_path(&stub_path, true)?;
+        validate_relative_path(&stub_path)?;
         files.push((
             stub_path,
             render_legacy_stub(plan, document, canonical).into_bytes(),
@@ -1783,10 +1929,19 @@ fn provenance_jsonl(
 }
 
 fn inventory(root: &Path, excluded: &[&str]) -> Result<Vec<ManifestFile>> {
+    inventory_checked(root, excluded, None)
+}
+
+fn inventory_checked(
+    root: &Path,
+    excluded: &[&str],
+    allowed: Option<&BTreeMap<String, u64>>,
+) -> Result<Vec<ManifestFile>> {
     fn walk(
         root: &Path,
         directory: &Path,
         excluded: &[&str],
+        allowed: Option<&BTreeMap<String, u64>>,
         files: &mut Vec<ManifestFile>,
     ) -> Result<()> {
         let mut entries = fs::read_dir(directory)
@@ -1803,10 +1958,6 @@ fn inventory(root: &Path, excluded: &[&str]) -> Result<Vec<ManifestFile>> {
                     "Schema 3 artifacts may contain only regular files and directories".into(),
                 ));
             }
-            if metadata.is_dir() {
-                walk(root, &entry.path(), excluded, files)?;
-                continue;
-            }
             let entry_path = entry.path();
             let relative = entry_path.strip_prefix(root).map_err(|_| {
                 OkcError::VerificationFailed("artifact inventory escaped its root".into())
@@ -1820,29 +1971,45 @@ fn inventory(root: &Path, excluded: &[&str]) -> Result<Vec<ManifestFile>> {
                 })
                 .collect::<Result<Vec<_>>>()?
                 .join("/");
+            validate_relative_path(&path)?;
+            if metadata.is_dir() {
+                let prefix = format!("{path}/");
+                if allowed.is_some_and(|paths| {
+                    paths
+                        .range(prefix.clone()..)
+                        .next()
+                        .is_none_or(|(candidate, _)| !candidate.starts_with(&prefix))
+                }) {
+                    return Err(OkcError::VerificationFailed(
+                        "artifact contains an unplanned directory".into(),
+                    ));
+                }
+                walk(root, &entry_path, excluded, allowed, files)?;
+                continue;
+            }
+            if allowed.is_some_and(|paths| !paths.contains_key(&path)) {
+                return Err(OkcError::VerificationFailed(
+                    "artifact contains an unplanned file".into(),
+                ));
+            }
             if excluded.contains(&path.as_str()) {
                 continue;
             }
-            validate_relative_path(&path, true)?;
-            let bytes =
-                fs::read(entry.path()).map_err(|error| OkcError::io(entry.path(), error))?;
-            files.push(ManifestFile {
-                path,
-                byte_len: bytes.len() as u64,
-                raw_sha256: format!("{:x}", Sha256::digest(&bytes)),
-                content_hash: ContentHash::from_domain_bytes("okc:content:v3\0", &bytes),
-            });
+            let limit = allowed.map_or(u64::MAX, |paths| paths[&path]);
+            let bytes = read_regular_file(&entry_path, limit)?;
+            files.push(manifest_file(path, &bytes));
         }
         Ok(())
     }
     let mut files = Vec::new();
-    walk(root, root, excluded, &mut files)?;
+    require_regular_directory(root)?;
+    walk(root, root, excluded, allowed, &mut files)?;
     files.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()));
     Ok(files)
 }
 
 fn write_new_file(root: &Path, logical_path: &str, bytes: &[u8]) -> Result<()> {
-    validate_relative_path(logical_path, true)?;
+    validate_relative_path(logical_path)?;
     let path = root.join(logical_path);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| OkcError::io(parent, error))?;
@@ -1860,7 +2027,10 @@ fn write_new_file(root: &Path, logical_path: &str, bytes: &[u8]) -> Result<()> {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn publish_directory_noreplace(staging: &Path, destination: &Path) -> std::io::Result<()> {
     let staging_parent = staging.parent().unwrap_or_else(|| Path::new("."));
-    let destination_parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let destination_parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     if staging_parent.canonicalize()? != destination_parent.canonicalize()? {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -1905,6 +2075,24 @@ fn sync_directory(path: &Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn sync_directory(_path: &Path) -> std::io::Result<()> {
     Ok(())
+}
+
+fn sync_directory_tree(root: &Path) -> Result<()> {
+    require_regular_directory(root)?;
+    for entry in fs::read_dir(root).map_err(|error| OkcError::io(root, error))? {
+        let entry = entry.map_err(|error| OkcError::io(root, error))?;
+        let kind = entry
+            .file_type()
+            .map_err(|error| OkcError::io(entry.path(), error))?;
+        if kind.is_dir() {
+            sync_directory_tree(&entry.path())?;
+        } else if !kind.is_file() || kind.is_symlink() {
+            return Err(OkcError::VerificationFailed(
+                "staging tree contains an unsafe entry".into(),
+            ));
+        }
+    }
+    sync_directory(root).map_err(|error| OkcError::io(root, error))
 }
 
 #[cfg(test)]
@@ -2096,6 +2284,151 @@ mod tests {
         fixture().plan.validate().expect("valid Schema 3 plan");
     }
 
+    fn reseal_proposal(proposal: SynthesisProposal) -> SynthesisProposal {
+        SynthesisProposal::seal(
+            proposal.cluster_id,
+            proposal.taxonomy_hash,
+            proposal.revision,
+            proposal.sections,
+            proposal.related_links,
+            proposal.dispositions,
+            proposal.contradictions,
+            proposal.synthesis_recording_hash,
+        )
+        .expect("resealed proposal")
+    }
+
+    #[test]
+    fn multiline_markdown_sections_compile_without_changing_their_body() {
+        let fixture = fixture();
+        let body = "First paragraph.\n\n- Item\n\n```rust\n\tlet value = 1;\n```";
+        let mut proposal = fixture.plan.clusters[0].proposal.clone();
+        proposal.sections[0].markdown_body = body.into();
+        let plan = ApprovedIntegrationPlan::seal(
+            fixture.corpus,
+            fixture.taxonomy,
+            fixture.plan.taxonomy_approval,
+            vec![revision_for(reseal_proposal(proposal), Vec::new())],
+            fixture.plan.provider_recording_hashes,
+        )
+        .expect("multiline Markdown is valid synthesis");
+        let temporary = tempfile::tempdir().expect("temporary");
+        let output = temporary.path().join("compiled");
+        compile(&plan, &output).expect("compile multiline body");
+        verify(&output).expect("verify multiline body");
+        let note =
+            fs::read_to_string(output.join("knowledge/rust/ownership.md")).expect("canonical note");
+        assert!(note.contains(body));
+    }
+
+    #[test]
+    fn integration_paths_reject_portable_hazards_without_rewriting_source_spelling() {
+        for path in [
+            "C:/note.md",
+            "CON.md",
+            "notes/AUX.txt",
+            "notes./note.md",
+            "notes /note.md",
+            "notes//note.md",
+            "notes/./note.md",
+            "notes/note.md/",
+            "notes/a:b.md",
+            "notes/a?b.md",
+            "../note.md",
+            "notes/../note.md",
+        ] {
+            assert!(validate_relative_path(path).is_err(), "accepted {path}");
+        }
+        validate_relative_path("Notes/Cafe\u{301}.md")
+            .expect("original NFD spelling remains valid");
+    }
+
+    #[test]
+    fn taxonomy_rejects_unicode_and_file_directory_path_collisions() {
+        let fixture = fixture();
+        let mut documents = fixture.corpus.documents.clone();
+        let mut second = documents[0].clone();
+        second.document_id = DocumentId::from_hash(hash("second document"));
+        second.original_path = "Other.md".into();
+        second.metadata.clear();
+        documents.push(second);
+        let corpus =
+            IntegrationCorpus::seal(fixture.corpus.policy_hash, documents).expect("two documents");
+        for (left, right) in [
+            ("Straße.md", "STRASSE.md"),
+            ("Café.md", "Cafe\u{301}.md"),
+            ("Topic.md", "Topic.md/Child.md"),
+            ("Rust/A.md", "rust/B.md"),
+        ] {
+            let clusters = [left, right]
+                .into_iter()
+                .enumerate()
+                .map(|(index, path)| TaxonomyCluster {
+                    cluster_id: format!("cluster-{index}"),
+                    title: format!("Cluster {index}"),
+                    canonical_path: path.into(),
+                    document_ids: vec![corpus.documents[index].document_id],
+                })
+                .collect();
+            assert!(
+                TaxonomyProposal::seal(
+                    &corpus,
+                    clusters,
+                    fixture.taxonomy.organizer_recording_hash,
+                )
+                .is_err(),
+                "accepted {left} and {right}"
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_slots_cannot_contain_conflicting_values() {
+        let fixture = fixture();
+        let mut documents = fixture.corpus.documents;
+        let document = &mut documents[0];
+        document.metadata.push(
+            MetadataValue::new(document.document_id, "tags", 0, &json!("conflicting value"))
+                .expect("metadata"),
+        );
+        assert!(IntegrationCorpus::seal(fixture.plan.corpus.policy_hash, documents).is_err());
+    }
+
+    #[test]
+    fn verification_rejects_unplanned_files_even_with_resealed_inventory() {
+        let temporary = tempfile::tempdir().expect("temporary");
+        let output = temporary.path().join("compiled");
+        compile(&fixture().plan, &output).expect("compile");
+        fs::write(output.join("unapproved.md"), b"No source or approval").expect("extra file");
+        let manifest_path = output.join(".okc/manifest.json");
+        let mut manifest: CompiledVaultManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest bytes"))
+                .expect("manifest");
+        manifest.files = inventory(&output, &[".okc/manifest.json", ".okc/checksums.txt"])
+            .expect("resealed inventory");
+        fs::write(
+            &manifest_path,
+            to_canonical_json_pretty(&manifest).expect("manifest JSON"),
+        )
+        .expect("replace manifest");
+        let checksums = checksum_text(
+            &inventory(&output, &[".okc/checksums.txt"]).expect("checksum inventory"),
+        );
+        fs::write(output.join(".okc/checksums.txt"), checksums).expect("replace checksums");
+        assert!(verify(&output).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn core_verification_rejects_a_symlinked_artifact_root() {
+        let temporary = tempfile::tempdir().expect("temporary");
+        let output = temporary.path().join("compiled");
+        compile(&fixture().plan, &output).expect("compile");
+        let alias = temporary.path().join("alias");
+        std::os::unix::fs::symlink(&output, &alias).expect("artifact alias");
+        assert!(verify(&alias).is_err());
+    }
+
     #[test]
     fn missing_disposition_fails_closed() {
         let mut fixture = fixture();
@@ -2277,6 +2610,248 @@ mod tests {
         assert_eq!(redirect.evidence.len(), 2);
         assert!(redirect.approval_hash.is_some());
         assert!(explain(&first, "missing.md").is_err());
+    }
+
+    #[test]
+    fn publication_checkpoint_order_and_precommit_cleanup_are_explicit() {
+        let expected = [
+            PublicationCheckpoint::StageCreated,
+            PublicationCheckpoint::Materialized,
+            PublicationCheckpoint::TreeSynchronized,
+            PublicationCheckpoint::Verified,
+            PublicationCheckpoint::BeforePublish,
+            PublicationCheckpoint::Published,
+            PublicationCheckpoint::ParentSynchronized,
+        ];
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("compiled");
+        let mut observed = Vec::new();
+        compile_with_hook(&fixture().plan, &output, &mut |checkpoint, _| {
+            observed.push(checkpoint);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(observed, expected);
+
+        for failure in &expected[..5] {
+            let root = tempfile::tempdir().unwrap();
+            let output = root.path().join("compiled");
+            let result = compile_with_hook(&fixture().plan, &output, &mut |checkpoint, _| {
+                if checkpoint == *failure {
+                    Err(std::io::Error::other("injected precommit failure"))
+                } else {
+                    Ok(())
+                }
+            });
+            assert!(matches!(result, Err(OkcError::Io { .. })));
+            assert!(!output.exists());
+            assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        }
+    }
+
+    #[test]
+    fn staged_verification_failure_never_publishes_or_leaves_a_stage() {
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("compiled");
+        let result = compile_with_hook(&fixture().plan, &output, &mut |checkpoint, stage| {
+            if checkpoint == PublicationCheckpoint::TreeSynchronized {
+                fs::write(stage.join("knowledge/rust/ownership.md"), "tampered")?;
+            }
+            Ok(())
+        });
+        assert!(matches!(result, Err(OkcError::VerificationFailed(_))));
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn failed_stage_cleanup_reports_exact_path_and_both_causes() {
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("compiled");
+        let result =
+            compile_with_hook(
+                &fixture().plan,
+                &output,
+                &mut |checkpoint, _| match checkpoint {
+                    PublicationCheckpoint::StageCreated => {
+                        Err(std::io::Error::other("initial failure"))
+                    }
+                    PublicationCheckpoint::BeforeCleanup => Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "cleanup denied",
+                    )),
+                    _ => Ok(()),
+                },
+            );
+        let Err(OkcError::StagingDispositionFailed {
+            path,
+            original,
+            source,
+        }) = result
+        else {
+            panic!("missing explicit stage disposition error: {result:?}");
+        };
+        assert_eq!(path.parent(), Some(root.path()));
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(".okc-stage-")
+        );
+        assert!(path.is_dir());
+        assert!(matches!(*original, OkcError::Io { .. }));
+        assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn postcommit_failure_preserves_verified_output_and_disarms_old_stage() {
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("compiled");
+        let mut old_stage = None;
+        let result = compile_with_hook(&fixture().plan, &output, &mut |checkpoint, path| {
+            if checkpoint == PublicationCheckpoint::StageCreated {
+                old_stage = Some(path.to_path_buf());
+            }
+            if checkpoint == PublicationCheckpoint::Published {
+                let reused = old_stage.as_ref().unwrap();
+                fs::create_dir(reused)?;
+                fs::write(reused.join("external"), "preserve me")?;
+                return Err(std::io::Error::other("injected parent sync failure"));
+            }
+            Ok(())
+        });
+        assert!(matches!(
+            result,
+            Err(OkcError::PublishedButDurabilityUncertain { .. })
+        ));
+        verify(&output).unwrap();
+        assert_eq!(
+            fs::read(old_stage.unwrap().join("external")).unwrap(),
+            b"preserve me"
+        );
+        assert!(matches!(
+            compile(&fixture().plan, &output),
+            Err(OkcError::OutputExists(_))
+        ));
+    }
+
+    #[test]
+    fn publish_barrier_preserves_external_file_and_directory_winners() {
+        for kind in ["file", "empty-directory", "nonempty-directory"] {
+            let root = tempfile::tempdir().unwrap();
+            let output = root.path().join("compiled");
+            let result = compile_with_hook(&fixture().plan, &output, &mut |checkpoint, _| {
+                if checkpoint == PublicationCheckpoint::BeforePublish {
+                    if kind == "file" {
+                        fs::write(&output, "external winner")?;
+                    } else {
+                        fs::create_dir(&output)?;
+                        if kind == "nonempty-directory" {
+                            fs::write(output.join("external"), "external winner")?;
+                        }
+                    }
+                }
+                Ok(())
+            });
+            assert!(matches!(result, Err(OkcError::OutputExists(_))));
+            match kind {
+                "file" => assert_eq!(fs::read(&output).unwrap(), b"external winner"),
+                "empty-directory" => assert_eq!(fs::read_dir(&output).unwrap().count(), 0),
+                _ => assert_eq!(
+                    fs::read(output.join("external")).unwrap(),
+                    b"external winner"
+                ),
+            }
+            assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publish_barrier_preserves_live_and_dangling_symlink_winners() {
+        for live in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let output = root.path().join("compiled");
+            let outside = root.path().join("outside");
+            if live {
+                fs::write(&outside, "external winner").unwrap();
+            }
+            let result = compile_with_hook(&fixture().plan, &output, &mut |checkpoint, _| {
+                if checkpoint == PublicationCheckpoint::BeforePublish {
+                    std::os::unix::fs::symlink(&outside, &output)?;
+                }
+                Ok(())
+            });
+            assert!(matches!(result, Err(OkcError::OutputExists(_))));
+            assert_eq!(fs::read_link(&output).unwrap(), outside);
+            if live {
+                assert_eq!(fs::read(&outside).unwrap(), b"external winner");
+            } else {
+                assert!(!outside.exists());
+            }
+            assert_eq!(
+                fs::read_dir(root.path()).unwrap().count(),
+                if live { 2 } else { 1 }
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_distinct_plans_publish_exactly_one_unmixed_winner() {
+        let first = fixture().plan;
+        let mut proposal = first.clusters[0].proposal.clone();
+        proposal.sections[0].markdown_body = "A different approved build.".into();
+        let second = ApprovedIntegrationPlan::seal(
+            first.corpus.clone(),
+            first.taxonomy.clone(),
+            first.taxonomy_approval.clone(),
+            vec![revision_for(reseal_proposal(proposal), Vec::new())],
+            first.provider_recording_hashes.clone(),
+        )
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("compiled");
+        let barrier = std::sync::Barrier::new(2);
+        let results = std::thread::scope(|scope| {
+            let jobs: Vec<_> = [&first, &second]
+                .into_iter()
+                .map(|plan| {
+                    let output = &output;
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        compile_with_hook(plan, output, &mut |checkpoint, _| {
+                            if checkpoint == PublicationCheckpoint::BeforePublish {
+                                barrier.wait();
+                            }
+                            Ok(())
+                        })
+                    })
+                })
+                .collect();
+            jobs.into_iter()
+                .map(|job| job.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(OkcError::OutputExists(_))))
+                .count(),
+            1
+        );
+        let winner = verify(&output).unwrap();
+        let plan = if winner.integration_plan_id == first.integration_plan_id {
+            &first
+        } else {
+            &second
+        };
+        assert_eq!(winner.integration_plan_id, plan.integration_plan_id);
+        for (path, bytes) in materialized_files(plan).unwrap() {
+            assert_eq!(fs::read(output.join(path)).unwrap(), bytes);
+        }
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
     }
 
     #[test]

@@ -51,12 +51,36 @@ Stages resume only when every input and semantic configuration identity
 matches. Project services append task state and immutable objects; they never
 rewrite prior approval authority.
 
+Changing language or routes after downstream work exists starts a fresh active
+run without deleting history. Changing approved taxonomy or requesting a newer
+cluster revision makes cached plans unavailable immediately. A pending
+regeneration MUST NOT be resealed using its older approval. Latest verified
+output is bound to the current approved plan, and compile/verify hold the project
+writer lock through recording the result.
+
+Source/configuration changes commit journal invalidation before replacing the
+manifest; in-memory configuration changes only after the manifest write succeeds.
+A failed journal commit leaves the manifest unchanged. A later manifest failure
+may leave the old configuration with a fresh empty run, requiring integration
+again, but MUST NOT restore old approvals as current. This conservative ordering
+is not an atomic transaction across SQLite and the filesystem, nor automatic
+manifest recovery after a power loss.
+
 ## Source safety
 
 The scanner excludes `.obsidian/**`, `.git/**`, configured executable and
 secret classes, and every symlink. It rejects absolute roots, drive prefixes,
 NUL, parent traversal, non-portable/reserved names, duplicate NFC logical
 paths, unsupported source kinds, and lossy archive names.
+Source membership comes only from the sealed inclusion/exclusion policy.
+Ambient parent/global ignore files and source `.ignore` directives MUST NOT
+silently exclude Markdown or alter snapshot identities.
+
+Linux/macOS pin the source directory and resolve each member component with
+descriptor-relative no-follow opens, checking regular-file type on the opened
+handle. Source-root and archive-leaf symlinks are rejected. This protects source
+content reads; it does not qualify path-based enumeration, managed SQLite
+mutation, output ancestors, or Windows reparse-point races.
 
 Archive bounds cover compressed and expanded bytes, file count, per-file size,
 path length/depth, and expansion ratio. ZIP and `tar.zst` members are validated

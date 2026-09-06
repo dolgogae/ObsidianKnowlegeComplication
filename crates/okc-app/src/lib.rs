@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use okc_core::{CancellationToken, SourceId};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension as _, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -285,6 +285,12 @@ impl ProjectStore {
             ));
         }
         let root = fs::canonicalize(root)?;
+        for directory in ["objects", "workspace"] {
+            validate_managed_path(&root.join(directory), true, true)?;
+        }
+        validate_managed_path(&root.join("manifest.json"), false, true)?;
+        validate_database_paths(&root.join("state.sqlite3"), true)?;
+        validate_database_paths(&root.join("workspace/build.sqlite3"), true)?;
         let manifest: ProjectManifest =
             serde_json::from_reader(File::open(root.join("manifest.json"))?)?;
         manifest.validate()?;
@@ -311,6 +317,7 @@ impl ProjectStore {
     }
 
     pub fn acquire_writer_lock(&self) -> Result<ProjectLock> {
+        validate_managed_path(&self.root, true, true)?;
         let path = self.root.join("project.lock");
         let mut file = OpenOptions::new()
             .write(true)
@@ -407,8 +414,8 @@ impl ProjectStore {
         }
     }
 
-    /// Atomically replace the complete active source set while retaining all
-    /// historical runs and approvals in the append-only journal.
+    /// Replace the complete active source set after durably invalidating old
+    /// authority. Historical runs and approvals remain in the append-only journal.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "the public mutation boundary intentionally takes ownership of the replacement set"
@@ -421,7 +428,7 @@ impl ProjectStore {
         self.replace_sources_locked(sources)
     }
 
-    /// Atomically replace explicit absolute sources without cwd discovery.
+    /// Replace explicit absolute sources without cwd discovery.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "the public mutation boundary intentionally takes ownership of the replacement set"
@@ -457,7 +464,7 @@ impl ProjectStore {
             &next_manifest.ai_routes,
         ))?;
         let config_hash = domain_digest(b"okc:integration-config:v3\0", &config_bytes);
-        let connection = Connection::open(self.root.join("state.sqlite3"))?;
+        let connection = self.connection()?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let transaction = connection.unchecked_transaction()?;
         let sequence: u64 = transaction.query_row(
@@ -484,15 +491,19 @@ impl ProjectStore {
             "INSERT INTO project_events(kind, detail) VALUES ('source_invalidation', 'active source set replaced')",
             [],
         )?;
-        self.save_manifest_value(&next_manifest)?;
+        // Commit invalidation first. If the process or manifest write fails,
+        // the old manifest may remain, but its old approvals cannot be current.
         transaction.commit()?;
+        self.save_manifest_value(&next_manifest)?;
         self.manifest = next_manifest;
         Ok(())
     }
 
     pub fn put_object(&self, bytes: &[u8]) -> Result<String> {
+        self.validate_object_directory()?;
         let digest = hex_digest(bytes);
         let path = self.root.join("objects").join(&digest);
+        validate_managed_path(&path, false, false)?;
         if path.exists() {
             let mut existing = Vec::new();
             File::open(&path)?.read_to_end(&mut existing)?;
@@ -512,6 +523,7 @@ impl ProjectStore {
                 Ok(digest)
             }
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                validate_managed_path(&path, false, true)?;
                 let mut existing = Vec::new();
                 File::open(&path)?.read_to_end(&mut existing)?;
                 if existing == bytes {
@@ -526,11 +538,16 @@ impl ProjectStore {
         }
     }
 
-    fn save_manifest(&self) -> Result<()> {
-        self.save_manifest_value(&self.manifest)
+    fn commit_configuration(&mut self, next_manifest: ProjectManifest, reason: &str) -> Result<()> {
+        next_manifest.validate()?;
+        self.invalidate_downstream(&next_manifest, reason)?;
+        self.save_manifest_value(&next_manifest)?;
+        self.manifest = next_manifest;
+        Ok(())
     }
 
     fn save_manifest_value(&self, manifest: &ProjectManifest) -> Result<()> {
+        validate_managed_path(&self.root, true, true)?;
         let destination = self.root.join("manifest.json");
         let mut staged = tempfile::NamedTempFile::new_in(&self.root)?;
         serde_json::to_writer_pretty(&mut staged, manifest)?;
@@ -541,15 +558,58 @@ impl ProjectStore {
         Ok(())
     }
 
-    fn invalidate_downstream(&self, reason: &str) -> Result<()> {
-        let connection = Connection::open(self.root.join("state.sqlite3"))?;
+    fn invalidate_downstream(&self, next_manifest: &ProjectManifest, reason: &str) -> Result<()> {
+        let connection = self.connection()?;
         let transaction = connection.unchecked_transaction()?;
         transaction.execute(
             "INSERT INTO project_events(kind, detail) VALUES ('source_invalidation', ?1)",
             params![reason],
         )?;
+        // A manifest edit must stop latest-plan/verified-output queries from
+        // returning authority from the previous configuration immediately.
+        // A source-only placeholder has no downstream work to invalidate.
+        let active: Option<(String, String)> = transaction.query_row(
+            "SELECT run_id,input_hash FROM runs WHERE sequence=(SELECT MAX(sequence) FROM runs)",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        if let Some((run_id, input_hash)) = active {
+            let has_work: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM task_definitions WHERE run_id=?1) \
+                 OR EXISTS(SELECT 1 FROM approvals_v3 WHERE run_id=?1) \
+                 OR EXISTS(SELECT 1 FROM integration_plans_v4 WHERE run_id=?1)",
+                [&run_id],
+                |row| row.get(0),
+            )?;
+            if has_work {
+                let sequence: u64 =
+                    transaction
+                        .query_row("SELECT MAX(sequence)+1 FROM runs", [], |row| row.get(0))?;
+                let config_bytes = serde_json::to_vec(&(
+                    &next_manifest.policy_version,
+                    &next_manifest.language,
+                    &next_manifest.ai_routes,
+                ))?;
+                let config_hash = domain_digest(b"okc:integration-config:v3\0", &config_bytes);
+                let next_run = format!(
+                    "run_{}",
+                    domain_digest(
+                        b"okc:run:v3\0",
+                        format!("{input_hash}:{config_hash}:{sequence}").as_bytes()
+                    )
+                );
+                transaction.execute(
+                    "INSERT INTO runs(run_id,input_hash,config_hash,sequence) VALUES (?1,?2,?3,?4)",
+                    params![next_run, input_hash, config_hash, sequence],
+                )?;
+            }
+        }
         transaction.commit()?;
         Ok(())
+    }
+
+    fn validate_object_directory(&self) -> Result<()> {
+        validate_managed_path(&self.root, true, true)?;
+        validate_managed_path(&self.root.join("objects"), true, true)
     }
 }
 
@@ -646,11 +706,58 @@ fn validate_project_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn validate_managed_path(path: &Path, directory: bool, required: bool) -> Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if !required && error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink()
+        || if directory {
+            !metadata.is_dir()
+        } else {
+            !metadata.is_file()
+        }
+    {
+        return Err(AppError::InvalidProject(format!(
+            "managed path must be a non-symlink {}: {}",
+            if directory {
+                "directory"
+            } else {
+                "regular file"
+            },
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    if !directory {
+        use std::os::unix::fs::MetadataExt as _;
+        if metadata.nlink() != 1 {
+            return Err(AppError::InvalidProject(format!(
+                "managed file must not have hardlink aliases: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_database_paths(path: &Path, required: bool) -> Result<()> {
+    validate_managed_path(path, false, required)?;
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut sidecar = path.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        validate_managed_path(Path::new(&sidecar), false, false)?;
+    }
+    Ok(())
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one auditable SQLite schema definition"
 )]
 fn initialize_state(path: &Path) -> Result<()> {
+    validate_database_paths(path, false)?;
     let connection = Connection::open(path)?;
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
@@ -817,6 +924,118 @@ fn set_private_directory(_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn project_open_rejects_hardlinked_managed_files_before_writing() {
+        use std::os::unix::fs::MetadataExt as _;
+
+        for relative in [
+            "manifest.json",
+            "state.sqlite3",
+            "state.sqlite3-wal",
+            "state.sqlite3-shm",
+            "state.sqlite3-journal",
+            "workspace/build.sqlite3",
+            "workspace/build.sqlite3-wal",
+            "workspace/build.sqlite3-shm",
+            "workspace/build.sqlite3-journal",
+        ] {
+            let temporary = tempfile::tempdir().expect("temporary directory");
+            let root = temporary.path().join("project.okc-project");
+            ProjectStore::create(&root, "Knowledge", "curator", "policy-v3").expect("project");
+            let managed = root.join(relative);
+            if !managed.exists() {
+                fs::write(&managed, []).expect("empty database sidecar");
+            }
+            let outside = temporary.path().join("outside");
+            fs::hard_link(&managed, &outside).expect("managed hardlink");
+            let before = fs::read(&outside).expect("original bytes");
+            let metadata = fs::metadata(&outside).expect("original metadata");
+            assert!(
+                ProjectStore::open(&root).is_err(),
+                "accepted {relative} hardlink"
+            );
+            assert_eq!(fs::read(&outside).expect("after"), before);
+            assert_eq!(fs::metadata(&outside).unwrap().mode(), metadata.mode());
+            assert_eq!(
+                fs::metadata(&outside).unwrap().modified().unwrap(),
+                metadata.modified().unwrap()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn object_access_rejects_hardlinked_objects() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let root = temporary.path().join("project.okc-project");
+        let project =
+            ProjectStore::create(&root, "Knowledge", "curator", "policy-v3").expect("project");
+        let object_id = project.put_object(b"sealed").expect("object");
+        let outside = temporary.path().join("outside-object");
+        fs::hard_link(root.join("objects").join(&object_id), &outside).expect("object hardlink");
+        assert!(project.read_object(&object_id).is_err());
+        assert!(project.put_object(b"sealed").is_err());
+        assert_eq!(fs::read(outside).unwrap(), b"sealed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_open_rejects_symlinked_managed_paths_before_writing() {
+        use std::os::unix::fs::symlink;
+
+        for relative in [
+            "manifest.json",
+            "state.sqlite3",
+            "objects",
+            "workspace",
+            "workspace/build.sqlite3",
+        ] {
+            let temporary = tempfile::tempdir().expect("temporary directory");
+            let root = temporary.path().join("project.okc-project");
+            ProjectStore::create(&root, "Knowledge", "curator", "policy-v3").expect("project");
+            let managed = root.join(relative);
+            let outside = temporary.path().join("outside");
+            fs::rename(&managed, &outside).expect("move managed target");
+            let before = outside
+                .is_file()
+                .then(|| fs::read(&outside).expect("before"));
+            symlink(&outside, &managed).expect("managed alias");
+            assert!(
+                ProjectStore::open(&root).is_err(),
+                "accepted {relative} symlink"
+            );
+            if let Some(before) = before {
+                assert_eq!(fs::read(outside).expect("after"), before);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn object_access_rejects_replaced_directories_and_object_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let root = temporary.path().join("project.okc-project");
+        let project =
+            ProjectStore::create(&root, "Knowledge", "curator", "policy-v3").expect("project");
+        let object_id = project.put_object(b"sealed").expect("object");
+        let object = root.join("objects").join(&object_id);
+        let outside = temporary.path().join("outside-object");
+        fs::rename(&object, &outside).expect("move object");
+        symlink(&outside, &object).expect("object alias");
+        assert!(project.read_object(&object_id).is_err());
+        assert!(project.put_object(b"sealed").is_err());
+
+        let objects = root.join("objects");
+        let outside_objects = temporary.path().join("outside-objects");
+        fs::rename(&objects, &outside_objects).expect("move objects");
+        symlink(&outside_objects, &objects).expect("objects alias");
+        assert!(project.put_object(b"new secret").is_err());
+        assert_eq!(fs::read_dir(outside_objects).expect("objects").count(), 1);
+    }
 
     #[test]
     fn project_layout_lock_objects_and_rebind_are_safe() {

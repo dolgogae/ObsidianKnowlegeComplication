@@ -165,3 +165,24 @@ fn no_argument_non_tty_prints_help_and_returns_usage() {
     assert_eq!(output.status.code(), Some(2));
     assert!(stdout(&output).contains("Usage: okc"));
 }
+
+#[test]
+fn offline_compile_accepts_a_single_component_relative_destination() {
+    let temporary = tempfile::tempdir().expect("temporary");
+    let plan = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../okc-core/tests/fixtures/sdk-integration-plan.json");
+    let output = okc()
+        .current_dir(temporary.path())
+        .args(["compile", "--integration-plan"])
+        .arg(plan)
+        .args(["--output", "compiled"])
+        .output()
+        .expect("compile");
+    assert!(output.status.success(), "{}", stderr(&output));
+    let verified = okc()
+        .current_dir(temporary.path())
+        .args(["verify", "compiled"])
+        .output()
+        .expect("verify");
+    assert!(verified.status.success(), "{}", stderr(&verified));
+}

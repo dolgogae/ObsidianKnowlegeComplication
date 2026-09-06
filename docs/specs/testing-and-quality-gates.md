@@ -62,6 +62,38 @@ Automated tests MUST cover:
 - Python and Node.js type declarations, structured errors, scheduler lifecycle,
   consent, output safety, source immutability, and complete current workflow.
 
+The 2026-09-06 correctness audit adds mandatory regressions for:
+
+- multiline Markdown sections, portable Unicode/prefix/file-directory output
+  collisions, strict source-ID deserialization, and conflicting metadata slots;
+- unplanned files with attacker-resealed manifests/checksums, core verifier
+  root aliases, source/workspace overlap, project/object/database symlinks;
+- language/route/taxonomy/regeneration invalidation, current-plan-bound verified
+  outputs, and stage/request/provider/candidate-sensitive cache identity;
+- PEM markers, exact UTF-8 email ranges, metadata-only sensitive documents,
+  spoofed loopback DNS names, nested duplicate provider JSON, total retry deadlines;
+- full progress/work queues, non-blocking shutdown, cross-client project
+  exclusion, reservation release before completion, and unmodified arbitrary
+  Node.js metadata keys;
+- a one-component relative CLI output path and library-only feature builds.
+
+Concrete test-to-requirement mappings are in
+[`TRACEABILITY.md`](../TRACEABILITY.md); findings and validation scope are in
+the [audit report](../history/summaries/2026-09-06-correctness-audit.md).
+
+The stabilization follow-up also requires managed-file/sidecar hardlink
+rejection, source root/leaf/ancestor replacement tests, ambient-ignore
+independence, journal/manifest failure ordering, bottom-up staging durability,
+deterministic publish-barrier winners, distinct-plan concurrency, cleanup error
+reporting, and preserved post-commit output. Fixed-seed JSON/ZIP mutations and
+source creation/root/order properties run with the ordinary Rust suite.
+
+`python3 tests/tui_pty_smoke.py target/debug/okc` exercises the POSIX terminal
+against a bounded synthetic loopback provider: provider-free preflight,
+explicit taxonomy/cluster approvals, compile, independent verify, restart,
+immutable source bytes/mtime, and terminal restoration. It does not qualify
+Windows ConPTY, remote vendors, long cancellation, or process-kill injection.
+
 Retired artifacts MUST NOT be committed as active fixtures. Tests create
 minimal temporary `.vaultc`, `.vaultpack`, Schema 2 `.okc`, and `.okcpack`
 markers, then assert `ARTIFACT_SCHEMA_UNSUPPORTED`, `supported_schema = 3`, and
@@ -97,6 +129,9 @@ cargo fmt --all -- --check
 cargo tree --workspace
 ```
 
+The optional core features MUST also compile independently; check the library
+with `--no-default-features`, then with only `archives`, and only `sqlite`.
+
 Source hygiene MUST show no removed workspace member, crate dependency,
 generation-suffixed public symbol, retired CLI implementation, committed
 retired fixture, or deprecated facade. Contractual stored/protocol literals
@@ -117,6 +152,12 @@ The wheel and source distribution MUST install without repository imports;
 `import okc`, API info, interop schema 2, native loading, and a bounded smoke
 operation MUST work. Stubs must expose typed `VerificationResult` and
 `ExplanationResult`, and `output_path` is required for explanation.
+
+Release wheel builds MUST set `SOURCE_DATE_EPOCH` to the selected source
+commit's Unix timestamp and compare repeated wheel bytes, including the
+embedded SBOM. The pinned Maturin otherwise includes a fresh SBOM UUID and
+timestamp. Repeating packaging against cached native output is a useful local
+regression, not a substitute for independent clean-build/native CI evidence.
 
 ## Node.js checks
 
@@ -155,3 +196,13 @@ publisher races, and cancellation. The full performance fixture must report
 wall time, peak RSS, accepted bytes/files, candidate counts, provider token
 cost, and failure slices. The current bounded in-memory source accumulation is
 a known blocker for the 20 GB gate.
+
+The provider-free `corpus_probe` example generates only disposable fixtures
+under hard source limits. Build with `cargo build --locked --release -p okc-core
+--example corpus_probe`, then run the platform RSS tool and
+`corpus_probe SOURCES NOTES BYTES_PER_NOTE` to record exact counts, source
+bytes, corpus hash, and build time. It MUST report `qg_006_pass: false`: a
+small-byte 100k-note ingestion probe is not the 20 GB semantic workload. The
+historical V1 20-minute/2-GB target and the unresolved current reference-machine/
+budget adoption are recorded in `history/OPEN_QUESTIONS.md`; no relaxed
+threshold is inferred.

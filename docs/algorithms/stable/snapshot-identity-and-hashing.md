@@ -3,7 +3,7 @@ title: ALG-SNP-001 — Snapshot Identity and Hashing
 status: normative
 owners:
   - core-rust-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0003
   - ADR-0004
@@ -99,10 +99,20 @@ seal manifest; return snapshot_id, vault_content_id, manifest
 
 `original_path` is carried in the sealed manifest/IR and later Plan and
 provenance records, but it is deliberately not an input to `SourceFileId` or
-`SnapshotId`. Compilation still compares it during the source reread; a
-post-plan spelling change is stale even when these lower semantic IDs match.
+`SnapshotId`. Fresh corpus construction compares the spelling during source
+inspection; a spelling change changes the current corpus even when lower
+semantic IDs match. Final Schema 3 compilation uses the approved embedded
+corpus and does not reopen an original Vault. Source rereading during
+compilation describes the retired pipeline only.
 
 Hashing MUST stream bytes, check byte count, and re-stat/reopen according to platform race policy. A changed file during inspection invalidates the snapshot attempt.
+
+The Linux/macOS content-read implementation pins source roots and opens every
+member component with descriptor-relative `NOFOLLOW`; opened-handle type and
+root identity checks prevent a replaced source alias from granting read
+authority. Path-based enumeration and other platform/mutable-state race
+qualification remain separate gates. Ambient `.ignore`/global/parent rules
+are not identity policy and MUST NOT change accepted membership.
 
 Before planning, snapshots are canonical-sorted by `SourceId` and MUST have
 strictly unique `SourceId` and `VaultContentId` values. Reordering input Vaults

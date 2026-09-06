@@ -27,6 +27,13 @@ pub enum OkcError {
     ApprovalStale(String),
     #[error("destination already exists: {0}")]
     OutputExists(PathBuf),
+    #[error("failed to remove staging directory `{path}` after {original}: {source}")]
+    StagingDispositionFailed {
+        path: PathBuf,
+        original: Box<OkcError>,
+        #[source]
+        source: std::io::Error,
+    },
     #[error(
         "`{path}` was published completely, but synchronizing its parent directory failed; durability is uncertain: {source}"
     )]

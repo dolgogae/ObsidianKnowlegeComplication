@@ -46,6 +46,9 @@ impl CorpusBuilder {
             crate::snapshot::inspect_sources(sources, &policy, self.workspace.as_deref())?;
         let source_count = inspection.snapshots.len();
         let plan = crate::plan::build_plan(&inspection, &policy)?;
+        // The sealed plan owns its projection; retaining the inspection while
+        // building the public corpus needlessly keeps another full text copy.
+        drop(inspection);
         let (corpus, block_texts) = prepare_from_plan(&plan)?;
         Ok(PreparedCorpus {
             corpus,

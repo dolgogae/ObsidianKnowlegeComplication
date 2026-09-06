@@ -14,8 +14,7 @@ use okc_core::integration::{
     SourceDisposition, SynthesisProposal, SynthesisSection, TaxonomyCluster, TaxonomyProposal,
 };
 use okc_core::{
-    BlockId, BlockTextMap, ContentHash, CorpusBuilder, DocumentId, PreparedCorpus,
-    to_canonical_json,
+    BlockTextMap, ContentHash, CorpusBuilder, DocumentId, PreparedCorpus, to_canonical_json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -24,9 +23,8 @@ use crate::integration_service::{
     IntegrationCheckpoint, IntegrationService, raw_hash, source_spec,
 };
 use crate::project_state::{
-    ApprovedTaxonomy, ClusterTaskOutput, RunRecord, SENSITIVE_SCANNER_VERSION, SensitiveFinding,
-    TaskCacheKey, TaskStage, TaskState, TaskStatus, TaxonomyTaskOutput, authorize_disclosure,
-    scan_sensitive_block,
+    ApprovedTaxonomy, ClusterTaskOutput, RunRecord, SENSITIVE_SCANNER_VERSION, SensitiveScan,
+    TaskCacheKey, TaskStage, TaskState, TaskStatus, TaxonomyTaskOutput,
 };
 use crate::{
     AppError, OperationControl, OperationKind, OperationPhase, ProgressEvent, ProjectStore, Result,
@@ -146,19 +144,14 @@ impl IntegrationService {
         let config_bytes = to_canonical_json(&project.manifest().ai_routes)?;
         let config_hash = raw_hash(b"okc:integration-config:v3\0", &config_bytes);
         let run = project.begin_or_resume_run(&corpus.corpus_hash.hex(), &config_hash)?;
-        let findings = block_text
-            .iter()
-            .flat_map(|((document_id, block_id), text)| {
-                scan_sensitive_block(*document_id, *block_id, text)
-            })
-            .collect::<Vec<_>>();
+        let findings = SensitiveScan::scan(&corpus)?;
         record_preflight(&project, &run, &corpus.corpus_hash.hex(), &findings)?;
         let profiles = self.provider_service().load_config()?;
         validate_routes(&project, &profiles)?;
-        let all_blocks = corpus
+        let all_documents = corpus
             .documents
             .iter()
-            .flat_map(|document| document.blocks.iter().map(|block| block.block_id))
+            .map(|document| document.document_id)
             .collect::<BTreeSet<_>>();
 
         let embedding_profile_name = project.manifest().ai_routes.profile_for(AiRole::Embedding);
@@ -172,7 +165,7 @@ impl IntegrationService {
             embedding_profile_name,
             &embedding_profile,
             &findings,
-            &all_blocks,
+            &all_documents,
             allow_remote_provider,
             remote_disclosure_confirmed,
             control,
@@ -192,7 +185,7 @@ impl IntegrationService {
             organizer_profile_name,
             &organizer_profile,
             &findings,
-            &all_blocks,
+            &all_documents,
             allow_remote_provider,
             remote_disclosure_confirmed,
             control,
@@ -295,17 +288,17 @@ impl IntegrationService {
     }
 }
 
-fn record_preflight(
+pub(crate) fn record_preflight(
     project: &ProjectStore,
     run: &RunRecord,
     source_hash: &str,
-    findings: &[SensitiveFinding],
+    findings: &SensitiveScan,
 ) -> Result<()> {
     let response = serde_json::to_vec(findings)?;
     let key = TaskCacheKey {
         stage: TaskStage::SensitivePreflight,
-        prompt_hash: raw_hash(b"okc:prompt:v3\0", b"sensitive-preflight-v1"),
-        schema_hash: raw_hash(b"okc:schema:v3\0", b"sensitive-findings-v1"),
+        prompt_hash: raw_hash(b"okc:prompt:v3\0", b"sensitive-preflight-v2"),
+        schema_hash: raw_hash(b"okc:schema:v3\0", b"sensitive-findings-v2"),
         source_hash: source_hash.into(),
         provider: "deterministic-local".into(),
         model: SENSITIVE_SCANNER_VERSION.into(),
@@ -353,8 +346,8 @@ fn run_embedding_task(
     block_text: &BlockTextMap,
     profile_name: &str,
     profile: &ProviderProfile,
-    findings: &[SensitiveFinding],
-    disclosed_blocks: &BTreeSet<BlockId>,
+    findings: &SensitiveScan,
+    disclosed_documents: &BTreeSet<okc_core::DocumentId>,
     allow_remote_provider: bool,
     remote_disclosure_confirmed: bool,
     control: &OperationControl,
@@ -400,12 +393,11 @@ fn run_embedding_task(
         return project.complete_task_response(&task);
     }
     let client = service.provider_service().client(profile_name)?;
-    authorize_disclosure(
+    findings.authorize(
         AiRole::Embedding,
         profile_name,
         &okc_ai::Embedder::capabilities(&client),
-        findings,
-        disclosed_blocks,
+        disclosed_documents,
         allow_remote_provider,
         remote_disclosure_confirmed,
         true,
@@ -518,8 +510,8 @@ fn run_organizer_task(
     candidates: &[SemanticCandidate],
     profile_name: &str,
     profile: &ProviderProfile,
-    findings: &[SensitiveFinding],
-    disclosed_blocks: &BTreeSet<BlockId>,
+    findings: &SensitiveScan,
+    disclosed_documents: &BTreeSet<okc_core::DocumentId>,
     allow_remote_provider: bool,
     remote_disclosure_confirmed: bool,
     control: &OperationControl,
@@ -556,7 +548,10 @@ fn run_organizer_task(
         TaskStage::Organizer,
         request.system_instruction.as_bytes(),
         &to_canonical_json(&schema)?,
-        &corpus.corpus_hash.hex(),
+        &raw_hash(
+            b"okc:organizer-source:v3\0",
+            &to_canonical_json(&request.input)?,
+        ),
         profile_name,
         profile,
     )?;
@@ -566,12 +561,11 @@ fn run_organizer_task(
         return project.complete_task_response(&task);
     }
     let client = service.provider_service().client(profile_name)?;
-    authorize_disclosure(
+    findings.authorize(
         AiRole::Organizer,
         profile_name,
         &okc_ai::StructuredGenerator::capabilities(&client),
-        findings,
-        disclosed_blocks,
+        disclosed_documents,
         allow_remote_provider,
         remote_disclosure_confirmed,
         true,
@@ -604,7 +598,15 @@ fn provider_task_key(
         provider: profile_name.into(),
         model: profile.model.clone(),
         adapter: env!("CARGO_PKG_VERSION").into(),
-        options_hash: raw_hash(b"okc:options:v3\0", &to_canonical_json(&profile.options)?),
+        options_hash: raw_hash(
+            b"okc:options:v3\0",
+            &to_canonical_json(&json!({
+                "kind": profile.kind, "endpoint": profile.endpoint, "options": profile.options,
+                "max_input_bytes": profile.max_input_bytes,
+                "max_response_bytes": profile.max_response_bytes,
+                "max_batch_items": profile.max_batch_items,
+            }))?,
+        ),
     })
 }
 
@@ -660,7 +662,7 @@ fn run_cluster_tasks(
     approved_taxonomy: &ApprovedTaxonomy,
     cluster: &TaxonomyCluster,
     block_text: &BlockTextMap,
-    findings: &[SensitiveFinding],
+    findings: &SensitiveScan,
     profiles: &ProviderConfig,
     allow_remote_provider: bool,
     remote_disclosure_confirmed: bool,
@@ -673,9 +675,9 @@ fn run_cluster_tasks(
         .iter()
         .filter(|document| cluster.document_ids.contains(&document.document_id))
         .collect::<Vec<_>>();
-    let disclosed_blocks = documents
+    let disclosed_documents = documents
         .iter()
-        .flat_map(|document| document.blocks.iter().map(|block| block.block_id))
+        .map(|document| document.document_id)
         .collect::<BTreeSet<_>>();
     let source_input = documents
         .iter()
@@ -739,12 +741,11 @@ fn run_cluster_tasks(
         project.complete_task_response(&synthesis_task)?
     } else {
         let synthesis_client = service.provider_service().client(synthesis_profile_name)?;
-        authorize_disclosure(
+        findings.authorize(
             AiRole::Synthesis,
             synthesis_profile_name,
             &okc_ai::StructuredGenerator::capabilities(&synthesis_client),
-            findings,
-            &disclosed_blocks,
+            &disclosed_documents,
             allow_remote_provider,
             remote_disclosure_confirmed,
             true,
@@ -840,12 +841,11 @@ fn run_cluster_tasks(
         return project.complete_task_response(&critic_task);
     }
     let critic_client = service.provider_service().client(critic_profile_name)?;
-    authorize_disclosure(
+    findings.authorize(
         AiRole::Critic,
         critic_profile_name,
         &okc_ai::StructuredGenerator::capabilities(&critic_client),
-        findings,
-        &disclosed_blocks,
+        &disclosed_documents,
         allow_remote_provider,
         remote_disclosure_confirmed,
         true,
@@ -1029,6 +1029,40 @@ fn observe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_cache_keys_bind_endpoint_kind_and_bounds_without_credentials() {
+        let profile: ProviderProfile = serde_json::from_value(json!({
+            "kind": "ollama", "endpoint": "http://localhost:11434", "model": "fixture"
+        }))
+        .expect("profile");
+        let key = |profile: &ProviderProfile| {
+            provider_task_key(
+                TaskStage::Organizer,
+                b"prompt",
+                b"schema",
+                &raw_hash(b"okc:test:v3\0", b"source"),
+                "default",
+                profile,
+            )
+            .expect("key")
+            .hash()
+            .expect("hash")
+        };
+        let original = key(&profile);
+        let mut changed = profile.clone();
+        changed.endpoint = "https://provider.example.test".into();
+        assert_ne!(key(&changed), original);
+        changed = profile.clone();
+        changed.kind = okc_ai::ProviderKind::OpenAiCompatible;
+        assert_ne!(key(&changed), original);
+        changed = profile.clone();
+        changed.max_input_bytes -= 1;
+        assert_ne!(key(&changed), original);
+        changed = profile.clone();
+        changed.api_key_env = Some("DIFFERENT_CREDENTIAL_REFERENCE".into());
+        assert_eq!(key(&changed), original);
+    }
 
     #[test]
     fn every_pipeline_schema_is_in_the_portable_strict_subset() {

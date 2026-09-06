@@ -56,6 +56,9 @@ changing them would alter the resulting Schema 3 corpus.
 - Filesystem time, inode, hostname, absolute root, input order, and MCP origin
   MUST NOT affect semantic identity or output.
 - Source symlinks are not followed. Lossy path decoding is forbidden.
+- `SourceId` construction and deserialization enforce the same bounded ASCII
+  identifier grammar; `.` and `..` are forbidden. Unknown `SourceSpec` fields
+  fail instead of being silently ignored.
 
 ## Parsed records
 
@@ -83,6 +86,10 @@ contains every Markdown document with:
 Corpus documents, blocks, and metadata are sorted by explicit keys before the
 corpus hash is sealed. Source order MUST NOT affect the value.
 
+Each document has at most one metadata value for a given `(key, value_index)`;
+different hashes do not make conflicting values in one slot valid. Metadata
+JSON keys are source data: language DTO name conversion MUST NOT rewrite them.
+
 ## Integration records
 
 - `TaxonomyProposal` and `TaxonomyCluster` assign every document exactly once.
@@ -94,6 +101,10 @@ corpus hash is sealed. Source order MUST NOT affect the value.
 - `CriticReport`, `OmissionApproval`, `FindingWaiver`, `ClusterApproval`, and
   `ApprovedClusterRevision` bind explicit review authority.
 - `ApprovedIntegrationPlan` is the complete offline compilation input.
+
+Section bodies permit LF and tab for ordinary multiline Markdown while
+rejecting other control characters and enforcing the 16 MiB body bound.
+Headings, IDs, and paths retain their separate stricter control rules.
 
 Integrated blocks MUST be cited by a section or contradiction. Preserved
 content MUST remain materialized. An omission has no effect without exact

@@ -1,16 +1,94 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(feature = "sqlite")]
 use rusqlite::{Connection, params};
 
-use crate::error::Result;
+use crate::error::{OkcError, Result};
 use crate::plan::Inspection;
+use crate::source::SourceSpec;
 
 #[cfg(feature = "sqlite")]
 const WORKSPACE_SCHEMA_VERSION: u32 = 2;
 
+pub(crate) fn validate_destination(path: &Path, sources: &[SourceSpec]) -> Result<()> {
+    validate_database_file(path)?;
+    let destination = resolve_destination(path)?;
+    for source in sources {
+        let source_path = std::fs::canonicalize(source.path())
+            .map_err(|error| OkcError::io(source.path(), error))?;
+        if destination == source_path
+            || matches!(source, SourceSpec::Directory { .. })
+                && destination.starts_with(&source_path)
+        {
+            return Err(OkcError::InvalidConfig(
+                "workspace database must be outside every immutable source".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn resolve_destination(path: &Path) -> Result<PathBuf> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => std::fs::canonicalize(path).map_err(|error| OkcError::io(path, error)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let name = path.file_name().ok_or_else(|| {
+                OkcError::InvalidConfig("workspace path must identify a database file".into())
+            })?;
+            let parent = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            Ok(resolve_destination(parent)?.join(name))
+        }
+        Err(error) => Err(OkcError::io(path, error)),
+    }
+}
+
+fn validate_database_file(path: &Path) -> Result<()> {
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let mut target = path.as_os_str().to_os_string();
+        target.push(suffix);
+        let target = Path::new(&target);
+        match std::fs::symlink_metadata(target) {
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt as _;
+                    if metadata.nlink() != 1 {
+                        return Err(OkcError::UnsafePath {
+                            path: target.display().to_string(),
+                            reason:
+                                "workspace database and sidecars must not have hardlink aliases"
+                                    .into(),
+                        });
+                    }
+                }
+            }
+            Ok(_) => {
+                return Err(OkcError::UnsafePath {
+                    path: target.display().to_string(),
+                    reason: "workspace database and sidecars must be non-symlink regular files"
+                        .into(),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(OkcError::io(target, error)),
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) fn persist_inspection(path: &Path, inspection: &Inspection) -> Result<()> {
+    validate_destination(
+        path,
+        &inspection
+            .snapshots
+            .iter()
+            .map(|snapshot| snapshot.source.clone())
+            .collect::<Vec<_>>(),
+    )?;
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

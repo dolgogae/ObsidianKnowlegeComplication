@@ -149,6 +149,23 @@ test('CommonJS exposes API info and structured path errors', async () => {
   })
 })
 
+test('camelCase DTO conversion preserves arbitrary source metadata keys', async () => {
+  const value = { release_date: '2026-09-06', releaseDate: 'distinct', nested_map: { source_id: 'user data' } }
+  const job = new okc.Job({
+    resultJson: async () => JSON.stringify({
+      interop_schema_version: 2,
+      corpus: { documents: [{ document_id: 'doc_fixture', metadata: [{
+        metadata_id: 'metadata_fixture', value_index: 0, content_hash: 'hash', value,
+      }] }] },
+    }),
+  })
+  const result = await job.result()
+  const metadata = result.corpus.documents[0].metadata[0]
+  assert.equal(metadata.metadataId, 'metadata_fixture')
+  assert.equal(metadata.valueIndex, 0)
+  assert.deepEqual(metadata.value, value)
+})
+
 test('project create, open, and manifest round trip', async t => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'okc-node-'))
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }))

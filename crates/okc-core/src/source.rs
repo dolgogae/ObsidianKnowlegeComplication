@@ -1,18 +1,24 @@
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::error::{OkcError, Result};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SourceId(String);
+
+impl<'de> Deserialize<'de> for SourceId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
 
 impl SourceId {
     pub fn new(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
-        if value.is_empty() || value.len() > 128 {
+        if value.is_empty() || value.len() > 128 || matches!(value.as_str(), "." | "..") {
             return Err(OkcError::InvalidConfig(
                 "source ID must contain 1..=128 UTF-8 bytes".into(),
             ));
@@ -40,7 +46,7 @@ impl Display for SourceId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SourceSpec {
     Directory {
         source_id: SourceId,

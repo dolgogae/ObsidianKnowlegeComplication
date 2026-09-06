@@ -34,7 +34,7 @@ evidence is attached to that SHA:
 4. The SDK binding workflow produces CPython `cp311-abi3` wheels for all four
    native targets, one `Cargo.lock`-bearing sdist, one root npm tarball, and the
    four platform-addon tarballs. Every package set has SHA-256 and CycloneDX
-   SBOM evidence.
+    SBOM evidence.
 5. Clean environments install the built wheel and sdist and both root/platform
    npm tarballs. Tests cover CPython 3.11 through every supported stable minor,
    Node.js 22.13.0 and the current supported line, Python type stubs,
@@ -61,6 +61,12 @@ The official registry JSON endpoints returned HTTP 404 for both names on
 [`time-sensitive facts register`](references/TIME_SENSITIVE_FACTS.md) and does
 not reserve either name.
 
+Wheel builds MUST set `SOURCE_DATE_EPOCH` to the selected commit timestamp
+(`git show -s --format=%ct HEAD`) before invoking the pinned Maturin. This
+retains the embedded SBOM while avoiding its default per-build UUID/time
+variation. SDK CI compares repeated wheel bytes before installation. A cached
+local repeat is not independent clean-build or two-pass remote CI evidence.
+
 Signing and notarization credentials MUST exist only in a protected GitHub
 `release` Environment with required human reviewers. A workflow lacking those
 credentials, a runner that cannot verify the native signature, or an artifact
@@ -82,6 +88,9 @@ benchmark evidence do not exist in this checkout. Local macOS arm64 wheel,
 sdist, root npm tarball, platform-addon tarball, clean-install, type, checksum,
 and SBOM checks pass, but neither language package is published. The current
 semantic scale, Pack/non-Markdown materialization, manual-section review,
-current command adapter, provider conformance, and TUI PTY/platform gates in
+current command adapter, real-provider conformance, and full TUI cancellation/platform gates in
 the testing specification are also open.
+The [stabilization follow-up](history/summaries/2026-09-06-stabilization-follow-up.md)
+adds successful local POSIX synthetic-provider PTY and cached reproducible-wheel
+smokes plus emulated Linux tests; it does not qualify the native release matrix.
 Therefore publishing stable `0.3.0` is currently prohibited.

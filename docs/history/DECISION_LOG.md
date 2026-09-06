@@ -638,3 +638,80 @@ Append-only. Normative details live in specifications and accepted ADRs.
   `452ca0671e806a93b4f36f218cf9e62da899f6404c74705c2cf0ca14e413c7e5`.
 - Remote platform, performance, fuzz/TOCTOU, non-Markdown/Pack, signing, and
   protected-publication gates remain open; stable `0.3.0` is still prohibited.
+
+## 2026-09-06 — Correctness, trust-boundary, and lifecycle audit
+
+- Paused implementation to record four current normative-document conflicts
+  in OPEN_QUESTIONS. Reconciled reserved command-provider wording, retired
+  provenance/decision authority, and unsupported materialization claims using
+  already accepted ADR-0027 and current specifications. Retained historical
+  ADR bodies, transcripts, current identities, and artifact bytes.
+- Reproduced and fixed stale configuration/taxonomy/regeneration authority,
+  unplanned-file verification with resealed inventory, normal multiline body
+  rejection, Unicode/prefix/file-directory collisions, source-ID decoding and
+  conflicting metadata slots. Held the project writer lock through compile/
+  verification recording and bound verified output to the current plan.
+- Centralized strict duplicate-key JSON, portable path checks, preflight
+  recording, checksums, and manifest bounds. Corrected PEM/email scanning,
+  added metadata-only document disclosure checks with explicitly versioned
+  private scanner results, parsed real loopback endpoints, strengthened task
+  cache identity/order, and enforced an end-to-end provider retry deadline.
+- Rejected workspace/source overlap and unsafe project/object/database
+  symlinks before persistence. Fixed full-progress-queue worker deadlock,
+  bounded language scheduler submissions, shared same-project reservations
+  across clients, and released reservations before terminal notification.
+  Preserved arbitrary Node.js source metadata keys and fixed optional core
+  feature builds plus one-component relative CLI publication.
+  Rejected profile edits now validate before mutating the in-memory route.
+- Passed 110 locked all-feature Rust tests and all doc-test targets, workspace
+  check/Clippy/rustfmt, three independent optional-feature library Clippy runs,
+  and the documentation link/guide gates. Fresh Node native output passed 13
+  tests, strict TypeScript, and six-file package dry-run. A fresh ABI3 Python
+  wheel passed 12 tests and strict mypy from an isolated extraction; host pip
+  installation errors are not counted as a successful clean install.
+- Rust/Python/Node retained inventory SHA-256
+  `452ca0671e806a93b4f36f218cf9e62da899f6404c74705c2cf0ca14e413c7e5`.
+  Added the detailed audit report and requirement-to-regression mappings.
+  No dependency, public schema, accepted invariant, release status, commit,
+  remote tag, or publication changed. Platform/fuzz/TOCTOU/crash/scale/native
+  signing and clean-install gates remain open.
+
+## 2026-09-06 — Local stabilization and installation follow-up
+
+- Preserved the preceding audit changes and reproduced additional hardlink,
+  ambient-ignore membership, and manifest/journal failure-order defects before
+  fixing them. Unix managed files reject multiple links; Linux/macOS source
+  content opens use pinned directory handles and per-component no-follow checks.
+  Configuration/source updates invalidate journal authority before replacing
+  the manifest and update in-memory configuration only on success.
+- Synchronized staging directories bottom-up, held cleanup ownership through
+  real atomic no-replace publication, disarmed it immediately on success, and
+  reported failed cleanup with its exact path and both causes. Added private
+  fault checkpoints and actual barrier/concurrent-winner regressions without
+  adding a public fault API or changing output schema/bytes.
+- Added fixed-seed JSON/ZIP mutation and creation-order properties, plus a
+  POSIX synthetic-provider TUI harness covering explicit approvals, provider-free
+  compile/verify/restart, source immutability and terminal restoration. Added the
+  PTY smoke to POSIX CI; remote execution is not claimed.
+- Passed 130 Rust tests and all doc-test targets on macOS arm64 and on Linux
+  x86_64 GNU under Docker emulation, plus local check/Clippy/format/docs gates.
+  Fresh pip wheel/sdist virtualenv installs each passed 12 Python tests;
+  strict mypy and clean npm tarball/CJS/ESM installation, 13 Node tests and
+  TypeScript checks passed. A process-local Homebrew Expat loader path resolved
+  the host pip error without rewriting the earlier failed-install record.
+- Validated SBOMs and package checksums. Repeated wheels initially differed
+  because of generated SBOM UUID/time; setting the source-commit epoch retained
+  the SBOM and produced identical repeated wheel bytes. Added that control and
+  comparison to SDK CI. This cached packaging check is not independent native
+  clean-build or two-pass remote release evidence.
+- Added a bounded, temporary synthetic ingestion probe and dropped an obsolete
+  corpus inspection before public projection. The 10-Vault/100k-note/25.6-MB
+  run used 174.569 seconds for corpus construction and 5,360,336,896 bytes peak
+  RSS, with no provider calls or semantic-candidate measurement. QG-006 is not
+  passed; the historical 2-GB target is exceeded and current benchmark/reference
+  decisions are explicitly recorded in OPEN_QUESTIONS.
+- Updated current state, requirement/test traceability, normative behavior,
+  release instructions and a detailed follow-up report. No dependency, current
+  identity/artifact golden, accepted invariant, commit/tag, publication or
+  stable-release status changed. Future materializers/Pack, scale, full
+  cancellation/fuzz/ancestor-race protection, native matrices and signing remain.

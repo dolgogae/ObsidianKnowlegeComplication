@@ -81,6 +81,10 @@ jobs:
       - name: Install pinned Python build and test tools
         run: python -m pip install --disable-pip-version-check maturin==1.15.0 pytest==8.4.2
 
+      - name: Record reproducible source timestamp
+        shell: bash
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+
       - name: Build abi3 wheel
         shell: bash
         run: |
@@ -88,6 +92,24 @@ jobs:
           python -m maturin build \
             --manifest-path bindings/python/Cargo.toml \
             --release --locked --out "$RUNNER_TEMP/sdk-dist"
+
+      - name: Repeat wheel packaging and compare exact bytes
+        shell: bash
+        run: |
+          python -m maturin build \
+            --manifest-path bindings/python/Cargo.toml \
+            --release --locked --out "$RUNNER_TEMP/sdk-repeat"
+          python - "$RUNNER_TEMP/sdk-dist" "$RUNNER_TEMP/sdk-repeat" <<'PY'
+          from pathlib import Path
+          import sys
+
+          first, second = (
+              {path.name: path.read_bytes() for path in Path(root).glob("*.whl")}
+              for root in sys.argv[1:]
+          )
+          if not first or first != second:
+              raise SystemExit("repeated wheel packaging changed artifact bytes")
+          PY
 
       - name: Install and test wheel in an isolated target
         shell: bash
@@ -218,6 +240,10 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.11"
+
+      - name: Record reproducible source timestamp
+        shell: bash
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
       - name: Build and install the source distribution
         shell: bash

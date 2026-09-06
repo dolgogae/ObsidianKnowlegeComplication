@@ -704,27 +704,38 @@ impl ProviderClient {
         cancellation: &CancellationToken,
     ) -> Result<HttpResponse, ProviderError> {
         let mut attempts = 0_u8;
+        let started = std::time::Instant::now();
+        let budget = Duration::from_millis(request.timeout_ms);
+        let mut attempt = request.clone();
         loop {
             cancelled(cancellation)?;
-            match self.transport.post_json(request, cancellation) {
-                Ok(response) if (200..300).contains(&response.status) => return Ok(response),
-                Ok(response) => {
-                    let error = redact_request_secrets(normalize_http_error(&response), request);
-                    if !error.retryable || attempts >= MAX_RETRIES {
-                        return Err(error);
-                    }
-                    attempts += 1;
-                    cancellable_delay(error.retry_after_ms.unwrap_or(0), cancellation)?;
-                }
-                Err(error) => {
-                    let error = redact_request_secrets(error, request);
-                    if !error.retryable || attempts >= MAX_RETRIES {
-                        return Err(error);
-                    }
-                    attempts += 1;
-                    cancellable_delay(error.retry_after_ms.unwrap_or(0), cancellation)?;
-                }
+            let remaining = budget
+                .checked_sub(started.elapsed())
+                .filter(|value| !value.is_zero())
+                .ok_or_else(provider_deadline_exceeded)?;
+            attempt.timeout_ms = u64::try_from(remaining.as_millis())
+                .unwrap_or(request.timeout_ms)
+                .max(1);
+            let outcome = self.transport.post_json(&attempt, cancellation);
+            cancelled(cancellation)?;
+            if started.elapsed() >= budget {
+                return Err(provider_deadline_exceeded());
             }
+            let error = match outcome {
+                Ok(response) if (200..300).contains(&response.status) => return Ok(response),
+                Ok(response) => normalize_http_error(&response),
+                Err(error) => error,
+            };
+            let error = redact_request_secrets(error, request);
+            if !error.retryable || attempts >= MAX_RETRIES {
+                return Err(error);
+            }
+            attempts += 1;
+            let delay = error.retry_after_ms.unwrap_or(0).min(30_000);
+            if Duration::from_millis(delay) >= budget.saturating_sub(started.elapsed()) {
+                return Err(provider_deadline_exceeded());
+            }
+            cancellable_delay(delay, cancellation)?;
         }
     }
 
@@ -818,7 +829,7 @@ impl StructuredGenerator for ProviderClient {
             &wire_body,
         )?;
         let response = self.send_with_retry(&http, cancellation)?;
-        let wire: Value = serde_json::from_slice(&response.body).map_err(|_| {
+        let wire = okc_core::parse_json_strict(&response.body).map_err(|_| {
             ProviderError::new(
                 ProviderErrorKind::InvalidResponse,
                 "provider returned malformed JSON",
@@ -879,7 +890,7 @@ impl Embedder for ProviderClient {
             &wire_body,
         )?;
         let response = self.send_with_retry(&http, cancellation)?;
-        let wire: Value = serde_json::from_slice(&response.body).map_err(|_| {
+        let wire = okc_core::parse_json_strict(&response.body).map_err(|_| {
             ProviderError::new(
                 ProviderErrorKind::InvalidResponse,
                 "provider returned malformed embedding JSON",
@@ -1204,7 +1215,7 @@ fn parse_generation_response(
             (text, finish.to_owned(), parse_openai_usage(wire))
         }
     };
-    let output = serde_json::from_str(text)
+    let output = okc_core::parse_json_strict(text.as_bytes())
         .map_err(|_| invalid_response("structured response text is not valid JSON"))?;
     Ok(ParsedGeneration {
         output,
@@ -1451,6 +1462,14 @@ fn cancellable_delay(
     cancelled(cancellation)
 }
 
+fn provider_deadline_exceeded() -> ProviderError {
+    ProviderError::retryable(
+        ProviderErrorKind::Timeout,
+        "provider operation exceeded its total request and retry deadline",
+        None,
+    )
+}
+
 fn cancelled(cancellation: &CancellationToken) -> Result<(), ProviderError> {
     if cancellation.is_cancelled() {
         Err(ProviderError::new(
@@ -1520,10 +1539,12 @@ fn is_loopback_endpoint(endpoint: &str) -> bool {
 
 fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
-        || host == "127.0.0.1"
-        || host.starts_with("127.")
-        || host == "::1"
-        || host == "[::1]"
+        || host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(host)
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 fn invalid_response(message: impl Into<String>) -> ProviderError {
@@ -1905,6 +1926,93 @@ mod tests {
         let mut invalid = schema;
         invalid["additionalProperties"] = Value::Bool(true);
         assert!(validate_portable_schema(&invalid).is_err());
+    }
+
+    #[test]
+    fn loopback_names_cannot_be_spoofed_by_dns_prefixes() {
+        for host in [
+            "127.attacker.example",
+            "127.0.0.1.attacker.example",
+            "127.999.1.1",
+        ] {
+            let mut candidate = profile(ProviderKind::Ollama);
+            candidate.endpoint = format!("http://{host}:8080");
+            assert_eq!(
+                candidate.data_boundary(),
+                DataBoundary::Remote,
+                "host: {host}"
+            );
+            assert_eq!(
+                candidate.validate().expect_err("remote HTTP").kind,
+                ProviderErrorKind::RemotePolicy
+            );
+        }
+        for host in [
+            "localhost",
+            "LOCALHOST",
+            "127.0.0.2",
+            "127.255.255.254",
+            "[::1]",
+        ] {
+            let mut candidate = profile(ProviderKind::Ollama);
+            candidate.endpoint = format!("http://{host}:8080");
+            candidate.validate().expect("loopback HTTP");
+            assert_eq!(candidate.data_boundary(), DataBoundary::Local);
+        }
+    }
+
+    #[test]
+    fn provider_json_rejects_duplicate_keys_including_nested_structured_output() {
+        for content in [
+            r#"{"cluster":"first","cluster":"second"}"#,
+            r#"{"nested":{"claim":"first","claim":"second"}}"#,
+        ] {
+            let wire = json!({"model":"fixture-model", "message":{"content":content}, "done_reason":"stop"});
+            assert!(matches!(
+                parse_generation_response(ProviderKind::Ollama, &wire),
+                Err(ProviderError {
+                    kind: ProviderErrorKind::InvalidResponse,
+                    ..
+                })
+            ));
+        }
+        assert!(okc_core::parse_json_strict(br#"{"model":"first","model":"second"}"#).is_err());
+    }
+
+    #[test]
+    fn retry_after_cannot_exceed_the_total_provider_deadline() {
+        let transport = Arc::new(FixtureTransport {
+            responses: Mutex::new(vec![
+                HttpResponse {
+                    status: 429,
+                    body: b"{}".to_vec(),
+                    request_id: None,
+                    retry_after_ms: Some(30_000),
+                },
+                HttpResponse {
+                    status: 200,
+                    body: b"{}".to_vec(),
+                    request_id: None,
+                    retry_after_ms: None,
+                },
+            ]),
+            requests: Mutex::new(Vec::new()),
+        });
+        let client =
+            ProviderClient::with_transport(profile(ProviderKind::Ollama), transport.clone())
+                .expect("client");
+        let request = HttpRequest {
+            url: "http://127.0.0.1:9".into(),
+            headers: Vec::new(),
+            body: b"{}".to_vec(),
+            timeout_ms: 10,
+            max_response_bytes: 1024,
+        };
+        let error = client
+            .send_with_retry(&request, &CancellationToken::default())
+            .expect_err("deadline");
+        assert_eq!(error.kind, ProviderErrorKind::Timeout);
+        assert_eq!(transport.requests.lock().expect("requests").len(), 1);
     }
 
     #[test]

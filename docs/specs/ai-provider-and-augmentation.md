@@ -28,10 +28,10 @@ resumption, and review orchestration. `okc-core` owns corpus, proposal/evidence
 validation, approval closure, and provider-free compilation. A provider never
 receives filesystem or publication authority.
 
-There is no general augmentation protocol crate or command-provider
-implementation on main. The `command` profile value is reserved and MUST fail
-capability testing until a supervised current-schema adapter is specified and
-implemented.
+There is no general augmentation protocol crate, command-provider kind, or
+command execution adapter on main. The `command` profile value is unknown and
+MUST be rejected during profile decoding. Adding such an adapter requires a
+separately reviewed current-schema decision under ADR-0027.
 
 ## Capabilities and roles
 
@@ -55,6 +55,15 @@ miss requires `allow_remote_provider` and
 `remote_disclosure_confirmed` for that invocation. Consent is not stored or
 reused. Content with effective sensitive findings and affected semantic work
 MUST use a local route.
+Rejected route edits MUST leave the existing configuration unchanged in memory
+and on disk; validate the candidate before replacing the active value.
+
+The scanner also covers frontmatter keys and values, including documents with
+no body blocks. Private scanner revision `okc-sensitive-v3-2` records separate
+block and metadata findings under `sensitive-findings-v2`; metadata byte spans
+refer to UTF-8 compact JSON of `{key, value}`, not raw YAML. Findings retain
+identities/ranges/hashes, never matched text. The versioned preflight cache is
+recomputed without rewriting old objects or changing approved artifact bytes.
 
 ## Portable requests and recordings
 
@@ -69,6 +78,12 @@ call and validates returned JSON independently of provider claims. It records
 canonical request and response bytes plus content hashes in immutable project
 objects. Resume may reuse a response only when the complete cache key matches
 the source/corpus, route, provider/model, role, prompt, schema, and revision.
+
+Cache identity includes provider kind, endpoint, options, and input/response/
+batch limits; credential references and secret values are excluded. Organizer
+input identity includes semantic candidates, not just the corpus. Reusing a
+task key with a different stage or request object MUST fail. Latest tasks are
+ordered by journal events, not lexicographic task hashes.
 
 Provider recordings are evidence of what was proposed, not approval. Final
 compile accepts a sealed `ApprovedIntegrationPlan` and performs no provider,
@@ -89,6 +104,9 @@ Provider responses MUST be rejected for any of the following:
 - an unsupported/uncited section, malformed contradiction, or out-of-bound
   response;
 - any attempt to provide curator approval or alter source/project state.
+
+Duplicate JSON keys are rejected recursively in transport envelopes and
+embedded generated JSON before conversion into maps can erase ambiguity.
 
 Organizer, synthesis, and critic output is resealed locally. Critical/major
 critic findings block. Minor findings and omissions require individually keyed
@@ -115,6 +133,10 @@ sizes, deadlines, cancellation, and a maximum of two retry attempts for
 explicitly retryable failures. Credentials in URLs are forbidden. Redirect,
 proxy, DNS, TLS, and error normalization policy MUST not disclose secrets or
 reinterpret a failed response as valid output.
+
+The configured timeout bounds the entire call, including retries and
+`Retry-After` delays. Each attempt receives only the remaining budget; a delay
+that would exhaust it fails with the timeout class without sleeping past it.
 
 Provider errors are normalized into authentication, authorization,
 rate-limit, timeout, context-limit, refusal, invalid request/response,

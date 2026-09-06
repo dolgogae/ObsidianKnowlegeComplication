@@ -125,7 +125,8 @@ They use the same project manifest, journal, immutable objects, and on-disk
 lock as CLI/TUI.
 
 `OkcClient` accepts an immutable provider-profile set and 1–64 workers (four by
-default). Language profiles may name `api_key_env` but cannot carry raw secrets
+default), plus at most 64 queued jobs per client. Further submissions fail with
+retryable `RESOURCE_LIMIT` without blocking the caller. Language profiles may name `api_key_env` but cannot carry raw secrets
 or keychain references. Credential-like options and unknown provider kinds are
 rejected. Environment secrets resolve at job start and are never stored.
 
@@ -140,12 +141,22 @@ Every filesystem/provider/compiler operation returns `Job<T>`. States are
 before publication, too late at/after the barrier, and already finished after a
 terminal state. A second in-process mutation of the same canonical project
 returns `PROJECT_BUSY`; the disk lock remains inter-process authority.
+This exclusion spans distinct client instances and filesystem aliases, and the
+reservation is released before job completion is observable. Full progress or
+work queues do not make client finalization wait for free queue capacity.
+
+Node.js converts contract field names to camelCase, but preserves arbitrary
+provider option maps and source metadata value keys exactly, including distinct
+`release_date` and `releaseDate` keys in one source value.
 
 `OkcError` fields are `code`, `category`, `message`, `retryable`, and `details`.
 Clients MUST branch on code/category, not parse text. Recognizable retired
 artifacts return `ARTIFACT_SCHEMA_UNSUPPORTED` and details for supported schema
 3, detected schema, and detected format family. All other verification hazards
 use fail-closed verification errors.
+Failed staging cleanup maps to `PATH_UNSAFE` in the `output` category, with
+`staging_path`, `original_code`, and `io_kind` details; callers must not infer
+that the failed stage was removed. No new interop code or schema is introduced.
 
 Python targets CPython 3.11+ through `abi3-py311`; Node.js targets 22.13+
 through Node-API 9. Release candidates require typing checks, tests, wheel and

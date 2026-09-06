@@ -3,7 +3,7 @@ title: Open Questions
 status: normative-future
 owners:
   - architect
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0002
   - ADR-0004
@@ -20,12 +20,63 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0027
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
 ---
 
 # Open Questions
+
+## Current stabilization decisions still required — 2026-09-06 follow-up
+
+- QG-006 names an accepted time/RSS budget but current Schema 3 specifications
+  do not state the numerical budget, reference machine, provider/token-cost
+  budget, or representative source distribution. The 2026-08-15 decision-log
+  entry records the historical V1 target of 20 minutes and 2 GB; that is not
+  permission to silently redefine or relax the mandatory-AI workload. Confirm
+  its current adoption and reference environment before declaring QG-006 passed.
+  The 100k-note/25.6-MB local ingestion probe already peaks at 5,360,336,896 bytes
+  RSS, exceeding the historical 2-GB target even without semantic providers.
+- ALG-SEM-001 requires fixed chunk/HNSW/search/spill parameters, but no complete
+  current defaults and reference vectors are frozen. These identity-affecting
+  choices need specification/ADR review before replacing the development path.
+- ADR-0027 requires a separately reviewed current Pack/command-provider
+  decision. No historical implementation or generic "finish remaining work"
+  instruction selects a new artifact format, provider supervision policy,
+  manual-amendment contract, or persisted disclosure-exception policy.
+- Remote CI dispatch/publication and release credentials remain external
+  authority. Native signing requires protected Apple/Windows credentials;
+  stable publication stays prohibited regardless of local smoke results.
+
+The follow-up closes local installation, selected source-handle/publication/
+failure-order regressions, and POSIX TUI smoke coverage. It does not resolve
+these design/release decisions or claim all prior backlog items complete.
+
+## Resolved documentation audit — current contract conflicts (2026-09-06)
+
+Implementation changes were paused when the following active documentation
+conflicts were found, as required by `AGENTS.md`:
+
+- The provider specification reserves a `command` profile value, while the
+  architecture/security specifications and ADR-0027 remove that kind entirely.
+- ALG-PRV-001 still requires the retired typed derivation graph, virtual audit
+  roots, and explanation cursors. The current provenance/output/SDK
+  specifications require Schema 3 per-output records and directory-only,
+  single-output explanation with no cursor or package surface.
+- ALG-CNF-001 describes retired public decision/materialization authority,
+  without distinguishing the retained private analysis from the current
+  `ApprovedIntegrationPlan` compile authority.
+- ALG-INT-001 lists non-Markdown and Pack materialization without marking
+  those steps as future work, although the current output specification
+  explicitly prohibits presenting them as implemented.
+
+The resolution authority already exists in
+[`ADR-0027`](../adr/0027-current-schema-single-source.md) and the current
+[`specifications`](../specs/). The audit reconciled these descriptions to
+that accepted boundary before resuming code changes, retaining private snapshot/parser identity domains
+and current Schema 3 bytes. It does not authorize a new provider kind,
+materializer, schema, or weaker approval invariant.
 
 ## Resolved documentation defects — V3 desktop workflow (2026-09-05)
 
@@ -78,7 +129,12 @@ behavior-changing answer through an ADR and specification update. Current
 implementation gaps are also summarized in
 [`../CURRENT_STATE.md`](../CURRENT_STATE.md).
 
-## V3 stabilization work (not design authority)
+## Historical V3 stabilization backlog (before ADR-0027; not design authority)
+
+The following two sections retain earlier backlog context. ADR-0027 has already
+removed all V1/V2 runtime surfaces, so their removal/compatibility items are not
+current tasks. Retained historical Pack/command-adapter plans are not authority
+to reintroduce them; use the current decisions above and CURRENT_STATE.
 
 - Finish `ALG-SEM-001` deterministic block chunking/batching, fixed-seed HNSW,
   and union with exact/MinHash/title/alias/link candidates at the 100k-note
@@ -93,7 +149,7 @@ implementation gaps are also summarized in
 - Remove the development CLI's V2 writer surface after replacing its public
   regression harness; ADR-0022 requires V1/V2 to expose only `verify` and
   `explain` in the V3 product.
-## Stable V2 implementation
+## Historical stable V2 implementation backlog
 
 - Freeze the complete Comrak/Unicode/normalization compatibility contract and
   golden vectors, including Unix raw filenames, invalid UTF-8, NFC/NFD, and

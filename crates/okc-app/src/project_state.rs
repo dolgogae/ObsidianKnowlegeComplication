@@ -107,14 +107,17 @@ impl AiRouteConfig {
     }
 
     pub fn set(&mut self, role: Option<AiRole>, profile: String) -> Result<()> {
+        let mut next = self.clone();
         match role {
-            None => self.default = profile,
-            Some(AiRole::Embedding) => self.embedding = Some(profile),
-            Some(AiRole::Organizer) => self.organizer = Some(profile),
-            Some(AiRole::Synthesis) => self.synthesis = Some(profile),
-            Some(AiRole::Critic) => self.critic = Some(profile),
+            None => next.default = profile,
+            Some(AiRole::Embedding) => next.embedding = Some(profile),
+            Some(AiRole::Organizer) => next.organizer = Some(profile),
+            Some(AiRole::Synthesis) => next.synthesis = Some(profile),
+            Some(AiRole::Critic) => next.critic = Some(profile),
         }
-        self.validate()
+        next.validate()?;
+        *self = next;
+        Ok(())
     }
 }
 
@@ -319,16 +322,22 @@ impl ProjectStore {
         if let Some(language) = &language {
             validate_bcp47(language)?;
         }
-        self.manifest.language = language;
-        self.save_manifest()?;
-        self.invalidate_downstream("project language changed")
+        if self.manifest.language == language {
+            return Ok(());
+        }
+        let mut next_manifest = self.manifest.clone();
+        next_manifest.language = language;
+        self.commit_configuration(next_manifest, "project language changed")
     }
 
     pub fn set_ai_route(&mut self, role: Option<AiRole>, profile: String) -> Result<()> {
         let _lock = self.acquire_writer_lock()?;
-        self.manifest.ai_routes.set(role, profile)?;
-        self.save_manifest()?;
-        self.invalidate_downstream("AI route changed")
+        let mut next_manifest = self.manifest.clone();
+        next_manifest.ai_routes.set(role, profile)?;
+        if next_manifest.ai_routes == self.manifest.ai_routes {
+            return Ok(());
+        }
+        self.commit_configuration(next_manifest, "AI route changed")
     }
 
     pub fn begin_or_resume_run(&self, input_hash: &str, config_hash: &str) -> Result<RunRecord> {
@@ -390,6 +399,11 @@ impl ProjectStore {
         cache_key: &TaskCacheKey,
         request_bytes: &[u8],
     ) -> Result<TaskState> {
+        if cache_key.stage != stage {
+            return Err(AppError::InvalidProject(
+                "task stage does not match its cache key".into(),
+            ));
+        }
         let cache_key = cache_key.hash()?;
         let request_object = self.put_object(request_bytes)?;
         let connection = self.connection()?;
@@ -401,7 +415,13 @@ impl ProjectStore {
             )
             .optional()?
         {
-            return self.task_state(&task_id);
+            let task = self.task_state(&task_id)?;
+            if task.task.request_object != request_object {
+                return Err(AppError::InvalidProject(
+                    "task cache key is stale for its request bytes".into(),
+                ));
+            }
+            return Ok(task);
         }
         let task_id = format!(
             "task_{}",
@@ -562,7 +582,9 @@ impl ProjectStore {
     pub fn tasks_for_stage(&self, run_id: &str, stage: TaskStage) -> Result<Vec<TaskState>> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT task_id FROM task_definitions WHERE run_id=?1 AND stage=?2 ORDER BY task_id",
+            "SELECT d.task_id FROM task_definitions d \
+             JOIN (SELECT task_id, MAX(sequence) AS sequence FROM task_events GROUP BY task_id) e \
+             ON e.task_id=d.task_id WHERE d.run_id=?1 AND d.stage=?2 ORDER BY e.sequence",
         )?;
         let ids = statement
             .query_map(params![run_id, stage.as_str()], |row| {
@@ -576,7 +598,9 @@ impl ProjectStore {
 
     pub fn read_object(&self, object_id: &str) -> Result<Vec<u8>> {
         validate_hex_hash("object ID", object_id)?;
+        self.validate_object_directory()?;
         let path = self.root.join("objects").join(object_id);
+        super::validate_managed_path(&path, false, true)?;
         let bytes = fs::read(&path)?;
         if hex_digest(&bytes) != object_id {
             return Err(AppError::InvalidProject(format!(
@@ -663,7 +687,7 @@ impl ProjectStore {
         let connection = self.connection()?;
         let row = connection
             .query_row(
-                "SELECT p.plan_id,p.plan_hash,p.object_id FROM integration_plans_v4 p \
+                "SELECT p.plan_id,p.plan_hash,p.object_id,p.run_id FROM integration_plans_v4 p \
                  JOIN runs r ON r.run_id=p.run_id \
                  WHERE r.sequence=(SELECT MAX(sequence) FROM runs) \
                  ORDER BY p.sequence DESC LIMIT 1",
@@ -673,11 +697,15 @@ impl ProjectStore {
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
                     ))
                 },
             )
             .optional()?;
-        row.map(|(plan_id, plan_hash, object_id)| {
+        let Some((plan_id, plan_hash, object_id, run_id)) = row else {
+            return Ok(None);
+        };
+        {
             let bytes = self.read_object(&object_id)?;
             if digest(b"okc:integration-plan-object:v3\0", &[&bytes]) != plan_hash {
                 return Err(AppError::InvalidProject(
@@ -691,9 +719,50 @@ impl ProjectStore {
                     "approved integration plan pointer does not match its object".into(),
                 ));
             }
-            Ok(plan)
-        })
-        .transpose()
+            if !self.integration_plan_is_current(&run_id, &plan)? {
+                return Ok(None);
+            }
+            Ok(Some(plan))
+        }
+    }
+
+    fn integration_plan_is_current(
+        &self,
+        run_id: &str,
+        plan: &ApprovedIntegrationPlan,
+    ) -> Result<bool> {
+        let Some(taxonomy) =
+            self.latest_approval::<ApprovedTaxonomy>(run_id, "taxonomy", "taxonomy")?
+        else {
+            return Ok(false);
+        };
+        if taxonomy.target_hash != plan.taxonomy.taxonomy_hash.hex()
+            || taxonomy.value.taxonomy != plan.taxonomy
+            || taxonomy.value.approval != plan.taxonomy_approval
+            || taxonomy.value.corpus != plan.corpus
+        {
+            return Ok(false);
+        }
+        for revision in &plan.clusters {
+            let cluster_id = &revision.proposal.cluster_id;
+            let Some(approval) =
+                self.latest_approval::<ApprovedClusterRevision>(run_id, "cluster", cluster_id)?
+            else {
+                return Ok(false);
+            };
+            if approval.target_hash != revision.critic.critic_hash.hex()
+                || approval.value != *revision
+            {
+                return Ok(false);
+            }
+            if self
+                .latest_cluster_regeneration(run_id, cluster_id)?
+                .is_some_and(|request| request.revision > revision.proposal.revision)
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub fn seal_latest_integration_plan(&self) -> Result<Option<ApprovedIntegrationPlan>> {
@@ -720,6 +789,9 @@ impl ProjectStore {
             };
             if approved.target_hash != approved.value.critic.critic_hash.hex()
                 || approved.value.proposal.taxonomy_hash != taxonomy.value.taxonomy.taxonomy_hash
+                || self
+                    .latest_cluster_regeneration(&run.run_id, &cluster.cluster_id)?
+                    .is_some_and(|request| request.revision > approved.value.proposal.revision)
             {
                 return Ok(None);
             }
@@ -744,11 +816,20 @@ impl ProjectStore {
         let run = self.latest_run()?.ok_or_else(|| {
             AppError::InvalidProject("cannot record verification without a current run".into())
         })?;
-        if manifest.integration_plan_id.is_empty() {
+        let approved = self.latest_approved_integration_plan()?;
+        if approved.as_ref().is_none_or(|plan| {
+            manifest.integration_plan_id != plan.integration_plan_id
+                || manifest.corpus_hash != plan.corpus.corpus_hash
+                || manifest.taxonomy_hash != plan.taxonomy.taxonomy_hash
+        }) {
             return Err(AppError::InvalidProject(
-                "verified manifest has no integration plan identity".into(),
+                "verified artifact is stale for the current approved integration plan".into(),
             ));
         }
+        let path = fs::canonicalize(path)?;
+        let output_path = path.to_str().ok_or_else(|| {
+            AppError::InvalidProject("verified output path must be valid UTF-8".into())
+        })?;
         let bytes = okc_core::to_canonical_json(manifest)?;
         let object = self.put_object(&bytes)?;
         self.connection()?.execute(
@@ -757,7 +838,7 @@ impl ProjectStore {
             params![
                 run.run_id,
                 manifest.integration_plan_id,
-                path.to_string_lossy(),
+                output_path,
                 object
             ],
         )?;
@@ -765,14 +846,17 @@ impl ProjectStore {
     }
 
     pub fn latest_verified_output(&self) -> Result<Option<PathBuf>> {
+        let Some(plan) = self.latest_approved_integration_plan()? else {
+            return Ok(None);
+        };
         let connection = self.connection()?;
         Ok(connection
             .query_row(
                 "SELECT v.output_path FROM verified_outputs_v4 v \
                  JOIN runs r ON r.run_id=v.run_id \
-                 WHERE r.sequence=(SELECT MAX(sequence) FROM runs) \
+                 WHERE r.sequence=(SELECT MAX(sequence) FROM runs) AND v.plan_id=?1 \
                  ORDER BY v.sequence DESC LIMIT 1",
-                [],
+                [plan.integration_plan_id],
                 |row| row.get::<_, String>(0),
             )
             .optional()?
@@ -785,7 +869,26 @@ impl ProjectStore {
         destination: impl AsRef<Path>,
     ) -> Result<CompiledArtifact> {
         let _lock = self.acquire_writer_lock()?;
-        Ok(compile(plan, destination)?)
+        self.compile_locked(plan, destination.as_ref())
+    }
+
+    pub(crate) fn compile_locked(
+        &self,
+        plan: &ApprovedIntegrationPlan,
+        destination: &Path,
+    ) -> Result<CompiledArtifact> {
+        let destination = crate::integration_service::absolute_output(destination)?;
+        if self
+            .manifest()
+            .sources
+            .iter()
+            .any(|source| crate::workspace_bootstrap::paths_overlap(&destination, &source.path))
+        {
+            return Err(AppError::InvalidProject(
+                "compiled output must be outside every source".into(),
+            ));
+        }
+        Ok(compile(plan, &destination)?)
     }
 
     fn task_state(&self, task_id: &str) -> Result<TaskState> {
@@ -821,7 +924,9 @@ impl ProjectStore {
         })
     }
 
-    fn connection(&self) -> Result<Connection> {
+    pub(crate) fn connection(&self) -> Result<Connection> {
+        super::validate_managed_path(&self.root, true, true)?;
+        super::validate_database_paths(&self.root.join("state.sqlite3"), true)?;
         let connection = Connection::open(self.root.join("state.sqlite3"))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
@@ -900,7 +1005,106 @@ pub struct SensitiveException {
     pub rationale: String,
 }
 
-pub const SENSITIVE_SCANNER_VERSION: &str = "okc-sensitive-v3-1";
+pub const SENSITIVE_SCANNER_VERSION: &str = "okc-sensitive-v3-2";
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SensitiveScan {
+    blocks: Vec<SensitiveFinding>,
+    metadata: Vec<SensitiveMetadataFinding>,
+}
+
+#[derive(Debug, Serialize)]
+struct SensitiveMetadataFinding {
+    scanner_version: String,
+    category: SensitiveCategory,
+    document_id: DocumentId,
+    metadata_id: String,
+    byte_start: u64,
+    byte_end: u64,
+    content_hash: ContentHash,
+}
+
+impl SensitiveScan {
+    pub(crate) fn scan(corpus: &IntegrationCorpus) -> Result<Self> {
+        let mut result = Self {
+            blocks: Vec::new(),
+            metadata: Vec::new(),
+        };
+        for document in &corpus.documents {
+            for block in &document.blocks {
+                result.blocks.extend(scan_sensitive_block(
+                    document.document_id,
+                    block.block_id,
+                    &block.text,
+                ));
+            }
+            for metadata in &document.metadata {
+                let text = serde_json::to_string(
+                    &serde_json::json!({"key": metadata.key, "value": metadata.value}),
+                )?;
+                for (category, start, end) in scan_sensitive_ranges(&text) {
+                    result.metadata.push(SensitiveMetadataFinding {
+                        scanner_version: SENSITIVE_SCANNER_VERSION.into(),
+                        category,
+                        document_id: document.document_id,
+                        metadata_id: metadata.metadata_id.clone(),
+                        byte_start: start as u64,
+                        byte_end: end as u64,
+                        content_hash: ContentHash::from_domain_bytes(
+                            "okc:sensitive-span:v3\0",
+                            &text.as_bytes()[start..end],
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.blocks.len() + self.metadata.len()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn authorize(
+        &self,
+        role: AiRole,
+        profile_name: &str,
+        capabilities: &ProviderCapabilities,
+        disclosed_documents: &BTreeSet<DocumentId>,
+        allow_remote_provider: bool,
+        yes: bool,
+        non_interactive: bool,
+    ) -> Result<DisclosureAuthorization> {
+        let global = matches!(role, AiRole::Embedding | AiRole::Organizer);
+        if capabilities.data_boundary == DataBoundary::Remote
+            && self
+                .metadata
+                .iter()
+                .any(|finding| global || disclosed_documents.contains(&finding.document_id))
+        {
+            return Err(AppError::InvalidProject(
+                "sensitive content requires a local provider for this role".into(),
+            ));
+        }
+        let blocks = self
+            .blocks
+            .iter()
+            .filter(|finding| disclosed_documents.contains(&finding.document_id))
+            .map(|finding| finding.block_id)
+            .collect();
+        authorize_disclosure(
+            role,
+            profile_name,
+            capabilities,
+            &self.blocks,
+            &blocks,
+            allow_remote_provider,
+            yes,
+            non_interactive,
+        )
+    }
+}
 
 /// Deterministic preflight. Findings retain only category, location, and a
 /// domain-separated content hash; matched secret text is never returned.
@@ -909,6 +1113,24 @@ pub fn scan_sensitive_block(
     block_id: BlockId,
     text: &str,
 ) -> Vec<SensitiveFinding> {
+    scan_sensitive_ranges(text)
+        .into_iter()
+        .map(|(category, start, end)| SensitiveFinding {
+            scanner_version: SENSITIVE_SCANNER_VERSION.into(),
+            category,
+            document_id,
+            block_id,
+            byte_start: start as u64,
+            byte_end: end as u64,
+            content_hash: ContentHash::from_domain_bytes(
+                "okc:sensitive-span:v3\0",
+                &text.as_bytes()[start..end],
+            ),
+        })
+        .collect()
+}
+
+fn scan_sensitive_ranges(text: &str) -> Vec<(SensitiveCategory, usize, usize)> {
     let mut candidates = Vec::new();
     for (category, marker) in [
         (SensitiveCategory::PrivateKey, "-----BEGIN PRIVATE KEY-----"),
@@ -924,7 +1146,7 @@ pub fn scan_sensitive_block(
     ] {
         for (start, _) in text.match_indices(marker) {
             let end = token_end(text, start, marker.len(), category);
-            if end > start + marker.len() {
+            if end > start + marker.len() || category == SensitiveCategory::PrivateKey {
                 candidates.push((category, start, end));
             }
         }
@@ -934,20 +1156,6 @@ pub fn scan_sensitive_block(
     candidates.sort();
     candidates.dedup();
     candidates
-        .into_iter()
-        .map(|(category, start, end)| SensitiveFinding {
-            scanner_version: SENSITIVE_SCANNER_VERSION.into(),
-            category,
-            document_id,
-            block_id,
-            byte_start: start as u64,
-            byte_end: end as u64,
-            content_hash: ContentHash::from_domain_bytes(
-                "okc:sensitive-span:v3\0",
-                &text.as_bytes()[start..end],
-            ),
-        })
-        .collect()
 }
 
 fn token_end(text: &str, start: usize, marker_len: usize, category: SensitiveCategory) -> usize {
@@ -975,6 +1183,7 @@ fn scan_email_like(text: &str) -> Vec<(SensitiveCategory, usize, usize)> {
             });
             let at = clean.find('@')?;
             let domain = &clean[at + 1..];
+            let start = start + token.find(clean)?;
             (at > 0 && domain.contains('.') && !domain.ends_with('.')).then_some((
                 SensitiveCategory::EmailAddress,
                 start,
@@ -1184,6 +1393,425 @@ mod tests {
         digest(b"okc:test:v3\0", &[label.as_bytes()])
     }
 
+    fn approved_project() -> (
+        tempfile::TempDir,
+        ProjectStore,
+        RunRecord,
+        ApprovedIntegrationPlan,
+    ) {
+        let temporary = tempfile::tempdir().expect("temporary");
+        let project = ProjectStore::create(
+            temporary.path().join("Approved.okc-project"),
+            "Approved",
+            "sdk-test",
+            "policy-v3",
+        )
+        .expect("project");
+        let plan: ApprovedIntegrationPlan = serde_json::from_slice(include_bytes!(
+            "../../okc-core/tests/fixtures/sdk-integration-plan.json"
+        ))
+        .expect("approved fixture");
+        let run = project
+            .begin_or_resume_run(&plan.corpus.corpus_hash.hex(), &hash("config"))
+            .expect("run");
+        let taxonomy = ApprovedTaxonomy {
+            corpus: plan.corpus.clone(),
+            taxonomy: plan.taxonomy.clone(),
+            approval: plan.taxonomy_approval.clone(),
+        };
+        project
+            .append_approval(
+                &run.run_id,
+                "taxonomy",
+                "taxonomy",
+                &plan.taxonomy.taxonomy_hash.hex(),
+                &okc_core::to_canonical_json(&taxonomy).expect("taxonomy JSON"),
+            )
+            .expect("taxonomy approval");
+        for cluster in &plan.clusters {
+            project
+                .append_approval(
+                    &run.run_id,
+                    "cluster",
+                    &cluster.proposal.cluster_id,
+                    &cluster.critic.critic_hash.hex(),
+                    &okc_core::to_canonical_json(cluster).expect("cluster JSON"),
+                )
+                .expect("cluster approval");
+        }
+        project
+            .store_approved_integration_plan(&run.run_id, &plan)
+            .expect("stored plan");
+        (temporary, project, run, plan)
+    }
+
+    #[test]
+    fn verified_outputs_are_bound_to_the_current_approved_plan() {
+        let (temporary, mut project, _run, plan) = approved_project();
+        let output = temporary.path().join("compiled");
+        project.compile(&plan, &output).expect("compile");
+        let manifest = okc_core::integration::verify(&output).expect("verify");
+        project
+            .record_verified_output(&output, &manifest)
+            .expect("record");
+        assert_eq!(
+            project.latest_verified_output().expect("latest"),
+            Some(fs::canonicalize(&output).expect("canonical output"))
+        );
+        let mut foreign = manifest.clone();
+        foreign.integration_plan_id = "plan_foreign".into();
+        assert!(project.record_verified_output(&output, &foreign).is_err());
+        project
+            .set_language(Some("ko-KR".into()))
+            .expect("language");
+        assert!(
+            project
+                .latest_verified_output()
+                .expect("stale output")
+                .is_none()
+        );
+        assert!(project.record_verified_output(&output, &manifest).is_err());
+    }
+
+    #[test]
+    fn changed_configuration_invalidates_approved_authority_immediately() {
+        for change_language in [true, false] {
+            let (_temporary, mut project, run, _plan) = approved_project();
+            assert!(
+                project
+                    .latest_approved_integration_plan()
+                    .expect("plan")
+                    .is_some()
+            );
+            if change_language {
+                project
+                    .set_language(Some("ko-KR".into()))
+                    .expect("language");
+            } else {
+                project
+                    .set_ai_route(None, "different-provider".into())
+                    .expect("route");
+            }
+            assert!(
+                project
+                    .latest_approved_integration_plan()
+                    .expect("stale plan")
+                    .is_none()
+            );
+            assert_ne!(
+                project
+                    .latest_run()
+                    .expect("run")
+                    .expect("current run")
+                    .run_id,
+                run.run_id
+            );
+            let preserved: u64 = project
+                .connection()
+                .expect("connection")
+                .query_row(
+                    "SELECT COUNT(*) FROM integration_plans_v4 WHERE run_id=?1",
+                    [run.run_id],
+                    |row| row.get(0),
+                )
+                .expect("historical plans");
+            assert_eq!(preserved, 1);
+        }
+    }
+
+    #[test]
+    fn failed_invalidation_keeps_manifest_and_in_memory_configuration_unchanged() {
+        for change_language in [true, false] {
+            let (_temporary, mut project, _run, _plan) = approved_project();
+            let before = project.manifest().clone();
+            let before_bytes = fs::read(project.root().join("manifest.json")).unwrap();
+            project
+                .connection()
+                .unwrap()
+                .execute_batch(
+                    "CREATE TRIGGER reject_invalidation BEFORE INSERT ON project_events \
+                 WHEN NEW.kind='source_invalidation' \
+                 BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END;",
+                )
+                .unwrap();
+            let result = if change_language {
+                project.set_language(Some("ko-KR".into()))
+            } else {
+                project.set_ai_route(None, "different-provider".into())
+            };
+            assert!(result.is_err());
+            assert_eq!(project.manifest(), &before);
+            assert_eq!(
+                fs::read(project.root().join("manifest.json")).unwrap(),
+                before_bytes
+            );
+            assert!(
+                project
+                    .latest_approved_integration_plan()
+                    .unwrap()
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn failed_manifest_replacement_leaves_previous_approvals_invalidated() {
+        for change_language in [true, false] {
+            let (_temporary, mut project, run, _plan) = approved_project();
+            let before = project.manifest().clone();
+            let manifest = project.root().join("manifest.json");
+            let saved = project.root().join("manifest.saved");
+            fs::rename(&manifest, &saved).unwrap();
+            fs::create_dir(&manifest).unwrap();
+            let result = if change_language {
+                project.set_language(Some("ko-KR".into()))
+            } else {
+                project.set_ai_route(None, "different-provider".into())
+            };
+            assert!(result.is_err());
+            assert_eq!(project.manifest(), &before);
+            assert_ne!(project.latest_run().unwrap().unwrap().run_id, run.run_id);
+            assert!(
+                project
+                    .latest_approved_integration_plan()
+                    .unwrap()
+                    .is_none()
+            );
+            fs::remove_dir(&manifest).unwrap();
+            fs::rename(&saved, &manifest).unwrap();
+            let reopened = ProjectStore::open(project.root()).unwrap();
+            assert_eq!(reopened.manifest(), &before);
+            assert!(
+                reopened
+                    .latest_approved_integration_plan()
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn failed_source_manifest_replacement_cannot_resurrect_previous_plan() {
+        let (temporary, mut project, run, _plan) = approved_project();
+        let before = project.manifest().clone();
+        let source = temporary.path().join("source");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("new.md"), "# New source\n").unwrap();
+        let manifest = project.root().join("manifest.json");
+        let saved = project.root().join("manifest.saved");
+        fs::rename(&manifest, &saved).unwrap();
+        fs::create_dir(&manifest).unwrap();
+        let result = project.replace_sources_explicit(vec![crate::SourceBinding {
+            source_id: okc_core::SourceId::new("new").unwrap(),
+            owner_display_name: None,
+            path: source,
+            snapshot_id: None,
+        }]);
+        assert!(result.is_err());
+        assert_eq!(project.manifest(), &before);
+        assert_ne!(project.latest_run().unwrap().unwrap().run_id, run.run_id);
+        assert!(
+            project
+                .latest_approved_integration_plan()
+                .unwrap()
+                .is_none()
+        );
+        fs::remove_dir(&manifest).unwrap();
+        fs::rename(&saved, &manifest).unwrap();
+        let reopened = ProjectStore::open(project.root()).unwrap();
+        assert_eq!(reopened.manifest(), &before);
+        assert!(
+            reopened
+                .latest_approved_integration_plan()
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn changed_taxonomy_and_pending_regeneration_invalidate_stored_plans() {
+        let (_temporary, project, run, plan) = approved_project();
+        let cluster = &plan.clusters[0];
+        let request = ClusterRegenerationRequest {
+            cluster_id: cluster.proposal.cluster_id.clone(),
+            revision: 2,
+            feedback: "retain more context".into(),
+            feedback_hash: cluster_feedback_hash(
+                &cluster.proposal.cluster_id,
+                2,
+                "retain more context",
+                cluster.proposal.proposal_hash,
+                cluster.critic.critic_hash,
+            )
+            .expect("feedback hash"),
+            previous_proposal_hash: cluster.proposal.proposal_hash,
+            previous_critic_hash: cluster.critic.critic_hash,
+        };
+        project
+            .append_cluster_regeneration(&request)
+            .expect("regeneration");
+        assert!(
+            project
+                .latest_approved_integration_plan()
+                .expect("stale plan")
+                .is_none()
+        );
+        assert!(
+            project
+                .seal_latest_integration_plan()
+                .expect("pending regeneration")
+                .is_none()
+        );
+        assert!(
+            project
+                .latest_approval::<ApprovedClusterRevision>(
+                    &run.run_id,
+                    "cluster",
+                    &cluster.proposal.cluster_id,
+                )
+                .expect("historical approval")
+                .is_some()
+        );
+
+        let (_temporary, project, run, plan) = approved_project();
+        let mut clusters = plan.taxonomy.clusters.clone();
+        clusters[0].title = "New taxonomy title".into();
+        let taxonomy = TaxonomyProposal::seal(
+            &plan.corpus,
+            clusters,
+            plan.taxonomy.organizer_recording_hash,
+        )
+        .expect("new taxonomy");
+        let approved = ApprovedTaxonomy {
+            corpus: plan.corpus.clone(),
+            approval: ApprovalBinding {
+                target_hash: taxonomy.taxonomy_hash,
+                ..plan.taxonomy_approval
+            },
+            taxonomy,
+        };
+        project
+            .append_approval(
+                &run.run_id,
+                "taxonomy",
+                "taxonomy",
+                &approved.taxonomy.taxonomy_hash.hex(),
+                &okc_core::to_canonical_json(&approved).expect("taxonomy JSON"),
+            )
+            .expect("changed taxonomy");
+        assert!(
+            project
+                .latest_approved_integration_plan()
+                .expect("stale plan")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn scanner_detects_pem_keys_and_preserves_exact_email_byte_ranges() {
+        let document = DocumentId::from_hash(ContentHash::from_domain_bytes("test", b"doc"));
+        let block = BlockId::from_hash(ContentHash::from_domain_bytes("test", b"block"));
+        for text in [
+            "-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----",
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nABC",
+        ] {
+            assert!(
+                scan_sensitive_block(document, block, text)
+                    .iter()
+                    .any(|finding| finding.category == SensitiveCategory::PrivateKey)
+            );
+        }
+        let text = "한글 (<person@example.com>),";
+        let findings = scan_sensitive_block(document, block, text);
+        let email = findings
+            .iter()
+            .find(|finding| finding.category == SensitiveCategory::EmailAddress)
+            .expect("email finding");
+        assert_eq!(
+            &text[usize::try_from(email.byte_start).expect("start")
+                ..usize::try_from(email.byte_end).expect("end")],
+            "person@example.com"
+        );
+        assert_eq!(
+            email.content_hash,
+            ContentHash::from_domain_bytes("okc:sensitive-span:v3\0", b"person@example.com")
+        );
+    }
+
+    #[test]
+    fn metadata_only_sensitive_documents_force_local_routes_without_recording_secrets() {
+        let (_temporary, _project, _run, plan) = approved_project();
+        let mut corpus = plan.corpus;
+        let document = &mut corpus.documents[0];
+        document.blocks.clear();
+        document.metadata = vec![
+            okc_core::integration::MetadataValue::new(
+                document.document_id,
+                "credential",
+                0,
+                &serde_json::json!("sk-fixture-metadata-secret"),
+            )
+            .expect("metadata"),
+        ];
+        let scan = SensitiveScan::scan(&corpus).expect("scan");
+        assert!(scan.blocks.is_empty());
+        assert_eq!(scan.metadata.len(), 1);
+        let encoded = serde_json::to_string(&scan).expect("recording");
+        assert!(!encoded.contains("sk-fixture-metadata-secret"));
+        assert!(encoded.contains(&corpus.documents[0].metadata[0].metadata_id));
+        let mut remote = okc_ai::ProviderClient::new(okc_ai::ProviderProfile {
+            kind: okc_ai::ProviderKind::Ollama,
+            endpoint: "https://provider.invalid".into(),
+            model: "fixture".into(),
+            api_key_env: None,
+            os_keychain: None,
+            timeout_ms: 1,
+            max_response_bytes: 1024,
+            max_input_bytes: 1024,
+            max_batch_items: 1,
+            options: std::collections::BTreeMap::default(),
+        })
+        .map(|client| okc_ai::StructuredGenerator::capabilities(&client))
+        .expect("capabilities");
+        let documents = BTreeSet::from([corpus.documents[0].document_id]);
+        for role in [
+            AiRole::Embedding,
+            AiRole::Organizer,
+            AiRole::Synthesis,
+            AiRole::Critic,
+        ] {
+            assert!(
+                scan.authorize(role, "remote", &remote, &documents, true, true, true)
+                    .is_err()
+            );
+        }
+        assert!(
+            scan.authorize(
+                AiRole::Synthesis,
+                "remote",
+                &remote,
+                &BTreeSet::new(),
+                true,
+                true,
+                true
+            )
+            .is_ok()
+        );
+        remote.data_boundary = DataBoundary::Local;
+        assert!(
+            scan.authorize(
+                AiRole::Synthesis,
+                "local",
+                &remote,
+                &documents,
+                false,
+                false,
+                true
+            )
+            .is_ok()
+        );
+    }
+
     #[test]
     fn journal_resumes_complete_tasks_without_deleting_history() {
         let temporary = tempfile::tempdir().expect("temporary");
@@ -1221,6 +1849,16 @@ mod tests {
             .register_task(&run, TaskStage::Embedding, &key, b"request")
             .expect("resumed task");
         assert_eq!(resumed, complete);
+        assert!(
+            project
+                .register_task(&run, TaskStage::Embedding, &key, b"different request")
+                .is_err()
+        );
+        assert!(
+            project
+                .register_task(&run, TaskStage::Critic, &key, b"request")
+                .is_err()
+        );
         let status = project.integration_status().expect("status");
         assert_eq!(status.completed, 1);
         assert_eq!(status.tasks.len(), 1);
@@ -1369,6 +2007,15 @@ mod tests {
             .expect("route");
         assert_eq!(routes.profile_for(AiRole::Embedding), "default");
         assert_eq!(routes.profile_for(AiRole::Critic), "critic-local");
+        let unchanged = routes.clone();
+        assert!(routes.set(None, "invalid profile".into()).is_err());
+        assert_eq!(routes, unchanged);
+        assert!(
+            routes
+                .set(Some(AiRole::Critic), "invalid profile".into())
+                .is_err()
+        );
+        assert_eq!(routes, unchanged);
         validate_bcp47("ko-KR").expect("language");
         assert!(validate_bcp47("ko--KR").is_err());
     }

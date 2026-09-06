@@ -30,9 +30,10 @@ tags, not runtime compatibility packages.
 
 The current Markdown-directory integration path and typed Python/Node.js
 bindings are locally implemented. This is not a complete or stable release:
-semantic scale, non-Markdown materialization, current OKCPack, provider-backed
-PTY, fuzz/TOCTOU, performance, remote native matrices, and native signing
-evidence remain open. No language package has been published.
+semantic scale, non-Markdown materialization, current OKCPack, real-provider
+and all-host cancellation coverage, fuzz/TOCTOU, performance, remote native
+matrices, and native signing evidence remain open. No language package has
+been published.
 
 ## Workspace and implementation
 
@@ -55,6 +56,71 @@ Existing Schema 3 projects open without migration. Schema 3 artifact JSON,
 identity/hash domains, project and SQLite identifiers, journal schema 4,
 output paths, and deterministic output bytes remain unchanged. Contractual
 stored/protocol version literals listed in ADR-0027 remain intentionally.
+The correctness audit versions new private sensitive-scan results explicitly;
+it does not rewrite prior preflight objects or approved artifact bytes.
+
+## Correctness audit: 2026-09-06
+
+The [detailed audit](history/summaries/2026-09-06-correctness-audit.md) records
+four resolved documentation conflicts and sixteen implementation findings.
+Existing ADR-0027 authority was used to reconcile algorithms/roles with current
+specifications before code changes resumed; no new architecture or weaker
+invariant was approved.
+
+Implemented and regression-tested fixes cover stale plans after configuration/
+taxonomy/regeneration changes, current-plan-bound verified outputs, plan-derived
+artifact inventories, multiline sections, portable Unicode and file/directory
+path collisions, source-ID/metadata/duplicate-JSON validation, and safe workspace/
+project/object paths. Provider handling now covers metadata-only sensitive
+documents, exact loopback parsing, complete cache identities, and total retry
+deadlines. Workers retain completion independently, SDK queues are bounded,
+distinct clients share project reservations, and Node.js preserves arbitrary
+source metadata keys. Core optional-feature builds and relative CLI publication
+also pass.
+
+Scanner revision `okc-sensitive-v3-2` uses private `sensitive-findings-v2`
+block/metadata findings without matched secret strings. Old journal/object
+history remains append-only. The accepted output golden is unchanged. These
+fixes do not close the scale, fuzz/TOCTOU, crash, real-provider, or remote native
+matrix gates below.
+
+## Stabilization follow-up: 2026-09-06
+
+The [follow-up record](history/summaries/2026-09-06-stabilization-follow-up.md)
+adds 20 Rust regressions and a repeatable POSIX PTY harness. Implemented fixes
+cover Unix hardlink aliases in managed files/SQLite sidecars, Linux/macOS
+descriptor-relative no-follow source-content opens, ambient-ignore-independent
+membership, journal invalidation before manifest replacement, bottom-up stage
+directory synchronization, explicit staging cleanup errors, and guard lifetime
+through atomic publication. Corpus construction drops an obsolete inspection
+copy before building the public projection. Public schema/IDs/golden bytes and
+dependencies remain unchanged.
+
+Python wheel and sdist now install with pip in fresh virtual environments, and
+root/platform npm tarballs install together outside the repository. The host
+Python failure was a Homebrew Expat loader mismatch; a process-local
+`DYLD_LIBRARY_PATH=/opt/homebrew/opt/expat/lib` resolves it without changing system
+files. Linux x86_64 GNU tests also pass in a Docker container under emulation;
+this is Linux development evidence, not a native remote release matrix.
+
+Uncontrolled repeated wheels differed only in generated SBOM metadata and
+dependent package records. Setting `SOURCE_DATE_EPOCH` to the source commit
+timestamp yields byte-identical repeated wheels, retaining the embedded SBOM;
+the corrected wheel also clean-installs and passes the Python suite. SDK CI now
+sets that epoch and compares repeated wheels. This cached packaging smoke and
+matching repeated sdists do not close independent clean-build reproducibility.
+
+The synthetic-provider TUI PTY workflow passes locally through preflight,
+explicit approvals, compilation, independent verification, clean terminal
+restoration, and restart without more provider calls. CI now includes that
+POSIX smoke; its remote execution is not claimed here.
+
+The ingestion-only probe accepted 10 Vaults/100,000 notes/25,600,000 bytes in
+174.569 seconds of corpus construction, with 5,360,336,896 bytes maximum RSS.
+It performs zero provider calls and does not measure semantic candidates.
+This is **not** the 20 GB gate or an accepted performance result. Source
+streaming, semantic scale, the current budget/reference machine, and full
+release qualification remain open.
 
 ## Current public boundary
 
@@ -120,30 +186,41 @@ and checksums. The cleanup is required to retain that value.
 
 ## Local verification evidence
 
-The final command evidence for this change is recorded here after execution on
+The latest command evidence, including the follow-up, is recorded after execution on
 macOS arm64 with Rust 1.97.1:
 
 | Command | Result |
 |---|---|
 | `cargo check --locked --workspace --all-targets --all-features` | passed for all seven `0.3.0` packages |
-| `cargo test --locked --workspace --all-features --no-fail-fast` | 86 Rust tests passed; every workspace doc-test target passed |
+| `cargo test --locked --workspace --all-features --no-fail-fast` | 130 Rust tests passed; every workspace doc-test target passed |
+| Docker Linux x86_64 GNU, same Rust command with `--offline --quiet` | 130 tests and all doc-test targets passed under x86_64 emulation; unchanged cross-language artifact golden |
 | `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | passed for all seven packages with no warning |
 | `cargo fmt --all -- --check` | passed |
-| Python public API/E2E/typing/wheel/sdist smoke | ABI3 wheel built; 12 tests and strict mypy passed; unpacked sdist rebuilt offline and imported interop schema 2 outside the repository |
-| Node.js build/test/declaration/npm Pack smoke | native addon built; 12 tests and strict TypeScript passed; dry-run Pack contained six intended root-package files |
+| `cargo clippy --locked -p okc-core --no-default-features --lib -- -D warnings` plus separate `--features archives` and `--features sqlite` runs | all three feature configurations passed |
+| `cargo test --locked -p okc-core --test documentation_contract` | repository-relative Markdown links passed |
+| Python public API/E2E/typing/wheel/sdist | fresh ABI3 wheel and sdist built and pip-installed outside repository; 12 tests from each installed distribution, isolated import, and strict mypy passed |
+| Node.js build/test/declaration/npm Pack smoke | fresh native addon; 13 tests and strict TypeScript; clean root/platform tarball install, CommonJS/ESM imports, project create/open/manifest smoke passed |
+| Repeated wheel/sdist packaging; `bindings/build_artifact_manifest.py` and `shasum -a 256 -c SHA256SUMS` | matching repeated sdists and epoch-controlled wheels; retained/validated SBOMs and five final-distribution checksums passed; cached local builds only |
+| `python3 tests/tui_pty_smoke.py target/debug/okc` | local POSIX PTY workflow passed; four synthetic loopback calls, no compile/verify/reopen provider calls, source bytes/mtime unchanged, terminal restored |
 | `npm run docs:build --prefix guide` | VitePress production build passed |
-| source hygiene, `cargo tree --locked --workspace --depth 1 --prefix none`, and archive tags | only seven current `0.3.0` packages; removed names/files absent; both annotated remote tags peeled to the ADR-0027 commits |
+| `cargo tree --locked --workspace --depth 1 --prefix none` | seven current `0.3.0` workspace packages; no new dependency or lockfile change |
+
+The audit and follow-up reports record exact native tool paths, temporary
+environments, and sandbox/host-tool failures separately from product failures.
+Prior failed pip evidence remains historical; the follow-up records successful
+clean installs. No remote tag checks, all-platform release success, or protected
+publication are inferred from the local evidence.
 
 ## Quality-gate status
 
 | Gate | State | Evidence or remaining work |
 |---|---|---|
 | QG-001 Functional | partial | current Markdown/project/CLI/binding vertical slice passes locally; non-Markdown and scale remain |
-| QG-002 Determinism | partial | same-host corpus/order/output golden passes; supported-host repetitions remain |
+| QG-002 Determinism | partial | macOS and emulated Linux golden plus fixed creation/root/order properties pass; remaining native-host repetitions remain |
 | QG-003 Provenance | locally verified for current output | exact plan/proposal/critic/approval/evidence records and explanation pass; broader materializers pending |
-| QG-004 Safety | partial | current archive/symlink/manifest/provider/publication tests pass; fuzz, portable no-follow, crash/platform evidence remain |
+| QG-004 Safety | partial | deterministic publication barriers, source-handle aliases, hardlinks, mutation smoke and fail-closed manifest ordering pass; full fuzz, managed/output ancestor races, crash/platform evidence remain |
 | QG-005 Schema boundary | locally verified | current projects need no migration; temporary retired markers/Pack suffixes return explicit unsupported; no old fixtures/readers remain |
-| QG-006 Performance | not passed | 10 Vaults/100,000 notes/20 GB time and RSS report absent; sources remain buffered under bounds |
+| QG-006 Performance | not passed | 100k-note/25.6-MB ingestion probe: 174.569 s, 5.36 GB RSS; full 20 GB semantic workload and accepted reference budget still missing |
 | QG-007 Documentation | locally verified | all 56 active `normative-v1` statuses normalized; ADR-0027, traceability, active guide build, and repository-relative link test pass |
 | QG-008 Supply chain | partial | lockfiles/package definitions exist; remote matrix, two-pass reproducibility, signatures and publication absent |
 
@@ -155,10 +232,12 @@ macOS arm64 with Rust 1.97.1:
 - A separately reviewed supervised current command adapter, if required.
 - Attachment/Canvas/Base carry-through, complete link rewriting, and current
   deterministic OKCPack.
-- Provider-backed TUI PTY, cancellation/crash injection, supported-platform
-  terminal and filesystem evidence.
-- Portable descriptor-relative/no-follow source traversal, Windows reparse
-  defenses, and full fuzz/property campaigns.
+- All-host provider-backed TUI PTY, long cancellation/process-kill injection,
+  and supported terminal/filesystem evidence. The current application still
+  announces its non-cancellable phase before the complete core compile call;
+  finer pre-publication cancellation remains missing.
+- Handle-relative enumeration and managed-state/output ancestor pinning,
+  Windows no-follow/reparse/hardlink defenses, and full fuzz/property campaigns.
 - Four-target native Python/Node package matrix, clean installs, repeated
   same-commit bytes, checksums/SBOM/attestations, protected PyPI/npm workflow.
 - Apple Developer ID/notarization, Windows Authenticode/timestamp, and complete

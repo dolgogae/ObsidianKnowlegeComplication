@@ -8,12 +8,14 @@ use std::fs::{self, File};
 use std::io::Read as _;
 use std::path::Path;
 
-use okc_core::integration::{CompiledVaultManifest, ProvenanceRecord, explain, verify};
+use okc_core::integration::{
+    CompiledVaultManifest, MAX_MANIFEST_BYTES, ProvenanceRecord, explain, verify,
+};
 use serde::Deserialize;
 
 use crate::{AppError, Result};
 
-const MANIFEST_HEADER_LIMIT: u64 = 1024 * 1024;
+const MANIFEST_HEADER_LIMIT: u64 = MAX_MANIFEST_BYTES;
 const SUPPORTED_ARTIFACT_SCHEMA: u32 = 3;
 
 #[derive(Debug, Clone, Copy, Default)]

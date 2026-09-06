@@ -16,9 +16,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::project_state::{
-    ApprovedTaxonomy, ClusterRegenerationRequest, ClusterTaskOutput, RunRecord,
-    SENSITIVE_SCANNER_VERSION, TaskCacheKey, TaskStage, TaskStatus, TaxonomyTaskOutput,
-    cluster_feedback_hash, scan_sensitive_block,
+    ApprovedTaxonomy, ClusterRegenerationRequest, ClusterTaskOutput, RunRecord, SensitiveScan,
+    TaskStage, TaskStatus, TaxonomyTaskOutput, cluster_feedback_hash,
 };
 use crate::provider_service::ProviderService;
 use crate::{
@@ -144,8 +143,11 @@ impl IntegrationService {
             }
         }
         let _lock = project.acquire_writer_lock()?;
-        project.seal_latest_integration_plan()?;
-        Ok(IntegrationCheckpoint::ReadyToCompile)
+        Ok(if project.seal_latest_integration_plan()?.is_some() {
+            IntegrationCheckpoint::ReadyToCompile
+        } else {
+            IntegrationCheckpoint::NeedsClusters
+        })
     }
 
     pub fn preflight(&self, control: &OperationControl) -> Result<PreflightSummary> {
@@ -176,32 +178,13 @@ impl IntegrationService {
         let config_bytes = to_canonical_json(&project.manifest().ai_routes)?;
         let config_hash = raw_hash(b"okc:integration-config:v3\0", &config_bytes);
         let run = project.begin_or_resume_run(&corpus.corpus_hash.hex(), &config_hash)?;
-        let findings = block_text
-            .iter()
-            .flat_map(|((document_id, block_id), text)| {
-                scan_sensitive_block(*document_id, *block_id, text)
-            })
-            .collect::<Vec<_>>();
-        let response = serde_json::to_vec(&findings)?;
-        let key = TaskCacheKey {
-            stage: TaskStage::SensitivePreflight,
-            prompt_hash: raw_hash(b"okc:prompt:v3\0", b"sensitive-preflight-v1"),
-            schema_hash: raw_hash(b"okc:schema:v3\0", b"sensitive-findings-v1"),
-            source_hash: corpus.corpus_hash.hex(),
-            provider: "deterministic-local".into(),
-            model: SENSITIVE_SCANNER_VERSION.into(),
-            adapter: env!("CARGO_PKG_VERSION").into(),
-            options_hash: raw_hash(b"okc:options:v3\0", b"none"),
-        };
-        let task = project.register_task(&run, TaskStage::SensitivePreflight, &key, &response)?;
-        if task.status != TaskStatus::Complete {
-            project.append_task_status(
-                &task.task.task_id,
-                TaskStatus::Complete,
-                Some(&response),
-                None,
-            )?;
-        }
+        let findings = SensitiveScan::scan(&corpus)?;
+        crate::integration_execution::record_preflight(
+            &project,
+            &run,
+            &corpus.corpus_hash.hex(),
+            &findings,
+        )?;
         let routes = self.role_boundaries(&project)?;
         let input_bytes = block_text
             .values()
@@ -290,6 +273,11 @@ impl IntegrationService {
     pub fn completed_clusters(&self) -> Result<Vec<ClusterTaskOutput>> {
         let project = ProjectStore::open(&self.project_path)?;
         let run = require_run(&project)?;
+        let Some(taxonomy) =
+            project.latest_approval::<ApprovedTaxonomy>(&run.run_id, "taxonomy", "taxonomy")?
+        else {
+            return Ok(Vec::new());
+        };
         let mut latest = BTreeMap::<String, ClusterTaskOutput>::new();
         for task in project
             .tasks_for_stage(&run.run_id, TaskStage::Critic)?
@@ -297,9 +285,16 @@ impl IntegrationService {
             .filter(|task| task.status == TaskStatus::Complete)
         {
             let output: ClusterTaskOutput = project.complete_task_response(&task)?;
+            if output.proposal.taxonomy_hash != taxonomy.value.taxonomy.taxonomy_hash
+                || project
+                    .latest_cluster_regeneration(&run.run_id, &output.proposal.cluster_id)?
+                    .is_some_and(|request| request.revision > output.proposal.revision)
+            {
+                continue;
+            }
             let replace = latest
                 .get(&output.proposal.cluster_id)
-                .is_none_or(|old| old.proposal.revision < output.proposal.revision);
+                .is_none_or(|old| old.proposal.revision <= output.proposal.revision);
             if replace {
                 latest.insert(output.proposal.cluster_id.clone(), output);
             }
@@ -474,6 +469,7 @@ impl IntegrationService {
     ) -> Result<(CompiledArtifact, CompiledVaultManifest)> {
         ensure_not_cancelled(control)?;
         let project = ProjectStore::open(&self.project_path)?;
+        let _lock = project.acquire_writer_lock()?;
         let plan = project.latest_approved_integration_plan()?.ok_or_else(|| {
             AppError::InvalidProject("no current approved integration plan".into())
         })?;
@@ -494,10 +490,9 @@ impl IntegrationService {
         // The core owns the atomic publication barrier. Once called, callers
         // must report publication as non-cancellable until it returns.
         observe(control, OperationPhase::Publishing, 0, Some(1));
-        let artifact = project.compile(&plan, &absolute)?;
+        let artifact = project.compile_locked(&plan, &absolute)?;
         observe(control, OperationPhase::Verifying, 0, Some(1));
         let manifest = verify(&artifact.path)?;
-        let _lock = project.acquire_writer_lock()?;
         project.record_verified_output(&artifact.path, &manifest)?;
         observe(control, OperationPhase::Complete, 1, Some(1));
         Ok((artifact, manifest))
@@ -511,8 +506,8 @@ impl IntegrationService {
         ensure_not_cancelled(control)?;
         observe(control, OperationPhase::Verifying, 0, Some(1));
         let project = ProjectStore::open(&self.project_path)?;
-        let manifest = verify(artifact.as_ref())?;
         let _lock = project.acquire_writer_lock()?;
+        let manifest = verify(artifact.as_ref())?;
         project.record_verified_output(artifact.as_ref(), &manifest)?;
         observe(control, OperationPhase::Complete, 1, Some(1));
         Ok(manifest)
@@ -619,7 +614,7 @@ pub(crate) fn raw_hash(domain: &[u8], bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn absolute_output(path: &Path) -> Result<PathBuf> {
+pub(crate) fn absolute_output(path: &Path) -> Result<PathBuf> {
     let mut ancestor = if path.is_absolute() {
         path.to_path_buf()
     } else {

@@ -10,8 +10,8 @@ use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 
 use okc_ai::{AI_SCHEMA_VERSION, ProviderConfig};
@@ -36,6 +36,8 @@ pub const INTEROP_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
 pub const MAX_EVENT_QUEUE: usize = 64;
 const MAX_CONCURRENT_JOBS: usize = 64;
+const MAX_QUEUED_JOBS: usize = 64;
+static PROJECT_RESERVATIONS: OnceLock<Arc<Mutex<BTreeSet<PathBuf>>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -435,7 +437,11 @@ impl SharedJob {
             cancellation: okc_core::CancellationToken::default(),
             next_sequence: AtomicU64::new(0),
         });
-        shared.push_event(JobState::Queued, "queued", 0, None, None, false);
+        shared.push_state_event(
+            &mut shared.record.lock().expect("job record"),
+            JobState::Queued,
+            "queued",
+        );
         shared
     }
 
@@ -452,13 +458,10 @@ impl SharedJob {
     fn begin(&self) -> bool {
         let mut record = self.record.lock().expect("job record");
         if self.cancellation.is_cancelled() {
-            drop(record);
-            self.finish(Err(cancelled_error()));
             return false;
         }
         record.state = JobState::Running;
-        drop(record);
-        self.push_event(JobState::Running, "running", 0, None, None, false);
+        self.push_state_event(&mut record, JobState::Running, "running");
         true
     }
 
@@ -492,17 +495,8 @@ impl SharedJob {
         self.ready.notify_all();
     }
 
-    fn push_event(
-        &self,
-        state: JobState,
-        phase: &str,
-        completed: u64,
-        total: Option<u64>,
-        current_item: Option<String>,
-        terminal: bool,
-    ) {
+    fn push_state_event(&self, record: &mut JobRecord, state: JobState, phase: &str) {
         let sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
-        let mut record = self.record.lock().expect("job record");
         push_bounded(
             &mut record.events,
             ProgressEvent {
@@ -511,11 +505,11 @@ impl SharedJob {
                 operation: self.operation.clone(),
                 state,
                 phase: phase.into(),
-                completed,
-                total,
-                current_item,
+                completed: 0,
+                total: None,
+                current_item: None,
             },
-            terminal,
+            false,
         );
     }
 
@@ -525,6 +519,9 @@ impl SharedJob {
             .and_then(|value| value.as_str().map(str::to_owned))
             .unwrap_or_else(|| "processing".into());
         let mut record = self.record.lock().expect("job record");
+        if record.state.terminal() {
+            return;
+        }
         let state = if event.phase == OperationPhase::Publishing {
             record.publication_barrier = true;
             record.state = JobState::Publishing;
@@ -564,8 +561,7 @@ impl SharedJob {
         }
         self.cancellation.cancel();
         record.state = JobState::Cancelling;
-        drop(record);
-        self.push_event(JobState::Cancelling, "cancelling", 0, None, None, false);
+        self.push_state_event(&mut record, JobState::Cancelling, "cancelling");
         CancelOutcome::Requested
     }
 
@@ -647,11 +643,6 @@ impl<T> Job<T> {
     }
 }
 
-enum WorkCommand {
-    Run(WorkItem),
-    Shutdown,
-}
-
 struct WorkItem {
     shared: Arc<SharedJob>,
     project_reservation: Option<PathBuf>,
@@ -659,22 +650,21 @@ struct WorkItem {
 }
 
 struct Scheduler {
-    sender: Sender<WorkCommand>,
+    sender: SyncSender<WorkItem>,
     reservations: Arc<Mutex<BTreeSet<PathBuf>>>,
     workers: Mutex<Vec<JoinHandle<()>>>,
-    worker_count: usize,
 }
 
 impl Scheduler {
     fn new(worker_count: usize) -> std::io::Result<Arc<Self>> {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(MAX_QUEUED_JOBS);
         let receiver = Arc::new(Mutex::new(receiver));
-        let reservations = Arc::new(Mutex::new(BTreeSet::new()));
+        let reservations =
+            Arc::clone(PROJECT_RESERVATIONS.get_or_init(|| Arc::new(Mutex::new(BTreeSet::new()))));
         let scheduler = Arc::new(Self {
             sender,
             reservations: Arc::clone(&reservations),
             workers: Mutex::new(Vec::new()),
-            worker_count,
         });
         for index in 0..worker_count {
             let receiver = Arc::clone(&receiver);
@@ -742,18 +732,30 @@ impl Scheduler {
                 serde_json::to_value(output).map_err(|error| serialization_error(&error))
             }),
         };
-        if self.sender.send(WorkCommand::Run(item)).is_err() {
+        if let Err(error) = self.sender.try_send(item) {
             if let Some(path) = reservation {
                 self.reservations
                     .lock()
                     .expect("project reservations")
                     .remove(&path);
             }
-            job.shared.finish(Err(OkcError::new(
-                ErrorCode::Internal,
-                ErrorCategory::Internal,
-                "job scheduler is unavailable",
-            )));
+            let error = match error {
+                TrySendError::Full(_) => {
+                    let mut error = OkcError::new(
+                        ErrorCode::ResourceLimit,
+                        ErrorCategory::Argument,
+                        "job queue is full; wait for an existing job before submitting more work",
+                    );
+                    error.retryable = true;
+                    error.detail("max_queued_jobs", MAX_QUEUED_JOBS)
+                }
+                TrySendError::Disconnected(_) => OkcError::new(
+                    ErrorCode::Internal,
+                    ErrorCategory::Internal,
+                    "job scheduler is unavailable",
+                ),
+            };
+            job.shared.finish(Err(error));
         }
         job
     }
@@ -761,14 +763,12 @@ impl Scheduler {
 
 impl Drop for Scheduler {
     fn drop(&mut self) {
-        for _ in 0..self.worker_count {
-            let _ = self.sender.send(WorkCommand::Shutdown);
-        }
         // Dropping a language-runtime client can happen while Python holds the
         // GIL or Node.js is finalizing an object. Joining here could deadlock
         // if an in-flight provider talks to a host thread that needs that
-        // runtime lock. Dropping JoinHandle detaches; queued work precedes the
-        // shutdown markers and each bounded worker exits after it drains.
+        // runtime lock. Dropping JoinHandle detaches. Dropping the last sender
+        // closes the bounded queue without needing space for shutdown markers;
+        // workers finish accepted jobs, drain the queue, and then exit.
         self.workers.lock().expect("worker handles").clear();
     }
 }
@@ -787,18 +787,15 @@ fn typed_failed<T: DeserializeOwned + Send + 'static>(
 }
 
 fn worker_loop(
-    receiver: &Arc<Mutex<Receiver<WorkCommand>>>,
+    receiver: &Arc<Mutex<Receiver<WorkItem>>>,
     reservations: &Arc<Mutex<BTreeSet<PathBuf>>>,
 ) {
     loop {
         let command = receiver.lock().expect("job receiver").recv();
-        let Ok(command) = command else {
+        let Ok(item) = command else {
             break;
         };
-        let WorkCommand::Run(item) = command else {
-            break;
-        };
-        if item.shared.begin() {
+        let result = if item.shared.begin() {
             let observer = Arc::new(JobProgressObserver {
                 shared: Arc::clone(&item.shared),
             });
@@ -817,14 +814,17 @@ fn worker_loop(
             {
                 result = Err(cancelled_error());
             }
-            item.shared.finish(result);
-        }
+            result
+        } else {
+            Err(cancelled_error())
+        };
         if let Some(project) = item.project_reservation {
             reservations
                 .lock()
                 .expect("project reservations")
                 .remove(&project);
         }
+        item.shared.finish(result);
     }
 }
 
@@ -1673,6 +1673,24 @@ fn map_core_error(error: okc_core::OkcError) -> OkcError {
             "output destination already exists",
         )
         .detail("path", path.to_string_lossy().to_string()),
+        Core::StagingDispositionFailed {
+            path,
+            original,
+            source,
+        } => {
+            let original = map_core_error(*original);
+            OkcError::new(
+                ErrorCode::PathUnsafe,
+                ErrorCategory::Output,
+                "compilation failed and its staging directory could not be removed",
+            )
+            .detail("staging_path", path.to_string_lossy().to_string())
+            .detail(
+                "original_code",
+                serde_json::to_value(original.code).unwrap_or_default(),
+            )
+            .detail("io_kind", format!("{:?}", source.kind()))
+        }
         Core::PublishedButDurabilityUncertain { path, source } => OkcError::new(
             ErrorCode::OutputDurabilityUncertain,
             ErrorCategory::Output,
@@ -1752,6 +1770,44 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_queue_is_bounded_and_drop_does_not_wait_for_a_full_queue() {
+        let scheduler = Scheduler::new(1).expect("scheduler");
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let running: Job<u8> = scheduler.submit("running", None, false, move |_| {
+            started_tx.send(()).expect("started");
+            release_rx.recv().expect("release");
+            Ok(1)
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("running worker");
+        let queued = (0..64)
+            .map(|_| scheduler.submit::<u8, _, _>("queued", None, false, |_| Ok(2)))
+            .collect::<Vec<_>>();
+        let overflow: Job<u8> = scheduler.submit("overflow", None, false, |_| Ok(3));
+        let rejected = overflow.state() == JobState::Failed;
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        let drop_thread = thread::spawn(move || {
+            drop(scheduler);
+            dropped_tx.send(()).expect("dropped");
+        });
+        let nonblocking = dropped_rx.recv_timeout(Duration::from_millis(200)).is_ok();
+        release_tx.send(()).expect("release worker");
+        assert_eq!(running.result().expect("running result"), 1);
+        for job in queued {
+            assert_eq!(job.result().expect("queued result"), 2);
+        }
+        drop_thread.join().expect("drop thread");
+        assert!(nonblocking, "full scheduler drop blocked");
+        assert!(rejected, "unbounded scheduler accepted overflow");
+        assert_eq!(
+            overflow.result().expect_err("overflow").code,
+            ErrorCode::ResourceLimit
+        );
+    }
+
+    #[test]
     fn relative_paths_fail_as_structured_job_errors() {
         let error = client(1)
             .open_project("relative.okc-project")
@@ -1811,6 +1867,32 @@ mod tests {
         assert_eq!(job.result().expect("job survived scheduler drop"), 7);
         drop_thread.join().expect("scheduler drop thread");
         assert!(drop_was_non_blocking);
+    }
+
+    #[test]
+    fn distinct_clients_share_project_reservations_and_release_before_completion() {
+        let temporary = tempfile::tempdir().expect("temporary");
+        let project = temporary.path().join("shared.okc-project");
+        let first_client = Scheduler::new(1).expect("first client");
+        let second_client = Scheduler::new(1).expect("second client");
+        let (release, wait) = mpsc::channel();
+        let first: Job<u8> = first_client.submit("first", Some(project.clone()), true, move |_| {
+            wait.recv().expect("release first");
+            Ok(1)
+        });
+        let busy: Job<u8> = second_client.submit("busy", Some(project.clone()), true, |_| Ok(2));
+        let busy_result = busy.result();
+        release.send(()).expect("release");
+        assert_eq!(first.result().expect("first"), 1);
+        assert_eq!(
+            busy_result.expect_err("second client must be busy").code,
+            ErrorCode::ProjectBusy
+        );
+        for _ in 0..25 {
+            let next: Job<u8> =
+                second_client.submit("next", Some(project.clone()), true, |_| Ok(3));
+            assert_eq!(next.result().expect("reservation already released"), 3);
+        }
     }
 
     #[test]

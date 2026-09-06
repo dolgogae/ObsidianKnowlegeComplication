@@ -16,7 +16,14 @@ function transformKeys(value, transform) {
   if (Array.isArray(value)) return value.map(item => transformKeys(item, transform))
   if (value === null || typeof value !== 'object') return value
   return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [transform(key), transformKeys(item, transform)])
+    Object.entries(value).map(([key, item]) => {
+      // Metadata values and provider options contain user-defined keys, whose
+      // spelling and distinctness are part of the sealed source data.
+      const opaque = key === 'options' || (key === 'value' && (
+        Object.hasOwn(value, 'metadata_id') || Object.hasOwn(value, 'metadataId')
+      ))
+      return [transform(key), opaque ? item : transformKeys(item, transform)]
+    })
   )
 }
 

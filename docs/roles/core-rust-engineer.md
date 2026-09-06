@@ -3,7 +3,7 @@ title: Core Rust Engineer Role Guide
 status: normative
 owners:
   - core-rust-engineer
-last_updated: 2026-09-02
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0001
   - ADR-0003
@@ -20,7 +20,11 @@ source_refs:
 
 ## Responsibilities
 
-Implement stable identifiers, safe source readers, parsers/scanners, canonical IR, SQLite workspace, deduplication, conflict planning, approval validation, output materialization, pack generation, verifier, Rust API, and CLI.
+Implement stable identifiers, safe source readers, parsers/scanners, canonical
+IR, SQLite workspace, private deduplication/conflict analysis, current
+integration approval validation, Markdown materialization, verifier, Rust API,
+and CLI. Pack and non-Markdown materializers remain release work governed by
+the current specifications.
 
 ## Non-responsibilities
 
@@ -30,10 +34,13 @@ Do not embed vendor LLM clients in core, implement Obsidian UI/MCP transport pol
 
 Read [`../../AGENTS.md`](../../AGENTS.md), [`../../PROJECT_CONTEXT.md`](../../PROJECT_CONTEXT.md), [`../CURRENT_STATE.md`](../CURRENT_STATE.md), the architecture/IR/pipeline/SDK/output/provenance/security/test files in [`../specs/`](../specs/), all [`../algorithms/stable/`](../algorithms/stable/) files, and ADR-0001/0003/0004/0005/0006/0007/0008.
 
+ADR-0022/0024/0027 are also mandatory before interpreting historical algorithm
+and ADR terminology as a current public contract.
+
 ## Owned interfaces and invariants
 
-- public `okc-core` and sole `okc` executable behavior, plus the deprecated
-  current-only public surface and explicit retired-schema unsupported boundary;
+- public current-only `okc-core` and sole `okc` executable behavior, plus the
+  explicit retired-schema unsupported boundary;
 - source byte immutability and streaming limits;
 - deterministic ordered serialization and IDs;
 - stage-verify-atomic-publish workflow;

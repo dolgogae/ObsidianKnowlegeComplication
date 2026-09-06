@@ -1,0 +1,647 @@
+{
+  "approved_proposals": [],
+  "conflict_decisions": [],
+  "conflict_decisions_complete": true,
+  "materialization": {
+    "action_set_hash": "d44dbf84388105f7a9d4246c60dbd42f125728b86ea0d1213e15484869a6381c",
+    "base_plan_id": "plan_a09fe77fda1bf93da50f8f26065f9e86744549672081fcd9bcffafb5d545b66c",
+    "effective_operations": [
+      {
+        "destination": "attachments/9b/9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186-logo.txt",
+        "expected_hash": "9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186",
+        "kind": "asset",
+        "operation_id": "op_17f8f820b7f5b409cd7a1ad8ffa7b4deea9a386d07cb3253982b5d4b269d2238",
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source_id": "basic",
+        "source_path": "assets/logo.txt",
+        "type": "copy"
+      },
+      {
+        "destination": "canvases/Board.canvas",
+        "expected_hash": "ef80241275de27e513e26bae72aa697630a15bc29a29d1dfc7d32af79e4a722d",
+        "expected_output_hash": "76610f56f78031b53064b4c5884bdd8ceba142efc61c57e5001c4b1306b43745",
+        "operation_id": "op_0e52cd6b80967b98753d41e73dfdf60453c2c88921ae4bcddc5c02404299d191",
+        "rewrites": [
+          {
+            "node_id": "node-1",
+            "original_path": "Topic.md",
+            "replacement_path": "../knowledge/Topic.md",
+            "target": {
+              "id": "doc_959f7b31048d9be59c57cb8f789f9fe08db1c1c7460bce2cf286f03457795306",
+              "kind": "document"
+            }
+          }
+        ],
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source_id": "basic",
+        "source_path": "Board.canvas",
+        "type": "rewrite_canvas"
+      },
+      {
+        "destination": "knowledge/Index.md",
+        "expected_hash": "6ce10885c90119f62c6eb6e815ac0d4d2835ffc430cde7a6363c3c114599c552",
+        "expected_output_hash": "b033c3e13a5ceed879a7f0f872aa7c60a22f84ad4e0fe3d0282e522dc2b419fe",
+        "operation_id": "op_c02dafa1fed9b2d65bb5edb4388729a3f559f92d1200ab9c492aa50ce743bdd4",
+        "replacements": [
+          {
+            "replacement": "Topic.md|the topic",
+            "span": {
+              "byte_end": 68,
+              "byte_start": 53
+            }
+          },
+          {
+            "replacement": "../attachments/9b/9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186-logo.txt",
+            "span": {
+              "byte_end": 107,
+              "byte_start": 92
+            }
+          }
+        ],
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source_id": "basic",
+        "source_path": "Index.md",
+        "type": "rewrite_markdown"
+      },
+      {
+        "destination": "knowledge/Topic.md",
+        "expected_hash": "359dcddc73adf17760f2fd6b4e7a04ec6d67d696bf89ece989628b1615bf0e9c",
+        "kind": "markdown",
+        "operation_id": "op_167daefc251c0025922b5120e19d74e5b0ec0415ca24108aa638e687512a0b12",
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source_id": "basic",
+        "source_path": "Topic.md",
+        "type": "copy"
+      },
+      {
+        "destination": "views/View.base",
+        "expected_hash": "c9e6b2ed2ba68c252457a060128b897f8ead9f439e7f779f1bed012700fc8e5f",
+        "kind": "base",
+        "operation_id": "op_5539cf50783e599fce46c637d912c2144c74917475fff6c0af51250e43557123",
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source_id": "basic",
+        "source_path": "View.base",
+        "type": "copy"
+      }
+    ],
+    "materialization_id": "materialization_98ab70ae55318f1cbfed31eb899ac5360285e07d26d2330eace496cfe8e17a18",
+    "proposal_set_hash": "d29e737b42ef96c47d144b95fe28fd5f3abdbc3b7b4d5cba768de6e3c5f684ac"
+  },
+  "plan": {
+    "asset_output_paths": {
+      "asset_4d541018c97975f570abfd57fd2d0eb6128363bd18bfa27710a06df083afea48": "attachments/9b/9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186-logo.txt"
+    },
+    "base_output_paths": {
+      "base_d76a5c324b9a0f83ac345b2fdfd5917f1fc46bad97bf7404758ff3d0e0a3d4f8": "views/View.base"
+    },
+    "canvas_output_paths": {
+      "canvas_0ade34a77d4fa4b1b3413b71f1fbbe566801eac7c59c44bd13db7b88f466f262": "canvases/Board.canvas"
+    },
+    "compiler_version": "0.2.0",
+    "conflicts": [],
+    "diagnostics": [
+      {
+        "code": "EXCLUDED_PATH",
+        "document_id": null,
+        "logical_path": ".obsidian",
+        "message": "path excluded by V2 policy",
+        "remediation": null,
+        "severity": "warning",
+        "source_file_id": null,
+        "span": null
+      },
+      {
+        "code": "OPAQUE_BASE_UNVALIDATED",
+        "document_id": null,
+        "logical_path": "View.base",
+        "message": "Obsidian Base is preserved opaquely; internal references are not validated",
+        "remediation": null,
+        "severity": "warning",
+        "source_file_id": null,
+        "span": null
+      }
+    ],
+    "exact_groups": [],
+    "inspection_hash": "abccbe8a1552e42af5550a5e398d6a72ec13fd7879f911da440756aabb3325ac",
+    "near_candidates": [],
+    "operations": [
+      {
+        "destination": "attachments/9b/9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186-logo.txt",
+        "expected_hash": "9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186",
+        "kind": "asset",
+        "operation_id": "op_17f8f820b7f5b409cd7a1ad8ffa7b4deea9a386d07cb3253982b5d4b269d2238",
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source_id": "basic",
+        "source_path": "assets/logo.txt",
+        "type": "copy"
+      },
+      {
+        "destination": "canvases/Board.canvas",
+        "expected_hash": "ef80241275de27e513e26bae72aa697630a15bc29a29d1dfc7d32af79e4a722d",
+        "expected_output_hash": "76610f56f78031b53064b4c5884bdd8ceba142efc61c57e5001c4b1306b43745",
+        "operation_id": "op_0e52cd6b80967b98753d41e73dfdf60453c2c88921ae4bcddc5c02404299d191",
+        "rewrites": [
+          {
+            "node_id": "node-1",
+            "original_path": "Topic.md",
+            "replacement_path": "../knowledge/Topic.md",
+            "target": {
+              "id": "doc_959f7b31048d9be59c57cb8f789f9fe08db1c1c7460bce2cf286f03457795306",
+              "kind": "document"
+            }
+          }
+        ],
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source_id": "basic",
+        "source_path": "Board.canvas",
+        "type": "rewrite_canvas"
+      },
+      {
+        "destination": "knowledge/Index.md",
+        "expected_hash": "6ce10885c90119f62c6eb6e815ac0d4d2835ffc430cde7a6363c3c114599c552",
+        "expected_output_hash": "b033c3e13a5ceed879a7f0f872aa7c60a22f84ad4e0fe3d0282e522dc2b419fe",
+        "operation_id": "op_c02dafa1fed9b2d65bb5edb4388729a3f559f92d1200ab9c492aa50ce743bdd4",
+        "replacements": [
+          {
+            "replacement": "Topic.md|the topic",
+            "span": {
+              "byte_end": 68,
+              "byte_start": 53
+            }
+          },
+          {
+            "replacement": "../attachments/9b/9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186-logo.txt",
+            "span": {
+              "byte_end": 107,
+              "byte_start": 92
+            }
+          }
+        ],
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source_id": "basic",
+        "source_path": "Index.md",
+        "type": "rewrite_markdown"
+      },
+      {
+        "destination": "knowledge/Topic.md",
+        "expected_hash": "359dcddc73adf17760f2fd6b4e7a04ec6d67d696bf89ece989628b1615bf0e9c",
+        "kind": "markdown",
+        "operation_id": "op_167daefc251c0025922b5120e19d74e5b0ec0415ca24108aa638e687512a0b12",
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source_id": "basic",
+        "source_path": "Topic.md",
+        "type": "copy"
+      },
+      {
+        "destination": "views/View.base",
+        "expected_hash": "c9e6b2ed2ba68c252457a060128b897f8ead9f439e7f779f1bed012700fc8e5f",
+        "kind": "base",
+        "operation_id": "op_5539cf50783e599fce46c637d912c2144c74917475fff6c0af51250e43557123",
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source_id": "basic",
+        "source_path": "View.base",
+        "type": "copy"
+      }
+    ],
+    "output_paths": {
+      "doc_6c687468a93993511f7543a6f7e3d9fa4c80c35efec2837a9286734c1052d067": "knowledge/Index.md",
+      "doc_959f7b31048d9be59c57cb8f789f9fe08db1c1c7460bce2cf286f03457795306": "knowledge/Topic.md"
+    },
+    "plan_id": "plan_a09fe77fda1bf93da50f8f26065f9e86744549672081fcd9bcffafb5d545b66c",
+    "policy": {
+      "augmentation": {
+        "allow_remote_providers": false,
+        "max_generated_bytes": 16777216,
+        "max_proposals": 1000
+      },
+      "dedup": {
+        "lsh_bands": 32,
+        "max_candidates_per_document": 100,
+        "minhash_components": 128,
+        "near_threshold": 0.85,
+        "rows_per_band": 4
+      },
+      "limits": {
+        "max_archive_expansion_ratio": 100,
+        "max_component_bytes": 240,
+        "max_file_bytes": 2147483648,
+        "max_files": 100000,
+        "max_path_bytes": 1024,
+        "max_sources": 10,
+        "max_structured_text_bytes": 16777216,
+        "max_total_bytes": 21474836480
+      },
+      "output": {
+        "deny_warnings": false,
+        "reject_existing_destination": true,
+        "retain_failed_staging": false,
+        "zstd_level": 10
+      },
+      "paths": {
+        "exclude": [
+          ".obsidian/**",
+          ".git/**",
+          "**/.DS_Store"
+        ],
+        "follow_symlinks": false,
+        "nonstandard_extensions": [],
+        "nonstandard_files": "preserve_opaque"
+      },
+      "schema_version": 2
+    },
+    "projection_hash": "9b6ed4f6d7316757d3dc1b03f00960d6f8e4dde3daa427895c7cbd18829dc0fd",
+    "resource_estimate": {
+      "estimated_output_bytes": 447,
+      "estimated_peak_working_set_bytes": 16777578,
+      "note_count": 2,
+      "source_bytes": 447,
+      "source_files": 5
+    },
+    "schema_version": 2,
+    "snapshots": [
+      {
+        "files": [
+          {
+            "byte_len": 181,
+            "content_hash": "ef80241275de27e513e26bae72aa697630a15bc29a29d1dfc7d32af79e4a722d",
+            "file_id": "file_9c03aeb822853d531866fe5961d636c66acddcf9bfe9941fb8f820243fe8a5e6",
+            "kind": "canvas",
+            "logical_path": "Board.canvas",
+            "original_path": "Board.canvas",
+            "path_encoding": "utf8",
+            "raw_sha256": "b875d085ef3f6bd62337cbd46f773e7ad9b747eb37faccfc2e563aa41ad1537c",
+            "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+            "source_id": "basic"
+          },
+          {
+            "byte_len": 159,
+            "content_hash": "6ce10885c90119f62c6eb6e815ac0d4d2835ffc430cde7a6363c3c114599c552",
+            "file_id": "file_e989f30217004107d3d538fc60afd4e9fcf3cfaebce7b9ee3f5161cef2f3c175",
+            "kind": "markdown",
+            "logical_path": "Index.md",
+            "original_path": "Index.md",
+            "path_encoding": "utf8",
+            "raw_sha256": "1bcdae250eeb18837b4569d4baa6e0c821dc3bc4254df1e70f324b9d6b9d09f2",
+            "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+            "source_id": "basic"
+          },
+          {
+            "byte_len": 47,
+            "content_hash": "359dcddc73adf17760f2fd6b4e7a04ec6d67d696bf89ece989628b1615bf0e9c",
+            "file_id": "file_cb154c33f624d845549f4f1a3ac947f38c3b5369f36adf2bd78748dbff606fbc",
+            "kind": "markdown",
+            "logical_path": "Topic.md",
+            "original_path": "Topic.md",
+            "path_encoding": "utf8",
+            "raw_sha256": "d336ad59580d1003f9d0a417a8973ed60312f73bab57bc78b096457e3d39e1b6",
+            "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+            "source_id": "basic"
+          },
+          {
+            "byte_len": 39,
+            "content_hash": "c9e6b2ed2ba68c252457a060128b897f8ead9f439e7f779f1bed012700fc8e5f",
+            "file_id": "file_f963bf8fe5c630471263ffe18c94cea7a27511b7544242d4e2288fdea1b912e2",
+            "kind": "base",
+            "logical_path": "View.base",
+            "original_path": "View.base",
+            "path_encoding": "utf8",
+            "raw_sha256": "1caba0e805f774614725923d5180e676ef55ddf5f63c80f57a1cc5e61cf3ba30",
+            "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+            "source_id": "basic"
+          },
+          {
+            "byte_len": 21,
+            "content_hash": "9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186",
+            "file_id": "file_a87e21b524ef0089c533158476b4bb6490af16a56179a977ed858c5dd62bd33e",
+            "kind": "asset",
+            "logical_path": "assets/logo.txt",
+            "original_path": "assets/logo.txt",
+            "path_encoding": "utf8",
+            "raw_sha256": "ba401cb51c800c812e237ad442a87554769a24a3fb9d6894d15dcbcf823bc6d9",
+            "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+            "source_id": "basic"
+          }
+        ],
+        "policy_id": "okc-source-v2",
+        "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+        "source": {
+          "kind": "directory",
+          "owner_display_name": null,
+          "path": "[redacted-source-locator]",
+          "source_id": "basic"
+        },
+        "source_id": "basic",
+        "vault_content_id": "45498277fd2e9fdf2d77a856301f188aac139d16ede383fc66b900731de31dbb"
+      }
+    ],
+    "workspace": {
+      "assets": {
+        "asset_4d541018c97975f570abfd57fd2d0eb6128363bd18bfa27710a06df083afea48": {
+          "asset_id": "asset_4d541018c97975f570abfd57fd2d0eb6128363bd18bfa27710a06df083afea48",
+          "basename": "logo.txt",
+          "byte_len": 21,
+          "media_type": "application/octet-stream",
+          "sources": [
+            {
+              "byte_len": 21,
+              "content_hash": "9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186",
+              "file_id": "file_a87e21b524ef0089c533158476b4bb6490af16a56179a977ed858c5dd62bd33e",
+              "kind": "asset",
+              "logical_path": "assets/logo.txt",
+              "original_path": "assets/logo.txt",
+              "path_encoding": "utf8",
+              "raw_sha256": "ba401cb51c800c812e237ad442a87554769a24a3fb9d6894d15dcbcf823bc6d9",
+              "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+              "source_id": "basic"
+            }
+          ]
+        }
+      },
+      "bases": [
+        {
+          "base_artifact_id": "base_d76a5c324b9a0f83ac345b2fdfd5917f1fc46bad97bf7404758ff3d0e0a3d4f8",
+          "source_file": {
+            "byte_len": 39,
+            "content_hash": "c9e6b2ed2ba68c252457a060128b897f8ead9f439e7f779f1bed012700fc8e5f",
+            "file_id": "file_f963bf8fe5c630471263ffe18c94cea7a27511b7544242d4e2288fdea1b912e2",
+            "kind": "base",
+            "logical_path": "View.base",
+            "original_path": "View.base",
+            "path_encoding": "utf8",
+            "raw_sha256": "1caba0e805f774614725923d5180e676ef55ddf5f63c80f57a1cc5e61cf3ba30",
+            "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+            "source_id": "basic"
+          }
+        }
+      ],
+      "canvases": {
+        "canvas_0ade34a77d4fa4b1b3413b71f1fbbe566801eac7c59c44bd13db7b88f466f262": {
+          "canvas_id": "canvas_0ade34a77d4fa4b1b3413b71f1fbbe566801eac7c59c44bd13db7b88f466f262",
+          "edges": [],
+          "file_references": [
+            {
+              "node_id": "node-1",
+              "raw_path": "Topic.md",
+              "resolution": {
+                "state": "resolved",
+                "target": {
+                  "id": "doc_959f7b31048d9be59c57cb8f789f9fe08db1c1c7460bce2cf286f03457795306",
+                  "kind": "document"
+                }
+              }
+            }
+          ],
+          "nodes": [
+            {
+              "file": "Topic.md",
+              "height": 180,
+              "id": "node-1",
+              "node_type": "file",
+              "unknown_fields": {
+                "fixture_unknown": "preserve-me"
+              },
+              "width": 320,
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "source_file": {
+            "byte_len": 181,
+            "content_hash": "ef80241275de27e513e26bae72aa697630a15bc29a29d1dfc7d32af79e4a722d",
+            "file_id": "file_9c03aeb822853d531866fe5961d636c66acddcf9bfe9941fb8f820243fe8a5e6",
+            "kind": "canvas",
+            "logical_path": "Board.canvas",
+            "original_path": "Board.canvas",
+            "path_encoding": "utf8",
+            "raw_sha256": "b875d085ef3f6bd62337cbd46f773e7ad9b747eb37faccfc2e563aa41ad1537c",
+            "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+            "source_id": "basic"
+          },
+          "value": {
+            "edges": [],
+            "fixture_root_unknown": {
+              "retained": true
+            },
+            "nodes": [
+              {
+                "file": "Topic.md",
+                "fixture_unknown": "preserve-me",
+                "height": 180,
+                "id": "node-1",
+                "type": "file",
+                "width": 320,
+                "x": 0,
+                "y": 0
+              }
+            ]
+          }
+        }
+      },
+      "documents": {
+        "doc_6c687468a93993511f7543a6f7e3d9fa4c80c35efec2837a9286734c1052d067": {
+          "aliases": [],
+          "blocks": [
+            {
+              "block_id": "block_df635a3c903fef40484ea6f803258642b0433a64a1cfbafece0c20557e44aa4c",
+              "comparison_text": "# Home\n",
+              "content_hash": "c5095895d4a63eb67db177d45bfda91ec28d2028b6d2152674acc866666c8e30",
+              "explicit_id": null,
+              "kind": "heading",
+              "span": {
+                "byte_end": 45,
+                "byte_start": 38
+              }
+            },
+            {
+              "block_id": "block_aa16c50a08027e911628c67ce9f47fa27258f2d31426e1cf83d3dce4fa34de5f",
+              "comparison_text": "Read [[Topic|the topic]].\n",
+              "content_hash": "6d6ddc9bd9f74b3c59688f52a023fd0830c84a938ae33f0036bf4add1e6a1466",
+              "explicit_id": null,
+              "kind": "paragraph",
+              "span": {
+                "byte_end": 72,
+                "byte_start": 46
+              }
+            },
+            {
+              "block_id": "block_029d0e43c397a897717c1ac7e4639d3958c514e19026ab0229cc7c6596d9b325",
+              "comparison_text": "Embedded asset: ![[assets/logo.txt]].\n",
+              "content_hash": "06472079753556236fc30c1a61ad7d732f489b0f6d370fa46ce550ace5e134f8",
+              "explicit_id": null,
+              "kind": "paragraph",
+              "span": {
+                "byte_end": 111,
+                "byte_start": 73
+              }
+            },
+            {
+              "block_id": "block_9f3672ea5ccb7686097ddfa74ed0e59338551a8a3aae0ff6f28b73c92090271a",
+              "comparison_text": "Inline code must stay literal: `[[NotALink]]`.\n",
+              "content_hash": "2d61a89719eec4aa29cddc2c3eb369759d55f1ca7b63353e7de15d3b203d3aca",
+              "explicit_id": null,
+              "kind": "paragraph",
+              "span": {
+                "byte_end": 159,
+                "byte_start": 112
+              }
+            }
+          ],
+          "body_hash": "c901d8b500348a52ab5aa996a4d30faa842ee1075d47c5664d71ae9760c77926",
+          "comparison_text": "# Home\n\nRead [[Topic|the topic]].\n\nEmbedded asset: ![[assets/logo.txt]].\n\nInline code must stay literal: `[[NotALink]]`.\n",
+          "document_id": "doc_6c687468a93993511f7543a6f7e3d9fa4c80c35efec2837a9286734c1052d067",
+          "frontmatter": {
+            "tags": [
+              "fixture"
+            ],
+            "title": "Home"
+          },
+          "frontmatter_hash": "321ab0e019e8ca0d38d4c1550189ad0e371365c6da89bfe9067548aa1dad9b0d",
+          "links": [
+            {
+              "block_id": null,
+              "display": "the topic",
+              "embed": false,
+              "heading": null,
+              "link_id": "link_23303279da3d3dafdd804de1c59398c68dc59ce5fe0bd17225d6385f171b3da6",
+              "path": "Topic",
+              "raw_target": "Topic|the topic",
+              "resolution": {
+                "document_id": "doc_959f7b31048d9be59c57cb8f789f9fe08db1c1c7460bce2cf286f03457795306",
+                "state": "resolved"
+              },
+              "span": {
+                "byte_end": 68,
+                "byte_start": 53
+              },
+              "syntax": "wiki"
+            },
+            {
+              "block_id": null,
+              "display": null,
+              "embed": true,
+              "heading": null,
+              "link_id": "link_010e5a21a34e99051b7c852cb8af463144131a0cefe4d16d9d2e0bcb4bd1f7b5",
+              "path": "assets/logo.txt",
+              "raw_target": "assets/logo.txt",
+              "resolution": {
+                "asset_id": "asset_4d541018c97975f570abfd57fd2d0eb6128363bd18bfa27710a06df083afea48",
+                "state": "asset"
+              },
+              "span": {
+                "byte_end": 107,
+                "byte_start": 92
+              },
+              "syntax": "wiki"
+            }
+          ],
+          "schema_version": 2,
+          "sections": [
+            {
+              "blocks": [
+                "block_df635a3c903fef40484ea6f803258642b0433a64a1cfbafece0c20557e44aa4c",
+                "block_aa16c50a08027e911628c67ce9f47fa27258f2d31426e1cf83d3dce4fa34de5f",
+                "block_029d0e43c397a897717c1ac7e4639d3958c514e19026ab0229cc7c6596d9b325",
+                "block_9f3672ea5ccb7686097ddfa74ed0e59338551a8a3aae0ff6f28b73c92090271a"
+              ],
+              "heading": "Home",
+              "heading_level": 1,
+              "heading_path": [
+                "Home"
+              ],
+              "section_id": "section_f9d7c9f567f6134b58f4ae24f4864904f2ef601fa567d04d6485eb98894831f8",
+              "span": {
+                "byte_end": 45,
+                "byte_start": 38
+              }
+            }
+          ],
+          "source_file": {
+            "byte_len": 159,
+            "content_hash": "6ce10885c90119f62c6eb6e815ac0d4d2835ffc430cde7a6363c3c114599c552",
+            "file_id": "file_e989f30217004107d3d538fc60afd4e9fcf3cfaebce7b9ee3f5161cef2f3c175",
+            "kind": "markdown",
+            "logical_path": "Index.md",
+            "original_path": "Index.md",
+            "path_encoding": "utf8",
+            "raw_sha256": "1bcdae250eeb18837b4569d4baa6e0c821dc3bc4254df1e70f324b9d6b9d09f2",
+            "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+            "source_id": "basic"
+          },
+          "tags": [
+            "fixture"
+          ],
+          "title": "Home"
+        },
+        "doc_959f7b31048d9be59c57cb8f789f9fe08db1c1c7460bce2cf286f03457795306": {
+          "aliases": [],
+          "blocks": [
+            {
+              "block_id": "block_01b407316d9627ad616f1d4df6ffd5d50f6f17c25a2d665812b52ccbaa25a85e",
+              "comparison_text": "# Topic\n",
+              "content_hash": "78bb15ff71bbcde3524f7af57890fd4592fde755cb195f26ceb7e5e7ff5799ba",
+              "explicit_id": null,
+              "kind": "heading",
+              "span": {
+                "byte_end": 8,
+                "byte_start": 0
+              }
+            },
+            {
+              "block_id": "block_7f6f9e30518e1bb35be0827a5839910a84b8289b66b88dd51d04e5e680143704",
+              "comparison_text": "Deterministic knowledge belongs here.\n",
+              "content_hash": "3098ec5b7d29487a5772c679be8b6f57551443a24687f36baec43d20ab2826e9",
+              "explicit_id": null,
+              "kind": "paragraph",
+              "span": {
+                "byte_end": 47,
+                "byte_start": 9
+              }
+            }
+          ],
+          "body_hash": "05a5463fdd5ac2b7175c40b50b1fbe867882ebb82b83330542611c9c092dff3f",
+          "comparison_text": "# Topic\n\nDeterministic knowledge belongs here.\n",
+          "document_id": "doc_959f7b31048d9be59c57cb8f789f9fe08db1c1c7460bce2cf286f03457795306",
+          "frontmatter": null,
+          "frontmatter_hash": "7d51ca7e06c3b2dcdade92fef3ae4a1290ad24197b8dd2d904a72a1ede62411a",
+          "links": [],
+          "schema_version": 2,
+          "sections": [
+            {
+              "blocks": [
+                "block_01b407316d9627ad616f1d4df6ffd5d50f6f17c25a2d665812b52ccbaa25a85e",
+                "block_7f6f9e30518e1bb35be0827a5839910a84b8289b66b88dd51d04e5e680143704"
+              ],
+              "heading": "Topic",
+              "heading_level": 1,
+              "heading_path": [
+                "Topic"
+              ],
+              "section_id": "section_cf7ab5134565603bf4a1a93bfadbadbf774e8356b75e516810e81401cc0e2e21",
+              "span": {
+                "byte_end": 8,
+                "byte_start": 0
+              }
+            }
+          ],
+          "source_file": {
+            "byte_len": 47,
+            "content_hash": "359dcddc73adf17760f2fd6b4e7a04ec6d67d696bf89ece989628b1615bf0e9c",
+            "file_id": "file_cb154c33f624d845549f4f1a3ac947f38c3b5369f36adf2bd78748dbff606fbc",
+            "kind": "markdown",
+            "logical_path": "Topic.md",
+            "original_path": "Topic.md",
+            "path_encoding": "utf8",
+            "raw_sha256": "d336ad59580d1003f9d0a417a8973ed60312f73bab57bc78b096457e3d39e1b6",
+            "snapshot_id": "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71",
+            "source_id": "basic"
+          },
+          "tags": [],
+          "title": "Topic"
+        }
+      },
+      "schema_version": 2
+    }
+  },
+  "proposal_validations": [],
+  "transcript": []
+}

@@ -1,6 +1,6 @@
 ---
 title: 문제 해결
-description: OKC CLI와 TUI에서 자주 만나는 오류 해결법
+description: OKC CLI, TUI와 Python·Node.js 라이브러리에서 자주 만나는 오류 해결법
 ---
 
 # 문제 해결
@@ -28,6 +28,55 @@ okc compile okc-run/approved-plan.json \
 
 Control file, Compiled Vault와 Pack은 기존 대상을 덮어쓰지 않습니다. 기존
 결과를 검토·보관하고 새 출력 이름으로 실행하세요.
+
+## language binding의 `PATH_NOT_ABSOLUTE`
+
+Python과 Node.js 라이브러리는 cwd를 탐색하거나 상대 경로의 의미를 추측하지
+않습니다. 호출하는 application이 project, source, output, artifact 경로를
+절대 경로로 결정한 뒤 넘기세요. `.` 또는 `..` segment도 허용되지 않습니다.
+
+```python
+from pathlib import Path
+
+project_path = Path("work/Notes.okc-project").resolve()
+project = client.open_project(project_path).result()
+```
+
+```js
+import { resolve } from 'node:path'
+
+const project = await client.openProject(resolve('work/Notes.okc-project')).result()
+```
+
+## `PROVIDER_ENV_SECRET_MISSING`
+
+`ProviderProfile.api_key_env` 또는 `apiKeyEnv`에는 secret 값이 아니라 환경변수
+이름을 지정합니다. 해당 변수는 provider Job이 시작될 때 Rust가 읽으므로,
+Job을 만들기 전에 같은 process 환경에 값을 설정하세요. Secret을 provider
+options, project, 로그 또는 오류 메시지로 복사하지 마세요.
+
+## `REMOTE_CONSENT_REQUIRED`
+
+remote provider에 cache miss가 생긴 호출에는 `allow_remote_provider`와
+`remote_disclosure_confirmed` 또는 각각의 camelCase 값을 모두 명시해야 합니다.
+먼저 local preflight 결과와 전송 범위를 검토하세요. Consent는 project에
+저장되지 않으므로 resume이나 cluster regeneration에서도 필요할 때 다시
+제공합니다.
+
+## `PROJECT_BUSY`
+
+같은 project에 이미 mutating Job이 있으면 다음 작업은 자동으로 기다리지 않고
+즉시 실패합니다. 진행 중인 Job의 `events()`와 `result()`를 확인하고, 종료된
+뒤 명시적으로 재시도하세요. 다른 process가 소유한 `project.lock`을 수동으로
+지우지 마세요.
+
+## Node.js에서 native addon을 찾을 수 없음
+
+현재 패키지는 npm에 게시되지 않았습니다. Source checkout에서는
+`npm ci --ignore-scripts --prefix bindings/node` 다음
+`npm run build --prefix bindings/node`를 실행해야 합니다. Release candidate를
+검증할 때는 root tarball과 현재 platform addon tarball을 함께 clean project에
+설치해야 하며, 다른 OS/architecture용 addon을 대신 복사해서는 안 됩니다.
 
 ## `required conflict(s) ... decision`
 

@@ -1,0 +1,12 @@
+{
+  "name": "okc-compiler-darwin-x64",
+  "version": "0.3.0",
+  "description": "Native addon for okc-compiler on macOS x64",
+  "license": "MIT OR Apache-2.0",
+  "repository": "https://github.com/dolgogae/okc",
+  "main": "okc-compiler.darwin-x64.node",
+  "files": ["okc-compiler.darwin-x64.node", "README.md"],
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "engines": { "node": ">=22.13" }
+}

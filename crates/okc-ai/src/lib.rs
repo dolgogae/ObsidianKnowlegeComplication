@@ -220,6 +220,7 @@ pub struct ProviderProfile {
 
 impl Debug for ProviderProfile {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        let option_keys = self.options.keys().collect::<Vec<_>>();
         formatter
             .debug_struct("ProviderProfile")
             .field("kind", &self.kind)
@@ -231,7 +232,7 @@ impl Debug for ProviderProfile {
             .field("max_response_bytes", &self.max_response_bytes)
             .field("max_input_bytes", &self.max_input_bytes)
             .field("max_batch_items", &self.max_batch_items)
-            .field("options", &self.options)
+            .field("option_keys", &option_keys)
             .finish()
     }
 }
@@ -271,6 +272,14 @@ impl ProviderProfile {
             return Err(ProviderError::new(
                 ProviderErrorKind::InvalidRequest,
                 "provider resource limits must be non-zero",
+            ));
+        }
+        if let Some(key) = credential_option_path(&self.options) {
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                format!(
+                    "provider option `{key}` looks credential-bearing; use api_key_env or os_keychain"
+                ),
             ));
         }
         validate_endpoint(&self.endpoint, self.kind)?;
@@ -338,6 +347,52 @@ impl ProviderProfile {
             ));
         }
         Ok(Some(SecretString::new(value)))
+    }
+}
+
+fn is_secret_option_name(name: &str) -> bool {
+    let normalized = name
+        .bytes()
+        .filter(u8::is_ascii_alphanumeric)
+        .map(|byte| byte.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    matches!(
+        normalized.as_slice(),
+        b"apikey"
+            | b"authorization"
+            | b"auth"
+            | b"bearertoken"
+            | b"accesstoken"
+            | b"secret"
+            | b"password"
+            | b"credential"
+            | b"credentials"
+    )
+}
+
+fn credential_option_path(options: &BTreeMap<String, Value>) -> Option<String> {
+    options.iter().find_map(|(key, value)| {
+        if is_secret_option_name(key) {
+            Some(key.clone())
+        } else {
+            nested_credential_option_path(value).map(|suffix| format!("{key}{suffix}"))
+        }
+    })
+}
+
+fn nested_credential_option_path(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(values) => values.iter().find_map(|(key, value)| {
+            if is_secret_option_name(key) {
+                Some(format!(".{key}"))
+            } else {
+                nested_credential_option_path(value).map(|suffix| format!(".{key}{suffix}"))
+            }
+        }),
+        Value::Array(values) => values.iter().enumerate().find_map(|(index, value)| {
+            nested_credential_option_path(value).map(|suffix| format!("[{index}]{suffix}"))
+        }),
+        _ => None,
     }
 }
 
@@ -661,7 +716,7 @@ impl ProviderClient {
             match self.transport.post_json(request, cancellation) {
                 Ok(response) if (200..300).contains(&response.status) => return Ok(response),
                 Ok(response) => {
-                    let error = normalize_http_error(&response);
+                    let error = redact_request_secrets(normalize_http_error(&response), request);
                     if !error.retryable || attempts >= MAX_RETRIES {
                         return Err(error);
                     }
@@ -669,6 +724,7 @@ impl ProviderClient {
                     cancellable_delay(error.retry_after_ms.unwrap_or(0), cancellation)?;
                 }
                 Err(error) => {
+                    let error = redact_request_secrets(error, request);
                     if !error.retryable || attempts >= MAX_RETRIES {
                         return Err(error);
                     }
@@ -721,6 +777,26 @@ impl ProviderClient {
             max_response_bytes: self.profile.max_response_bytes,
         })
     }
+}
+
+fn redact_request_secrets(mut error: ProviderError, request: &HttpRequest) -> ProviderError {
+    for (name, value) in &request.headers {
+        if !matches!(
+            name.to_ascii_lowercase().as_str(),
+            "authorization" | "x-api-key" | "x-goog-api-key"
+        ) {
+            continue;
+        }
+        if let Some(secret) = value.strip_prefix("Bearer ")
+            && !secret.is_empty()
+        {
+            error.message = error.message.replace(secret, "[redacted]");
+        }
+        if !value.is_empty() {
+            error.message = error.message.replace(value, "[redacted]");
+        }
+    }
+    error
 }
 
 impl StructuredGenerator for ProviderClient {
@@ -1871,6 +1947,36 @@ mod tests {
     }
 
     #[test]
+    fn provider_options_reject_credentials_and_debug_redacts_values() {
+        let mut unsafe_profile = profile(ProviderKind::OpenAi);
+        unsafe_profile
+            .options
+            .insert("api_key".into(), json!("raw-secret-value"));
+        let debug = format!("{unsafe_profile:?}");
+        assert!(debug.contains("api_key"));
+        assert!(!debug.contains("raw-secret-value"));
+        let error = unsafe_profile
+            .validate()
+            .expect_err("credential-bearing option");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+
+        let mut safe = profile(ProviderKind::OpenAi);
+        safe.options.insert("max_tokens".into(), json!(128));
+        safe.validate().expect("non-secret provider option");
+
+        let mut nested = profile(ProviderKind::OpenAi);
+        nested.options.insert(
+            "request".into(),
+            json!({"headers": [{"authorization": "raw-secret-value"}]}),
+        );
+        let error = nested
+            .validate()
+            .expect_err("nested credential-bearing option");
+        assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+        assert!(error.message.contains("request.headers[0].authorization"));
+    }
+
+    #[test]
     fn openai_adapter_disables_tools_storage_and_truncation() {
         let transport = Arc::new(FixtureTransport {
             responses: Mutex::new(vec![HttpResponse {
@@ -2129,5 +2235,25 @@ mod tests {
             assert_eq!(error.retryable, retryable);
             assert_eq!(error.message, "bounded message");
         }
+    }
+
+    #[test]
+    fn provider_errors_redact_reflected_request_credentials() {
+        let request = HttpRequest {
+            url: "https://provider.invalid/v1/responses".into(),
+            headers: vec![("authorization".into(), "Bearer raw-secret-value".into())],
+            body: Vec::new(),
+            timeout_ms: 1_000,
+            max_response_bytes: 1_024,
+        };
+        let error = redact_request_secrets(
+            ProviderError::new(
+                ProviderErrorKind::Authentication,
+                "provider rejected raw-secret-value",
+            ),
+            &request,
+        );
+        assert_eq!(error.message, "provider rejected [redacted]");
+        assert!(!error.message.contains("raw-secret-value"));
     }
 }

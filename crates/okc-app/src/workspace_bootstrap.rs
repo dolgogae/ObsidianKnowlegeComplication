@@ -171,63 +171,16 @@ impl WorkspaceBootstrap {
         &self,
         bindings: &[SourceBinding],
     ) -> Result<Vec<SourceBinding>> {
-        if bindings.is_empty() || bindings.len() > 10 {
-            return Err(AppError::InvalidProject(
-                "select between one and ten Vault sources".into(),
-            ));
-        }
-        let mut normalized = Vec::with_capacity(bindings.len());
-        let mut ids = BTreeSet::new();
-        for binding in bindings {
-            if !ids.insert(binding.source_id.clone()) {
-                return Err(AppError::InvalidProject(format!(
-                    "duplicate source ID `{}`",
-                    binding.source_id
-                )));
-            }
-            let path = absolute_existing(&self.cwd, &binding.path)?;
-            let metadata = fs::symlink_metadata(&path)?;
-            if metadata.file_type().is_symlink() || is_managed_directory(&path) {
-                return Err(AppError::InvalidProject(format!(
-                    "unsafe source `{}`",
-                    path.display()
-                )));
-            }
-            let supported = (metadata.is_dir() && is_vault_directory(&path)?)
-                || (metadata.is_file() && (is_zip(&path) || is_tar_zst(&path)));
-            if !supported {
-                return Err(AppError::InvalidProject(format!(
-                    "unsupported or empty Vault source `{}`",
-                    path.display()
-                )));
-            }
-            normalized.push(SourceBinding {
-                source_id: binding.source_id.clone(),
-                owner_display_name: binding.owner_display_name.clone(),
-                path,
-                snapshot_id: binding.snapshot_id.clone(),
-            });
-        }
-        normalized.sort_by(|left, right| {
-            left.source_id
-                .cmp(&right.source_id)
-                .then_with(|| left.path.cmp(&right.path))
-        });
-        for (index, left) in normalized.iter().enumerate() {
-            if !left.path.is_dir() {
-                continue;
-            }
-            for right in normalized.iter().skip(index + 1) {
-                if right.path.starts_with(&left.path)
-                    || (right.path.is_dir() && left.path.starts_with(&right.path))
-                {
-                    return Err(AppError::InvalidProject(
-                        "a source selection cannot contain both an ancestor and descendant".into(),
-                    ));
-                }
-            }
-        }
-        Ok(normalized)
+        validate_source_bindings(Some(&self.cwd), bindings)
+    }
+
+    /// Validate already-explicit source paths without consulting the process
+    /// current directory. Language bindings use this boundary so their
+    /// behavior cannot vary with the host's cwd.
+    pub fn validate_explicit_source_selection(
+        bindings: &[SourceBinding],
+    ) -> Result<Vec<SourceBinding>> {
+        validate_source_bindings(None, bindings)
     }
 
     pub fn suggested_project_path(&self, bindings: &[SourceBinding]) -> Result<PathBuf> {
@@ -294,6 +247,78 @@ impl WorkspaceBootstrap {
             short_path_hash(source)
         ))
     }
+}
+
+fn validate_source_bindings(
+    cwd: Option<&Path>,
+    bindings: &[SourceBinding],
+) -> Result<Vec<SourceBinding>> {
+    if bindings.is_empty() || bindings.len() > 10 {
+        return Err(AppError::InvalidProject(
+            "select between one and ten Vault sources".into(),
+        ));
+    }
+    let mut normalized = Vec::with_capacity(bindings.len());
+    let mut ids = BTreeSet::new();
+    for binding in bindings {
+        if !ids.insert(binding.source_id.clone()) {
+            return Err(AppError::InvalidProject(format!(
+                "duplicate source ID `{}`",
+                binding.source_id
+            )));
+        }
+        let path = if let Some(cwd) = cwd {
+            absolute_existing(cwd, &binding.path)?
+        } else {
+            if !binding.path.is_absolute() {
+                return Err(AppError::InvalidProject(
+                    "explicit source path must be absolute".into(),
+                ));
+            }
+            canonical_non_symlink(&binding.path, false)?
+        };
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() || is_managed_directory(&path) {
+            return Err(AppError::InvalidProject(format!(
+                "unsafe source `{}`",
+                path.display()
+            )));
+        }
+        let supported = (metadata.is_dir() && is_vault_directory(&path)?)
+            || (metadata.is_file() && (is_zip(&path) || is_tar_zst(&path)));
+        if !supported {
+            return Err(AppError::InvalidProject(format!(
+                "unsupported or empty Vault source `{}`",
+                path.display()
+            )));
+        }
+        normalized.push(SourceBinding {
+            source_id: binding.source_id.clone(),
+            owner_display_name: binding.owner_display_name.clone(),
+            path,
+            snapshot_id: binding.snapshot_id.clone(),
+        });
+    }
+    normalized.sort_by(|left, right| {
+        left.source_id
+            .cmp(&right.source_id)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    for (index, left) in normalized.iter().enumerate() {
+        if !left.path.is_dir() {
+            continue;
+        }
+        for right in normalized.iter().skip(index + 1) {
+            if right.path.starts_with(&left.path)
+                || (right.path.is_dir() && left.path.starts_with(&right.path))
+            {
+                return Err(AppError::InvalidProject(
+                    "a source selection cannot contain both an ancestor and descendant".into(),
+                ));
+            }
+        }
+    }
+    Ok(normalized)
 }
 
 fn assign_source_ids(candidates: Vec<(PathBuf, VaultCandidateKind)>) -> Vec<VaultCandidate> {

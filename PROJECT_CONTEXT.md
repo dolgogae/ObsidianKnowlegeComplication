@@ -3,7 +3,7 @@ title: Obsidian Knowledge Compilation Project Context
 status: normative-v1
 owners:
   - architect
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -25,6 +25,7 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -36,11 +37,19 @@ The project compiles multiple Obsidian Vault snapshots into a new, deterministic
 
 ## Product boundary
 
-The first deliverable is an open-source Rust framework with one `okc` CLI/TUI executable. OKC compiles standard Vault files and never connects to, identifies, or federates the MCP server that produced them. MCP servers, Obsidian plugins, web services, and a marketplace are adapters or later products around the compiler. The canonical model and compilation policy belong in the framework, not in any LLM, MCP server, UI, or search index.
+The first deliverable is an open-source Rust framework with an `okc` CLI/TUI
+executable and API-v1 Python and Node.js libraries over the same application
+services. OKC compiles standard Vault files and never connects to, identifies,
+or federates the MCP server that produced them. MCP servers, Obsidian plugins,
+web services, and a marketplace are adapters or later products around the
+compiler. The canonical model and compilation policy belong in the framework,
+not in any LLM, MCP server, UI, or search index.
 
 The framework is intended for:
 
 - local developers integrating Vaults through the Rust SDK;
+- CPython 3.11+ and Node.js 22.13+ applications using explicit project,
+  source, output, and artifact paths;
 - scripts and build systems using the CLI and JSON/NDJSON protocols;
 - any LLM provider implementing capability-based interfaces;
 - future Codex, Claude Code, Cursor, VS Code, and Obsidian integrations;

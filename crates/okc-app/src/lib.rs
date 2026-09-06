@@ -10,6 +10,7 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+pub mod artifact_service;
 mod integration_execution;
 pub mod integration_service;
 pub mod provider_service;
@@ -17,6 +18,9 @@ pub mod v3;
 pub mod worker;
 pub mod workspace_bootstrap;
 
+pub use artifact_service::{
+    ArtifactExplanation, ArtifactFamily, ArtifactService, ArtifactVerification,
+};
 pub use integration_execution::IntegrationExecution;
 pub use integration_service::{IntegrationCheckpoint, IntegrationService};
 pub use provider_service::{CredentialStore, ProviderService};
@@ -45,10 +49,13 @@ pub enum AppError {
     Locked(PathBuf),
     #[error("update unavailable: {0}")]
     Update(String),
+    #[error("artifact error: {0}")]
+    Artifact(String),
 }
 
 pub type Result<T> = std::result::Result<T, AppError>;
 
+#[cfg(feature = "updater")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateTarget {
     Stable,
@@ -56,6 +63,7 @@ pub enum UpdateTarget {
     Exact(String),
 }
 
+#[cfg(feature = "updater")]
 impl UpdateTarget {
     pub fn parse(value: &str) -> Result<Self> {
         match value {
@@ -84,11 +92,13 @@ impl UpdateTarget {
     }
 }
 
+#[cfg(feature = "updater")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateStatus {
     pub update_needed: bool,
 }
 
+#[cfg(feature = "updater")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledUpdate {
     pub old_version: Option<String>,
@@ -97,6 +107,7 @@ pub struct InstalledUpdate {
     pub install_prefix: String,
 }
 
+#[cfg(feature = "updater")]
 fn configured_updater(target: &UpdateTarget) -> Result<axoupdater::AxoUpdater> {
     let mut updater = axoupdater::AxoUpdater::new_for("okc");
     updater.load_receipt().map_err(|error| {
@@ -117,6 +128,7 @@ fn configured_updater(target: &UpdateTarget) -> Result<axoupdater::AxoUpdater> {
 }
 
 /// Check the receipt-bound channel without installing anything.
+#[cfg(feature = "updater")]
 pub fn check_for_update(target: &UpdateTarget) -> Result<UpdateStatus> {
     let mut updater = configured_updater(target)?;
     let update_needed = updater
@@ -127,6 +139,7 @@ pub fn check_for_update(target: &UpdateTarget) -> Result<UpdateStatus> {
 
 /// Install only into the prefix named by the matching cargo-dist receipt.
 /// The caller owns the interactive confirmation boundary.
+#[cfg(feature = "updater")]
 pub fn install_update(target: &UpdateTarget) -> Result<Option<InstalledUpdate>> {
     let mut updater = configured_updater(target)?;
     let result = updater
@@ -226,16 +239,8 @@ impl ProjectStore {
     ) -> Result<Self> {
         let root = root.as_ref();
         validate_project_path(root)?;
-        if let Some(parent) = root.parent().filter(|value| !value.as_os_str().is_empty()) {
-            fs::create_dir_all(parent)?;
-        }
-        fs::create_dir(root)?;
-        let root = fs::canonicalize(root)?;
-        set_private_directory(&root)?;
-        fs::create_dir(root.join("objects"))?;
-        fs::create_dir(root.join("workspace"))?;
-        set_private_directory(&root.join("objects"))?;
-        set_private_directory(&root.join("workspace"))?;
+        // Validate all caller-controlled manifest fields before creating any
+        // directories so rejected SDK/CLI input cannot leave a partial project.
         let manifest = ProjectManifest {
             format_family: "okc".into(),
             schema_version: PROJECT_SCHEMA_VERSION,
@@ -248,6 +253,16 @@ impl ProjectStore {
             sources: Vec::new(),
         };
         manifest.validate()?;
+        if let Some(parent) = root.parent().filter(|value| !value.as_os_str().is_empty()) {
+            fs::create_dir_all(parent)?;
+        }
+        fs::create_dir(root)?;
+        let root = fs::canonicalize(root)?;
+        set_private_directory(&root)?;
+        fs::create_dir(root.join("objects"))?;
+        fs::create_dir(root.join("workspace"))?;
+        set_private_directory(&root.join("objects"))?;
+        set_private_directory(&root.join("workspace"))?;
         write_new_json(&root.join("manifest.json"), &manifest)?;
         initialize_state(&root.join("state.sqlite3"))?;
         create_private_empty_file(&root.join("workspace/build.sqlite3"))?;
@@ -309,6 +324,15 @@ impl ProjectStore {
     }
 
     pub fn add_source(&mut self, binding: SourceBinding) -> Result<()> {
+        self.add_source_with_mode(binding, false)
+    }
+
+    /// Add an explicit absolute source without consulting the process cwd.
+    pub fn add_source_explicit(&mut self, binding: SourceBinding) -> Result<()> {
+        self.add_source_with_mode(binding, true)
+    }
+
+    fn add_source_with_mode(&mut self, binding: SourceBinding, explicit: bool) -> Result<()> {
         if self.manifest.sources.len() >= 10 {
             return Err(AppError::InvalidProject(
                 "a project supports at most 10 sources".into(),
@@ -327,7 +351,11 @@ impl ProjectStore {
         }
         let mut sources = self.manifest.sources.clone();
         sources.push(binding);
-        self.replace_sources(sources)
+        if explicit {
+            self.replace_sources_explicit(sources)
+        } else {
+            self.replace_sources(sources)
+        }
     }
 
     pub fn rebind_source(
@@ -336,7 +364,26 @@ impl ProjectStore {
         path: impl Into<PathBuf>,
         observed_snapshot_id: Option<String>,
     ) -> Result<()> {
-        let path = path.into();
+        self.rebind_source_with_mode(source_id, path.into(), observed_snapshot_id, false)
+    }
+
+    /// Rebind an explicit absolute source without consulting the process cwd.
+    pub fn rebind_source_explicit(
+        &mut self,
+        source_id: &SourceId,
+        path: impl Into<PathBuf>,
+        observed_snapshot_id: Option<String>,
+    ) -> Result<()> {
+        self.rebind_source_with_mode(source_id, path.into(), observed_snapshot_id, true)
+    }
+
+    fn rebind_source_with_mode(
+        &mut self,
+        source_id: &SourceId,
+        path: PathBuf,
+        observed_snapshot_id: Option<String>,
+        explicit: bool,
+    ) -> Result<()> {
         let mut sources = self.manifest.sources.clone();
         let source = sources
             .iter_mut()
@@ -347,7 +394,11 @@ impl ProjectStore {
         }
         source.path = path;
         source.snapshot_id = observed_snapshot_id;
-        self.replace_sources(sources)
+        if explicit {
+            self.replace_sources_explicit(sources)
+        } else {
+            self.replace_sources(sources)
+        }
     }
 
     /// Atomically replace the complete active source set while retaining all
@@ -361,6 +412,22 @@ impl ProjectStore {
         let cwd = std::env::current_dir()?;
         let bootstrap = workspace_bootstrap::WorkspaceBootstrap::new(cwd)?;
         let sources = bootstrap.validate_source_selection(&sources)?;
+        self.replace_sources_locked(sources)
+    }
+
+    /// Atomically replace explicit absolute sources without cwd discovery.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the public mutation boundary intentionally takes ownership of the replacement set"
+    )]
+    pub fn replace_sources_explicit(&mut self, sources: Vec<SourceBinding>) -> Result<()> {
+        let _lock = self.acquire_writer_lock()?;
+        let sources =
+            workspace_bootstrap::WorkspaceBootstrap::validate_explicit_source_selection(&sources)?;
+        self.replace_sources_locked(sources)
+    }
+
+    fn replace_sources_locked(&mut self, sources: Vec<SourceBinding>) -> Result<()> {
         if sources
             .iter()
             .any(|source| workspace_bootstrap::paths_overlap(&self.root, &source.path))
@@ -802,6 +869,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "updater")]
     #[test]
     fn update_targets_are_explicit_and_semver_canonical() {
         assert_eq!(

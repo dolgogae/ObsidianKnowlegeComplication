@@ -1,0 +1,244 @@
+name: SDK bindings
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  RUSTUP_AUTO_INSTALL: "1"
+
+jobs:
+  native-packages:
+    name: Native packages / ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64 GNU
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            node_binary: okc-compiler.linux-x64-gnu.node
+            platform_package: linux-x64-gnu
+          - name: Windows x86_64 MSVC
+            os: windows-2025
+            target: x86_64-pc-windows-msvc
+            node_binary: okc-compiler.win32-x64-msvc.node
+            platform_package: win32-x64-msvc
+          - name: macOS x86_64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            node_binary: okc-compiler.darwin-x64.node
+            platform_package: darwin-x64
+          - name: macOS arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+            node_binary: okc-compiler.darwin-arm64.node
+            platform_package: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up CPython 3.11
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js 22.13
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.13.0"
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+
+      - name: Verify pinned host toolchain
+        shell: bash
+        run: |
+          rustc -vV
+          cargo -V
+          actual_host="$(rustc -vV | sed -n 's/^host: //p')"
+          if [ "$actual_host" != "${{ matrix.target }}" ]; then
+            echo "expected host ${{ matrix.target }}, got $actual_host" >&2
+            exit 1
+          fi
+
+      - name: Install pinned Python build and test tools
+        run: python -m pip install --disable-pip-version-check maturin==1.15.0 pytest==8.4.2
+
+      - name: Build abi3 wheel
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/sdk-dist"
+          python -m maturin build \
+            --manifest-path bindings/python/Cargo.toml \
+            --release --locked --out "$RUNNER_TEMP/sdk-dist"
+
+      - name: Install and test wheel in an isolated target
+        shell: bash
+        run: |
+          python -m pip install --no-index --target "$RUNNER_TEMP/python-smoke" \
+            "$RUNNER_TEMP"/sdk-dist/okc_compiler-*.whl
+          PYTHONPATH="$RUNNER_TEMP/python-smoke" python -m pytest \
+            --import-mode=importlib bindings/python/tests -q
+          PYTHONPATH="$RUNNER_TEMP/python-smoke" python -c \
+            "import okc; assert okc.INTEROP_SCHEMA_VERSION == 1"
+
+      - name: Build and test Node addon
+        shell: bash
+        run: |
+          npm ci --ignore-scripts --prefix bindings/node
+          npm run build --prefix bindings/node
+          npm test --prefix bindings/node
+          npm run typecheck --prefix bindings/node
+
+      - name: Pack root and platform npm packages
+        shell: bash
+        run: |
+          cp "bindings/node/${{ matrix.node_binary }}" \
+            "bindings/node/npm/${{ matrix.platform_package }}/${{ matrix.node_binary }}"
+          npm pack ./bindings/node --pack-destination "$RUNNER_TEMP/sdk-dist"
+          npm pack "./bindings/node/npm/${{ matrix.platform_package }}" \
+            --pack-destination "$RUNNER_TEMP/sdk-dist"
+
+      - name: Install npm tarballs in a clean project
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/node-smoke"
+          cd "$RUNNER_TEMP/node-smoke"
+          npm init --yes
+          npm install --ignore-scripts --package-lock=false --offline \
+            "$RUNNER_TEMP/sdk-dist/okc-compiler-0.3.0.tgz" \
+            "$RUNNER_TEMP/sdk-dist/okc-compiler-${{ matrix.platform_package }}-0.3.0.tgz"
+          node -e \
+            "const okc=require('okc-compiler'); if(new okc.OkcClient().apiInfo().apiVersion!=='1') process.exit(1)"
+          node --input-type=module -e \
+            "import {OkcClient} from 'okc-compiler'; if(new OkcClient().apiInfo().apiVersion!=='1') process.exit(1)"
+
+      - name: Generate Node SBOM and package checksums
+        shell: bash
+        run: |
+          npm sbom --prefix bindings/node --omit=dev --sbom-format cyclonedx \
+            > "$RUNNER_TEMP/sdk-dist/okc-node.cyclonedx.json"
+          python bindings/build_artifact_manifest.py "$RUNNER_TEMP/sdk-dist"
+
+      - name: Upload packages
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sdk-${{ matrix.platform_package }}
+          path: ${{ runner.temp }}/sdk-dist/*
+          if-no-files-found: error
+
+  python-versions:
+    name: Python / ${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Build and test the extension
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/python-sdk"
+          source "$RUNNER_TEMP/python-sdk/bin/activate"
+          python -m pip install --disable-pip-version-check \
+            maturin==1.15.0 mypy==1.18.2 pytest==8.4.2
+          python -m maturin develop --manifest-path bindings/python/Cargo.toml \
+            --release --locked
+          python -m pytest bindings/python/tests -q
+          python -m mypy --strict bindings/python/tests/typing_contract.py
+
+  node-versions:
+    name: Node.js / ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.13.0", "24"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+
+      - name: Build and test CommonJS, ESM, and declarations
+        shell: bash
+        run: |
+          npm ci --ignore-scripts --prefix bindings/node
+          npm run build --prefix bindings/node
+          npm test --prefix bindings/node
+          npm run typecheck --prefix bindings/node
+
+  source-package:
+    name: Python sdist
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up CPython 3.11
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Build and install the source distribution
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check maturin==1.15.0
+          mkdir -p "$RUNNER_TEMP/sdk-dist"
+          python -m maturin sdist \
+            --manifest-path bindings/python/Cargo.toml \
+            --out "$RUNNER_TEMP/sdk-dist"
+          python -m venv "$RUNNER_TEMP/sdist-smoke"
+          "$RUNNER_TEMP/sdist-smoke/bin/python" -m pip install \
+            --disable-pip-version-check maturin==1.15.0
+          "$RUNNER_TEMP/sdist-smoke/bin/python" -m pip install \
+            --no-build-isolation "$RUNNER_TEMP"/sdk-dist/okc_compiler-*.tar.gz
+          "$RUNNER_TEMP/sdist-smoke/bin/python" -c \
+            "import okc; assert okc.INTEROP_SCHEMA_VERSION == 1"
+          python bindings/build_artifact_manifest.py "$RUNNER_TEMP/sdk-dist"
+
+      - name: Upload source package
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sdk-python-sdist
+          path: ${{ runner.temp }}/sdk-dist/*
+          if-no-files-found: error

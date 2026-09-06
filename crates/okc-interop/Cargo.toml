@@ -1,0 +1,23 @@
+[package]
+name = "okc-interop"
+description = "Runtime-neutral application facade for OKC language bindings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+okc-ai = { path = "../okc-ai" }
+okc-app = { path = "../okc-app", default-features = false }
+okc-core = { path = "../okc-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

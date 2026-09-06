@@ -586,18 +586,11 @@ fn run(cli: Cli) -> CliResult<()> {
 }
 
 fn verify_command(artifact: &Path, format: OutputFormat) -> CliResult<()> {
-    if v3_cli::is_v3_artifact(artifact) {
-        return v3_cli::verify_command(artifact, format);
-    }
-    if is_legacy_artifact(artifact) {
-        let compiler = okc_legacy_v1::VaultCompiler::builder()
-            .build()
-            .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
-        let mut report = compiler
-            .verify(artifact)
-            .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
-        report.artifact_path = artifact.to_path_buf();
-        return match format {
+    let verification = okc_app::ArtifactService
+        .verify(artifact)
+        .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
+    match verification {
+        okc_app::ArtifactVerification::V1(report) => match format {
             OutputFormat::Json => print_json(&report),
             OutputFormat::Human => {
                 println!("valid legacy V1 artifact: {}", report.valid);
@@ -606,17 +599,18 @@ fn verify_command(artifact: &Path, format: OutputFormat) -> CliResult<()> {
                 println!("checked files: {}", report.checked_files);
                 Ok(())
             }
-        };
+        },
+        okc_app::ArtifactVerification::V2(report) => print_verification(&report, format),
+        okc_app::ArtifactVerification::V3(manifest) => match format {
+            OutputFormat::Json => print_json(&manifest),
+            OutputFormat::Human => {
+                println!("valid V3 artifact: true");
+                println!("integration plan: {}", manifest.integration_plan_id);
+                println!("checked files: {}", manifest.files.len() + 2);
+                Ok(())
+            }
+        },
     }
-    let reader = okc_legacy_v2::LegacyV2Reader::new()
-        .map_err(|error| CliFailure::from_okc(EXIT_VERIFY, error))?;
-    let mut report = reader
-        .verify(artifact)
-        .map_err(|error| CliFailure::from_okc(EXIT_VERIFY, error))?;
-    // Pack verification happens in a private extraction directory. Do not
-    // leak that ephemeral implementation path through the public CLI.
-    report.artifact_path = artifact.to_path_buf();
-    print_verification(&report, format)
 }
 
 fn explain_command(
@@ -627,70 +621,30 @@ fn explain_command(
     cursor: Option<&str>,
     format: OutputFormat,
 ) -> CliResult<()> {
-    if v3_cli::is_v3_artifact(artifact) {
-        return v3_cli::explain_command(artifact, output_path, package, format);
-    }
-    if is_legacy_artifact(artifact) {
-        let compiler = okc_legacy_v1::VaultCompiler::builder()
-            .build()
-            .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
-        let mut query = if package {
-            okc_legacy_v1::provenance::ProvenanceQuery::package()
-        } else {
-            okc_legacy_v1::provenance::ProvenanceQuery::artifact_path(
-                output_path
-                    .ok_or_else(|| CliFailure::new(EXIT_USAGE, "missing output path"))?
-                    .to_owned(),
-            )
-        };
-        query = query
-            .with_limit(limit)
-            .map_err(|error| CliFailure::from_error(EXIT_USAGE, error))?;
-        if let Some(cursor) = cursor {
-            query = query.with_cursor(cursor.to_owned());
-        }
-        let page = compiler
-            .explain_provenance_page(artifact, &query)
-            .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
-        return match format {
+    let explanation = okc_app::ArtifactService
+        .explain(artifact, output_path, package, limit, cursor)
+        .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
+    match explanation {
+        okc_app::ArtifactExplanation::V1(page) => match format {
             OutputFormat::Json => print_json(&page),
             OutputFormat::Human => {
                 println!("legacy V1 provenance records: {}", page.records.len());
                 println!("{}", human_safe_json(&page)?);
                 Ok(())
             }
-        };
+        },
+        okc_app::ArtifactExplanation::V2(page) => print_provenance(&page, format),
+        okc_app::ArtifactExplanation::V3(record) => match format {
+            OutputFormat::Json => print_json(&record),
+            OutputFormat::Human => {
+                println!("V3 provenance record: {}", record.record_id);
+                println!("kind: {}", record.kind);
+                println!("integration plan: {}", record.integration_plan_id);
+                println!("evidence references: {}", record.evidence.len());
+                Ok(())
+            }
+        },
     }
-    let reader = okc_legacy_v2::LegacyV2Reader::new()
-        .map_err(|error| CliFailure::from_okc(EXIT_VERIFY, error))?;
-    let mut query = if package {
-        okc_core::provenance::ProvenanceQuery::package()
-    } else {
-        let output_path = output_path.ok_or_else(|| {
-            CliFailure::new(
-                EXIT_USAGE,
-                "explain requires OUTPUT_PATH or the mutually exclusive --package flag",
-            )
-        })?;
-        okc_core::provenance::ProvenanceQuery::artifact_path(output_path.to_owned())
-    };
-    query = query
-        .with_limit(limit)
-        .map_err(|error| CliFailure::from_okc(EXIT_USAGE, error))?;
-    if let Some(cursor) = cursor {
-        query = query.with_cursor(cursor.to_owned());
-    }
-    let page = reader
-        .explain(artifact, &query)
-        .map_err(|error| CliFailure::from_okc(EXIT_VERIFY, error))?;
-    print_provenance(&page, format)
-}
-
-fn is_legacy_artifact(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("vaultpack"))
-        || path.join(".vaultc/manifest.json").is_file()
 }
 
 #[allow(clippy::too_many_arguments)]

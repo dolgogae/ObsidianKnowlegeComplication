@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - architect
   - core-rust-engineer
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -19,6 +19,7 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -28,19 +29,26 @@ source_refs:
 ## Dependency direction
 
 ```text
-Obsidian plugin       MCP server       Other applications
-       \                  |                  /
-        \          CLI / stable protocols  /
-         +---------------v----------------+
-         |       `okc` CLI and TUI      |
-         +---------------+----------------+
-                         |
-       +-----------------+------------------+
-       | inspect -> IR -> plan -> validate  |
-       | -> approve -> compile -> verify    |
-       +-----------------+------------------+
-                         |
-       filesystem / SQLite workspace / pack
+             `okc` CLI/TUI       Python          Node.js
+                    |               |                |
+                    |          thin PyO3        thin napi-rs
+                    |               +-------+--------+
+                    |                       |
+                    |                 `okc-interop`
+                    |                       |
+                    +-----------+-----------+
+                                |
+                            `okc-app`
+                                |
+       +------------------------+------------------------+
+       | inspect -> IR -> integrate -> approve -> compile |
+       |             -> verify -> explain                 |
+       +------------------------+------------------------+
+                                |
+          filesystem / SQLite project+workspace / pack
+
+Obsidian plugin and MCP server remain future thin adapters over public inward
+boundaries; they do not own canonical state or compiler policy.
 
 Provider process/HTTP -> `okc-ai` -> recorded untrusted proposals
 External MCP engines -> adapters -> derived candidates only
@@ -56,7 +64,10 @@ Dependencies point inward. The compiler core MUST NOT import Obsidian, MCP, host
 | `okc-protocol` | implemented public library | frozen schema-2 augmentation plus strict schema-3 command-provider envelopes |
 | `okc-ai` | implemented application-side library | semantic structured-generation/embedding traits, portable schema validation, injected zeroized credentials, bounded synchronous HTTP, and initial vendor adapters |
 | `okc-app` | implemented application library | schema-3 projects, cwd/Vault discovery, provider/keychain services, immutable objects, append-only run/task/exchange/cluster/approval/plan journal, shared integration orchestration, sensitive preflight/routing, updater and worker control types |
+| `okc-interop` | implemented runtime-neutral library facade | API-v1 DTOs/errors, explicit-path client/project operations, bounded jobs, cancellation/publication state, per-project mutation exclusion, and shared legacy artifact read dispatch |
 | `okc` | implemented sole binary | thin Clap CLI and Ratatui/Crossterm TUI adapters over `okc-app`, human/JSON output, and supervised subprocess provider execution |
+| `okc-python` | implemented native adapter | PyO3 `abi3-py311` bridge for the `okc-compiler` distribution and `okc` typed module |
+| `okc-node` | implemented native adapter | napi-rs Node-API 9 addon behind typed ESM/CommonJS `okc-compiler` entry points |
 | `vaultc` | deprecated facade, no binary | one-minor Rust compatibility aliases over `okc-core` |
 | internal V1/V2 readers | private compatibility packages | frozen schema-1 and read-only schema-2 verify/explain boundaries and literal goldens only |
 | `okc-mcp` | future adapter | MCP tools that call public library operations |
@@ -65,6 +76,13 @@ Dependencies point inward. The compiler core MUST NOT import Obsidian, MCP, host
 Circular dependencies are forbidden. `okc-core` may depend on protocol data
 types but MUST NOT launch provider processes or make HTTP requests. Process
 supervision and HTTP belong to `okc-ai`, `okc-app`, or the `okc` binary.
+
+`okc-app` exposes updater and native-keyring integrations only through optional
+features. The `okc` binary enables them. `okc-interop` and both language
+adapters disable them and MUST NOT gain cwd discovery, prompts, signal handlers,
+global tracing configuration, or language-runtime types below their adapter
+crates. The napi adapter's crate-level unsafe allowance exists only for export
+macro expansion; handwritten interop and adapter code contains no unsafe block.
 
 ## Module boundaries
 

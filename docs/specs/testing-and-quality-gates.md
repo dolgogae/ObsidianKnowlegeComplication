@@ -4,7 +4,7 @@ status: normative-v1
 owners:
   - qa-security-engineer
   - core-rust-engineer
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0004
   - ADR-0007
@@ -23,6 +23,7 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -121,6 +122,36 @@ the missing runner capability rather than silently count as coverage.
 A stable tag additionally requires two consecutive complete matrix successes
 on the exact same full commit SHA. A successful run plus a rerun of only failed
 jobs is not sufficient.
+
+## Python and Node.js package gates
+
+`REQ-SDK-002` adds gates without replacing QG-001 through QG-008. Python tests
+MUST cover CPython 3.11 and every currently supported stable minor. Node tests
+MUST cover exactly 22.13.0 plus the current supported Node major. Each of the
+four native hosts MUST build its own abi3 wheel and Node-API addon, install the
+result from package artifacts in a clean target/project, and exercise the
+public import plus CommonJS/ESM entry points.
+
+The combined runtime-neutral interop and public binding suites MUST cover
+versioned DTO/error mapping, absolute-path rejection, missing environment
+secrets, provider errors, explicit remote consent, source immutability,
+same-project `PROJECT_BUSY`, distinct-project parallelism, bounded events,
+cancellation/publication state, stale approvals, output overlap/no-clobber, and
+V1/V2/V3 verify/explain. Python and Node.js MUST each execute the complete
+currently implemented V3 approval workflow against a bounded local mock
+provider. Their shared fixture MUST produce the same literal artifact inventory
+SHA-256, thereby binding artifact bytes, IDs, provenance, and verification to
+the same golden. CLI parity remains required because all three surfaces call
+the same `IntegrationService` and artifact service; an adapter-specific
+compiler or verifier is forbidden.
+
+Release-candidate outputs are Python wheels and sdist, the root npm tarball,
+one npm addon tarball per supported platform, SHA-256 inventories, and
+CycloneDX SBOMs. CI MUST inspect the wheel for its embedded SBOM and create a
+runtime Node dependency SBOM. It MUST NOT contain PyPI/npm publication jobs or
+registry credentials. Presence of the workflow is only a local definition;
+the four-host jobs must complete remotely before any cross-platform or release
+gate is passed.
 
 ## Test layers
 

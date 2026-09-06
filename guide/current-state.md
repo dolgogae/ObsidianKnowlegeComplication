@@ -16,7 +16,14 @@ description: OKC 0.3.0 V3 개발 빌드에서 지금 사용할 수 있는 범위
 - V3 directory verify와 canonical/stub provenance explain
 - `cd 원하는-폴더 && okc` TUI에서 provider/Vault/preflight/taxonomy/cluster/
   compile/verify 실행, worker 취소와 재개
-- OS keychain 또는 환경변수 참조 기반 provider credential
+- CLI/TUI의 OS keychain 또는 환경변수 참조, language binding의
+  환경변수 참조 전용 provider credential
+- Python 3.11+ `okc` module과 Node.js 22.13+ `okc-compiler` package에서 같은
+  project/source/integration/approval/compile/verify/explain workflow
+- 최대 64개 event의 cancellable Job, same-project `PROJECT_BUSY`, stable
+  structured error, Python type stub과 TypeScript declaration
+- macOS arm64 `cp311-abi3` wheel과 `Cargo.lock` 포함 sdist, root/platform npm
+  tarball의 local clean install, SHA-256와 CycloneDX SBOM 검증
 - V3 Markdown block/frontmatter disposition, evidence, contradiction, critic,
   omission/waiver, approval, recording closure 검증
 
@@ -45,6 +52,7 @@ ADR-0022가 정한 안정 V3 공개 경계에서는 V1/V2가 `verify`와 `explai
 - complete fuzz/property 및 PTY end-to-end coverage
 - 네 개 지원 target의 두 차례 동일-commit remote CI 증거
 - macOS/Windows native signing과 notarization
+- Python/Node 네 target remote package matrix와 PyPI/npm publication
 - V1 project reconstruction
 - V3 deterministic block chunk/HNSW/candidate union과 100k semantic benchmark
 - manual section amendment, sensitive exception UI
@@ -53,6 +61,7 @@ ADR-0022가 정한 안정 V3 공개 경계에서는 V1/V2가 `verify`와 `explai
 - 개발 CLI의 V2 writer surface 제거와 공개 legacy read-only 경계 완성
 
 현재 Markdown-only V3 directory 흐름은 [TUI](./tui.md) 또는
-[CLI](./cli.md)에서 사용할 수 있습니다. 전체 규범 상태는 저장소의
+[CLI](./cli.md), [Python · Node.js](./python-node.md)에서 사용할 수 있습니다.
+전체 규범 상태는 저장소의
 [`docs/CURRENT_STATE.md`](https://github.com/dolgogae/okc/blob/main/docs/CURRENT_STATE.md)가
 권위 있는 기준입니다.

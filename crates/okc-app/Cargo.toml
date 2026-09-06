@@ -6,11 +6,18 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["native-keyring", "updater"]
+native-keyring = ["dep:keyring"]
+updater = ["dep:axoupdater"]
+
 [dependencies]
-axoupdater.workspace = true
-keyring = { version = "=4.2.0", default-features = false, features = ["v1"] }
+axoupdater = { workspace = true, optional = true }
+keyring = { version = "=4.2.0", default-features = false, features = ["v1"], optional = true }
 okc-core = { path = "../okc-core" }
 okc-ai = { path = "../okc-ai" }
+okc-legacy-v1 = { package = "okc-legacy-v1", path = "../okc-legacy-v1" }
+okc-legacy-v2 = { path = "../okc-legacy-v2" }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true

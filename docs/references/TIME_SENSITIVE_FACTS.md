@@ -4,9 +4,10 @@ status: historical
 owners:
   - release-maintainer
   - mcp-adapter-engineer
-last_updated: 2026-08-16
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0002
+  - ADR-0026
 source_refs:
   - HIST-SHARED-CHAT
 ---
@@ -24,6 +25,7 @@ These observations were researched primarily on 2026-08-14. They are not current
 | Other MCP candidate rankings and GitHub popularity | stars and activity are volatile and not quality proof | any published comparison |
 | Open-source infrastructure versions named in the platform plan (Ubuntu 24.04, PostgreSQL 17, Spring Boot 3.5.x, etc.) | releases/EOL/security support evolve | platform implementation or release |
 | README benchmark/performance claims | may be non-comparable or unverified | architecture or performance decision |
+| On 2026-09-06, the official PyPI and npm JSON endpoints for the unscoped name `okc-compiler` both returned HTTP 404 | either name can be registered at any time; absence is not a reservation | immediately before creating or publishing a release candidate |
 
 ## Required revalidation procedure
 

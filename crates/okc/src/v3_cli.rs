@@ -8,12 +8,11 @@ use okc_ai::{AiRole, ProviderKind, ProviderProfile};
 use okc_app::v3::{ClusterTaskOutput, TaskStage, TaskStatus, TaxonomyTaskOutput};
 use okc_app::{ProjectStore, SourceBinding};
 use okc_core::integration::{
-    ApprovedClusterRevision, ApprovedIntegrationPlan, CriticSeverity, explain_v3_directory,
-    verify_v3_directory,
+    ApprovedClusterRevision, ApprovedIntegrationPlan, CriticSeverity, verify_v3_directory,
 };
 use okc_core::{CancellationToken, SourceId};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::{
     CliFailure, CliResult, EXIT_DECISION, EXIT_INPUT, EXIT_OUTPUT, EXIT_PROVIDER, EXIT_USAGE,
@@ -747,56 +746,6 @@ pub fn compile_latest_command(
                 artifact.path.display()
             );
             println!("integration plan: {}", artifact.integration_plan_id);
-            Ok(())
-        }
-    }
-}
-
-pub fn is_v3_artifact(path: &Path) -> bool {
-    let manifest = path.join(".okc/manifest.json");
-    fs::read(manifest)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .is_some_and(|value| value.get("schema_version").and_then(Value::as_u64) == Some(3))
-}
-
-pub fn verify_command(artifact: &Path, format: OutputFormat) -> CliResult<()> {
-    let manifest = verify_v3_directory(artifact)
-        .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
-    match format {
-        OutputFormat::Json => print_json(&manifest),
-        OutputFormat::Human => {
-            println!("valid V3 artifact: true");
-            println!("integration plan: {}", manifest.integration_plan_id);
-            println!("checked files: {}", manifest.files.len() + 2);
-            Ok(())
-        }
-    }
-}
-
-pub fn explain_command(
-    artifact: &Path,
-    output_path: Option<&str>,
-    package: bool,
-    format: OutputFormat,
-) -> CliResult<()> {
-    if package {
-        return Err(CliFailure::new(
-            EXIT_USAGE,
-            "schema-3 directory explanation requires an output path; V3 Pack is not enabled",
-        ));
-    }
-    let output_path = output_path
-        .ok_or_else(|| CliFailure::new(EXIT_USAGE, "schema-3 explain requires an output path"))?;
-    let record = explain_v3_directory(artifact, output_path)
-        .map_err(|error| CliFailure::from_error(EXIT_VERIFY, error))?;
-    match format {
-        OutputFormat::Json => print_json(&record),
-        OutputFormat::Human => {
-            println!("V3 provenance record: {}", record.record_id);
-            println!("kind: {}", record.kind);
-            println!("integration plan: {}", record.integration_plan_id);
-            println!("evidence references: {}", record.evidence.len());
             Ok(())
         }
     }

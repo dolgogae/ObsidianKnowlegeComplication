@@ -3,7 +3,7 @@ title: Decision Log
 status: historical
 owners:
   - release-maintainer
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -25,6 +25,7 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-SHARED-CHAT
   - HIST-CURRENT-PLAN
@@ -556,3 +557,56 @@ Append-only. Normative details live in specifications and accepted ADRs.
   VitePress production build, and high-severity npm audit. All passed locally;
   the demo inventory also matches its documented 112 Markdown files and 434
   wikilinks. No stable-release or cross-platform-evidence claim was added.
+
+## 2026-09-06 — Python and Node.js library boundary
+
+- Accepted ADR-0026 and added REQ-SDK-002 for one runtime-neutral Rust facade,
+  thin PyO3/napi-rs adapters, bounded jobs, structured errors, explicit paths,
+  per-call remote consent, and environment-variable-only binding credentials.
+- Added the `okc-interop`, `okc-python`, and `okc-node` workspace packages.
+  Moved V1/V2/V3 artifact detection and read-only verify/explain dispatch into
+  a shared application service and feature-gated updater/native-keyring support
+  so bindings import no CLI/TUI runtime behavior.
+- Added typed `okc-compiler` Python and npm packages, Python 3.11 abi3 and
+  Node-API 9 native builds, four platform-addon package definitions, wheel/
+  sdist/npm clean-install checks, checksum/SBOM generation, and a pinned-action
+  CI matrix without publication credentials.
+- Added Python and Node.js complete V3 approval/compile/verify/explain tests.
+  Equivalent loopback providers produce the same literal artifact inventory
+  SHA-256 on local macOS arm64. The complete locked Rust workspace suite and
+  both installed-package smoke paths pass locally.
+- Kept all existing V3 blockers and protected remote-platform gates in force.
+  Neither language package nor V3 is declared stable or published by this
+  change.
+
+## 2026-09-06 — Language-package security and lifecycle hardening
+
+- Added frozen V1/V2 binding fixtures plus provider-failure, missing-secret,
+  per-call remote-consent, output/no-clobber, source-immutability, and shared V3
+  byte-golden coverage to both public language suites.
+- Made artifact-family detection reject symlinked or oversized metadata and
+  classify malformed manifests as verification failures. Canonicalized
+  in-process project reservations across filesystem aliases and removed the
+  last cwd lookup from explicit binding source mutations.
+- Recursively rejected credential-bearing provider options and redacted a
+  provider error that reflects an authorization value. Scheduler teardown now
+  detaches bounded workers instead of joining them on a Python/Node finalizer
+  thread, preventing runtime-lock deadlock while queued work drains normally.
+- Rebuilt and clean-installed the macOS arm64 abi3 wheel, lockfile-bearing
+  sdist, root npm tarball, and platform-addon tarball. Ten Python tests, ten
+  Node.js tests, strict mypy/TypeScript checks, the complete locked Rust suite,
+  warnings-as-errors Clippy, SBOM/checksum validation, and CJS/ESM package
+  imports pass locally. Remote four-platform evidence remains pending.
+
+## 2026-09-06 — Language-package documentation and release handoff
+
+- Added source-checkout build/test entry points and the explicit-path,
+  environment-secret, consent, approval, Job, and structured-error boundaries
+  to the root README and Korean user guide.
+- Extended the release procedure, roadmap, glossary, current state, and
+  time-sensitive facts register with the Python/Node artifact set, clean-install
+  and type gates, shared-fixture parity, registry revalidation, and future
+  language ordering.
+- Rechecked the official PyPI and npm JSON endpoints for `okc-compiler`; both
+  returned HTTP 404 on 2026-09-06. This is temporary availability evidence,
+  not a reservation or publication authorization.

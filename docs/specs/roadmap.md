@@ -4,7 +4,7 @@ status: normative-future
 owners:
   - architect
   - release-maintainer
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -12,6 +12,7 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -19,14 +20,16 @@ source_refs:
 
 # Roadmap
 
-## Progress marker: 2026-09-05
+## Progress marker: 2026-09-06
 
 - Phase 0 is complete.
 - Phases 1 and 2 have an implemented `0.2.0` vertical slice with local macOS
   arm64 test evidence, but their full cross-platform, parser, provenance,
   compatibility, safety, and performance exit criteria remain open.
-- Phase 3 has deterministic unsigned OKCPack creation/verification only. The
-  signing profile, MCP adapter, and Obsidian plugin have not started.
+- Phase 3 has deterministic unsigned V2 OKCPack creation/verification and a
+  locally implemented typed Python and Node.js API-v1 package slice. Its remote
+  native/version matrix is pending. The signing profile, MCP adapter, and
+  Obsidian plugin have not started.
 - Phases 4–6 remain documentation/research direction only.
 - V3 now has an accepted AI-required format/provider/integration contract and a
   development vertical slice: schema-3 projects and journals, HTTP providers,
@@ -35,6 +38,10 @@ source_refs:
   `ALG-SEM-001` HNSW/chunking parity, manual amendment, V3 Pack and
   non-Markdown carry-through, command adapter, PTY qualification, scale, and hosted
   cross-platform evidence are open.
+- The runtime-neutral `okc-interop` facade, CPython 3.11+ `abi3` package, and
+  Node.js 22.13+ Node-API package now cover the current V3 approval flow and
+  frozen V1/V2/V3 verify/explain. They remain development packages until the
+  four-host package matrix and every shared V3 gate pass.
 
 ## V3 stabilization milestone
 
@@ -63,7 +70,11 @@ Deliver `okc-protocol`, universal subprocess provider, proposal schema, evidence
 
 ## Phase 3 — adapters and packaging
 
-Deliver deterministic `.okcpack`, signing profile, generic Obsidian review/install plugin, and thin MCP server for coding agents. Maintain one compiler implementation.
+Deliver deterministic `.okcpack`, language packages, signing profile, generic
+Obsidian review/install plugin, and thin MCP server for coding agents. Maintain
+one compiler implementation. Python and Node.js are the first API-v1 language
+packages; after their usage experience stabilizes the contract, evaluate Go,
+then JVM and .NET bindings rather than cloning compiler policy.
 
 ## Phase 4 — semantic knowledge and evaluation
 

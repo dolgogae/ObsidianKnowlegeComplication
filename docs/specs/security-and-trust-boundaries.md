@@ -3,7 +3,7 @@ title: Security and Trust Boundaries
 status: normative-v1
 owners:
   - qa-security-engineer
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0003
   - ADR-0004
@@ -20,6 +20,7 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-ONPREM-STACK
@@ -71,6 +72,19 @@ Primary threats include path traversal, symlink escapes, archive bombs, parser d
   values or lengths, or include authorization header values in `Debug`, screen,
   recording, or provider errors. A locked or unavailable keychain MUST NOT
   trigger plaintext file fallback.
+- Python and Node.js provider profiles accept only `api_key_env`; native
+  keychain references remain a CLI/TUI feature. Rust MUST resolve the named
+  process variable independently for each provider job. The language adapters
+  MUST reject raw-key fields, credential-like option keys, and schema-3 command
+  providers, and MUST NOT copy a resolved secret into a runtime exception or
+  progress event.
+- Language-library callers MUST provide absolute project, source, artifact, and
+  output paths. The adapters MUST NOT infer authority from cwd, install signal
+  handlers or a global tracing subscriber, print source/provider data, invoke
+  an updater, or open a native keychain.
+- A remote provider cache miss from a language binding MUST require explicit
+  `allow_remote_provider` and `remote_disclosure_confirmed` values for that
+  single call. Project state MUST NOT persist either value as future consent.
 
 ### Materialization and distribution
 

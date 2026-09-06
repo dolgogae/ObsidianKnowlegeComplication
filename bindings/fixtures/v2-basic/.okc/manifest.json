@@ -1,0 +1,102 @@
+{
+  "approved_proposal_hashes": [],
+  "approved_proposal_ids": [],
+  "artifact_id": "c92920f70b127400bcfd4d615c95de5c08b9fbce14230d83d612f541b5d0326e",
+  "attribution_summary": {
+    "documents_with_author_declarations": 0,
+    "documents_with_license_declarations": 0
+  },
+  "compiler_version": "0.2.0",
+  "creation_policy": "deterministic-approved-materialization-v2",
+  "distribution": {
+    "pack_profile": "okc-tar-zstd-deterministic-v2",
+    "release_binary_signing": "native-release-artifacts-only",
+    "user_pack_publisher_signed": false
+  },
+  "files": [
+    {
+      "byte_len": 0,
+      "content_hash": "6837e17e55dcef55f8820e74eae75b469c4f132e34471494ee33a97803c40f7e",
+      "media_type": "application/x-ndjson",
+      "path": ".okc/ai-transcript.jsonl",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "byte_len": 41,
+      "content_hash": "7f47f7729d5d8b0f71325fcc30727994a0a446e2ab3712c92ac1599528c8392e",
+      "media_type": "application/json",
+      "path": ".okc/conflicts.json",
+      "raw_sha256": "950ad7e1eb5b9427a37d9fecbe71451b538443a49f6e6aac01f2b30eb31828db"
+    },
+    {
+      "byte_len": 537,
+      "content_hash": "ff79f1d46551ea2013ee35b735e9566f64bde7c082d737600dc65582719206e8",
+      "media_type": "application/json",
+      "path": ".okc/diagnostics.json",
+      "raw_sha256": "6aec4362cefbcd719c3a66bf7d198c5ed2b1a5678db04c0f5bc14e963c45f336"
+    },
+    {
+      "byte_len": 26427,
+      "content_hash": "ef04890216d62052f233c61d1aa6530708f2ddc1caaa3180b2f04e60c8e8bcae",
+      "media_type": "application/json",
+      "path": ".okc/plan.json",
+      "raw_sha256": "c743417c5c9d2dd7b3ed46e9f214ed4b829f0527067ad40993726c0c8bb91994"
+    },
+    {
+      "byte_len": 22970,
+      "content_hash": "b5d90f1481d639e0a5c15133612102e63669eaa5dadff4e1ce52a39adf4720eb",
+      "media_type": "application/x-ndjson",
+      "path": ".okc/provenance.jsonl",
+      "raw_sha256": "cb079ccf949952df4b2fc17d47190f287d848a6d8a30c461520c51d200136b12"
+    },
+    {
+      "byte_len": 21,
+      "content_hash": "9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186",
+      "media_type": "text/plain; charset=utf-8",
+      "path": "attachments/9b/9b99de183d675e2a96e746cb26d1ab9bd971813c258d35ed70ed3ebdc5fab186-logo.txt",
+      "raw_sha256": "ba401cb51c800c812e237ad442a87554769a24a3fb9d6894d15dcbcf823bc6d9"
+    },
+    {
+      "byte_len": 293,
+      "content_hash": "76610f56f78031b53064b4c5884bdd8ceba142efc61c57e5001c4b1306b43745",
+      "media_type": "application/vnd.obsidian.canvas+json",
+      "path": "canvases/Board.canvas",
+      "raw_sha256": "a403d36d2965c02ba0bef1ab9c310df9f88408bed23629a59835cb879c0fc693"
+    },
+    {
+      "byte_len": 238,
+      "content_hash": "b033c3e13a5ceed879a7f0f872aa7c60a22f84ad4e0fe3d0282e522dc2b419fe",
+      "media_type": "text/markdown; charset=utf-8",
+      "path": "knowledge/Index.md",
+      "raw_sha256": "33b3c1bf7d49bb3a360337a87a24e2ca1e1b49ad228dcc3fc38e891ab4fe7580"
+    },
+    {
+      "byte_len": 47,
+      "content_hash": "359dcddc73adf17760f2fd6b4e7a04ec6d67d696bf89ece989628b1615bf0e9c",
+      "media_type": "text/markdown; charset=utf-8",
+      "path": "knowledge/Topic.md",
+      "raw_sha256": "d336ad59580d1003f9d0a417a8973ed60312f73bab57bc78b096457e3d39e1b6"
+    },
+    {
+      "byte_len": 39,
+      "content_hash": "c9e6b2ed2ba68c252457a060128b897f8ead9f439e7f779f1bed012700fc8e5f",
+      "media_type": "application/vnd.obsidian.base",
+      "path": "views/View.base",
+      "raw_sha256": "1caba0e805f774614725923d5180e676ef55ddf5f63c80f57a1cc5e61cf3ba30"
+    }
+  ],
+  "format_family": "okc",
+  "materialization_id": "materialization_98ab70ae55318f1cbfed31eb899ac5360285e07d26d2330eace496cfe8e17a18",
+  "plan_id": "plan_a09fe77fda1bf93da50f8f26065f9e86744549672081fcd9bcffafb5d545b66c",
+  "policy_hash": "c98b71b0d27deabb3c5a6290dc86e68e5e5ff01667669f64c78de6d0e38df7b5",
+  "projection_hash": "9b6ed4f6d7316757d3dc1b03f00960d6f8e4dde3daa427895c7cbd18829dc0fd",
+  "provenance_graph_hash": "4cbd2e1b7f74dd6d148c6e616c9c7bc9adfc23110ecab7da85bd51c2b5dca016",
+  "provenance_schema_version": 2,
+  "schema_version": 2,
+  "source_snapshot_ids": [
+    "snap_980a4d81ebb4ae4be8470e791ebaebb5c1669336a814cc3fbeb966842b196d71"
+  ],
+  "toolchain": {
+    "rust_version": "1.97.1"
+  }
+}

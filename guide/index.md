@@ -256,6 +256,10 @@ OKC는 기존 출력 경로를 덮어쓰지 않습니다. 같은 명령을 다�
     <strong>TUI 둘러보기 →</strong>
     <p>현재 폴더에서 AI 연결부터 Vault 선택, 검토, compile·verify까지 진행합니다.</p>
   </a>
+  <a class="guide-card" href="./python-node">
+    <strong>Python · Node.js에서 자동화하기 →</strong>
+    <p>CLI 없이 V3 project, approval, Job과 structured error API를 사용합니다.</p>
+  </a>
   <a class="guide-card" href="./ai-provider">
     <strong>AI Provider 연결하기 →</strong>
     <p>명시적 문서 공개, 기록, replay, 개별 승인의 경계를 확인합니다.</p>

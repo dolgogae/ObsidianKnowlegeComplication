@@ -1,0 +1,25 @@
+[package]
+name = "okc-python"
+description = "Python native adapter for the Obsidian Knowledge Compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+okc-interop = { path = "../../crates/okc-interop" }
+pyo3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+pyo3-build-config.workspace = true
+
+[lints]
+workspace = true

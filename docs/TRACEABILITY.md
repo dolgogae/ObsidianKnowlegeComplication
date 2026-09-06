@@ -3,7 +3,7 @@ title: Requirements Traceability Matrix
 status: normative-v1
 owners:
   - qa-security-engineer
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0015
   - ADR-0016
@@ -16,6 +16,7 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -56,6 +57,7 @@ not cross-platform release evidence.
 | REQ-CMP-003 V3/V2/V1 boundary | schema-3 writers, `okc-legacy-v2`, `okc-legacy-v1`, auto-detected verify/explain, `project upgrade --out` | frozen legacy goldens, legacy-reader unit, V3 verify/explain test, V2 source-binding upgrade test | partial: read-only V1/V2 artifact dispatch and non-mutating upgrade work, but development CLI V2 writer commands remain exposed for the regression harness |
 | REQ-SEC-001 hostile inputs | strict snapshot/parser/control/provider/publication checks | security, normalization/archive, Canvas and publication suites | substantial local coverage; descriptor-relative opening, fuzz, Windows reparse pending |
 | REQ-SDK-001 phased SDK/CLI | `OkcCompiler` and sole `okc` binary with all declared subcommands; schema-3 flow in the [`V3 integration guide`](../guide/v3-integration.md), frozen V2 regression in the [`Quickstart`](../guide/index.md), and command details in the [`CLI guide`](../guide/cli.md) | CLI lifecycle/exits, SDK parity, guide production build, repository-relative link test | partial: current V3 directory/TUI and frozen V2 flows are documented and pass locally; V3 Pack, provider-backed PTY and stable release evidence are pending |
+| REQ-SDK-002 Python/Node.js libraries | `okc-interop::{OkcClient,Project,Job,OkcError}`, `okc_app::ArtifactService`, PyO3 `bindings/python`, napi-rs `bindings/node`, typed public adapters, Maturin/npm package metadata, and [`Python · Node.js guide`](../guide/python-node.md) | interop DTO/path/busy/parallel/cancel/event/secret/client-drop tests; Python and Node public API plus complete V3 approval/compile/verify/explain, provider failure, missing environment secret, and remote-consent tests; shared frozen V1/V2 fixtures in [`bindings/fixtures`](../bindings/fixtures); strict Python/TypeScript declaration checks; shared literal V3 artifact inventory SHA-256; wheel/sdist/npm build and clean-install smoke; [`sdk-bindings.yml`](../.github/workflows/sdk-bindings.yml) | implemented and locally verified on macOS arm64; CPython/Node version jobs and four-host native package workflow are defined but have not run remotely, so no release-candidate or stable claim |
 | REQ-APP-001 project/TUI | `okc-app::{ProjectStore,IntegrationService}`, `okc::tui` V3 reducer/effects and terminal guard; [`TUI guide`](../guide/tui.md) | project layout/source-set/worker and TUI reducer/render/secret tests | implemented locally for the Markdown directory flow; provider-backed PTY, V1 import and four-platform evidence pending |
 | REQ-APP-002 cwd workspace and worker | `okc_app::{WorkspaceBootstrap,IntegrationService,worker::Worker}` and ten-screen V3 TUI | explicit/0/1/multiple discovery, archive/symlink/nesting/limit/exclusion, source-set and bounded worker tests | implemented locally; crash injection and PTY/platform evidence remain |
 | REQ-SEC-003 opaque credentials | `okc_app::ProviderService`, keyring 4.2.0 v1 adapter, zeroized/redacted secret types, provider-client secret injection | mock store lifecycle/locked/unavailable and serialization/Debug/fixed-mask tests | implemented locally; supported-platform native keychain CI remains |
@@ -74,6 +76,11 @@ not cross-platform release evidence.
 - V3 AI/providers: [`crates/okc-ai/src/lib.rs`](../crates/okc-ai/src/lib.rs)
 - V3 journal/routing: [`crates/okc-app/src/v3.rs`](../crates/okc-app/src/v3.rs)
 - V3 integration/materialization: [`crates/okc-core/src/integration.rs`](../crates/okc-core/src/integration.rs)
+- language interop and scheduling: [`crates/okc-interop/src/lib.rs`](../crates/okc-interop/src/lib.rs)
+- Python public surface, E2E, and typing contract: [`bindings/python/okc/__init__.py`](../bindings/python/okc/__init__.py), [`bindings/python/tests/test_public_api.py`](../bindings/python/tests/test_public_api.py), and [`bindings/python/tests/typing_contract.py`](../bindings/python/tests/typing_contract.py)
+- Node.js public surface and E2E: [`bindings/node/index.cjs`](../bindings/node/index.cjs) and [`bindings/node/tests/public-api.cjs`](../bindings/node/tests/public-api.cjs)
+- shared frozen artifact fixtures: [`bindings/fixtures/`](../bindings/fixtures/)
+- SDK packaging matrix: [`.github/workflows/sdk-bindings.yml`](../.github/workflows/sdk-bindings.yml)
 
 Release-wide gate status is authoritative in
 [`CURRENT_STATE.md`](CURRENT_STATE.md) and

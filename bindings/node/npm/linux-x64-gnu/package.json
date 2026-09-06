@@ -1,0 +1,13 @@
+{
+  "name": "okc-compiler-linux-x64-gnu",
+  "version": "0.3.0",
+  "description": "Native addon for okc-compiler on Linux x64 glibc",
+  "license": "MIT OR Apache-2.0",
+  "repository": "https://github.com/dolgogae/okc",
+  "main": "okc-compiler.linux-x64-gnu.node",
+  "files": ["okc-compiler.linux-x64-gnu.node", "README.md"],
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "libc": ["glibc"],
+  "engines": { "node": ">=22.13" }
+}

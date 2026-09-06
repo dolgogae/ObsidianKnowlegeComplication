@@ -1,0 +1,66 @@
+{
+  "approved_proposal_hashes": [],
+  "artifact_id": "93ac6c1bce1ca58aeac19f18b5c5ef5b4f8ea325799529475d244279d22abe5b",
+  "compiler_version": "0.1.0",
+  "files": [
+    {
+      "byte_len": 0,
+      "path": ".vaultc/ai-transcript.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "byte_len": 41,
+      "path": ".vaultc/conflicts.json",
+      "sha256": "950ad7e1eb5b9427a37d9fecbe71451b538443a49f6e6aac01f2b30eb31828db"
+    },
+    {
+      "byte_len": 537,
+      "path": ".vaultc/diagnostics.json",
+      "sha256": "15f9c7c266ef2d407e2e8480b11bccd663f9abe0a99f984f8bb1ea67fddbd58b"
+    },
+    {
+      "byte_len": 19828,
+      "path": ".vaultc/plan.json",
+      "sha256": "a5672d2d5ccb9ac3cdf2f1c97c6a8a072b2f82f606104fc28d45bf51c92b8e5e"
+    },
+    {
+      "byte_len": 22982,
+      "path": ".vaultc/provenance.jsonl",
+      "sha256": "140d67a6cc39dc22c968cd1ee4dbcee1f85cb2553b57fdb91155d44b1c7f9e3a"
+    },
+    {
+      "byte_len": 21,
+      "path": "attachments/79/790b779b99ff5702329e44b32244ec41ffe4bbf3f33d26af476f847cb64e67fb-logo.txt",
+      "sha256": "ba401cb51c800c812e237ad442a87554769a24a3fb9d6894d15dcbcf823bc6d9"
+    },
+    {
+      "byte_len": 293,
+      "path": "canvases/Board.canvas",
+      "sha256": "a403d36d2965c02ba0bef1ab9c310df9f88408bed23629a59835cb879c0fc693"
+    },
+    {
+      "byte_len": 238,
+      "path": "knowledge/Index.md",
+      "sha256": "3cf0c1551805d1649771ddca18a1ebad3e522b845a162537221df9ef2542864b"
+    },
+    {
+      "byte_len": 47,
+      "path": "knowledge/Topic.md",
+      "sha256": "d336ad59580d1003f9d0a417a8973ed60312f73bab57bc78b096457e3d39e1b6"
+    },
+    {
+      "byte_len": 39,
+      "path": "views/View.base",
+      "sha256": "1caba0e805f774614725923d5180e676ef55ddf5f63c80f57a1cc5e61cf3ba30"
+    }
+  ],
+  "plan_id": "plan_68b9f5a5e56399240c2a2af85041b4e63355d517e040212e73a0fc4a318dd7ab",
+  "policy_hash": "42fd7b735b18a9dbe3b801c2ddbc7370afd94e6d51c4de8eedf9750d96aaf1d7",
+  "projection_hash": "44a9b71066612be44a42f733ba17358964ffae0a90bbb46d310a0a6a092287ab",
+  "provenance_graph_hash": "d0b40f25fd6283e3c2253aaff910cef510923de3a7791ebb7fa5ce6535ca1efe",
+  "provenance_schema_version": 1,
+  "schema_version": 1,
+  "source_snapshot_ids": [
+    "snap_d88a2539dfad847b0d3c7d1d7ec056073ebaaea9b276dde1672d91cd30ee7e09"
+  ]
+}

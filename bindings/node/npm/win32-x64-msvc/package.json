@@ -1,0 +1,12 @@
+{
+  "name": "okc-compiler-win32-x64-msvc",
+  "version": "0.3.0",
+  "description": "Native addon for okc-compiler on Windows x64 MSVC",
+  "license": "MIT OR Apache-2.0",
+  "repository": "https://github.com/dolgogae/okc",
+  "main": "okc-compiler.win32-x64-msvc.node",
+  "files": ["okc-compiler.win32-x64-msvc.node", "README.md"],
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "engines": { "node": ">=22.13" }
+}

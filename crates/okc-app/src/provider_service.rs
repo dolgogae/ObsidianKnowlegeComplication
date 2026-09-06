@@ -55,9 +55,11 @@ pub trait CredentialStore: Send + Sync {
     fn delete(&self, service: &str, account: &str) -> std::result::Result<(), CredentialError>;
 }
 
+#[cfg(feature = "native-keyring")]
 #[derive(Debug, Default)]
 pub struct NativeCredentialStore;
 
+#[cfg(feature = "native-keyring")]
 impl CredentialStore for NativeCredentialStore {
     fn status(&self) -> CredentialStoreStatus {
         match keyring::Entry::store_status() {
@@ -105,6 +107,7 @@ impl CredentialStore for NativeCredentialStore {
     }
 }
 
+#[cfg(feature = "native-keyring")]
 fn map_keyring_error(error: &keyring::Error) -> CredentialError {
     match error {
         keyring::Error::NoStorageAccess(_) => CredentialError::Locked,
@@ -172,6 +175,7 @@ pub struct CapabilityTest {
 pub struct ProviderService {
     config_path: PathBuf,
     credential_store: Arc<dyn CredentialStore>,
+    fixed_config: Option<Arc<ProviderConfig>>,
 }
 
 impl Debug for ProviderService {
@@ -179,12 +183,14 @@ impl Debug for ProviderService {
         formatter
             .debug_struct("ProviderService")
             .field("config_path", &self.config_path)
+            .field("fixed_config", &self.fixed_config.is_some())
             .field("credential_store", &"<credential-store>")
             .finish()
     }
 }
 
 impl ProviderService {
+    #[cfg(feature = "native-keyring")]
     pub fn from_environment() -> Result<Self> {
         Ok(Self::new(
             provider_config_path()?,
@@ -196,7 +202,31 @@ impl ProviderService {
         Self {
             config_path,
             credential_store,
+            fixed_config: None,
         }
+    }
+
+    /// Construct an immutable, environment-secret-only provider service for
+    /// embedders such as language bindings. It performs no config-file or
+    /// native-keyring discovery.
+    pub fn from_fixed_config(config: &ProviderConfig) -> Result<Self> {
+        // Round-trip validation covers the schema, names, endpoints, limits,
+        // and profile secret-reference policy without resolving any secret.
+        let config = ProviderConfig::from_toml(&config.to_toml()?)?;
+        if config
+            .profiles
+            .values()
+            .any(|profile| profile.os_keychain.is_some())
+        {
+            return Err(AppError::InvalidProject(
+                "embedded provider profiles cannot use os_keychain".into(),
+            ));
+        }
+        Ok(Self {
+            config_path: PathBuf::new(),
+            credential_store: Arc::new(UnavailableCredentialStore),
+            fixed_config: Some(Arc::new(config)),
+        })
     }
 
     pub fn config_path(&self) -> &Path {
@@ -208,6 +238,9 @@ impl ProviderService {
     }
 
     pub fn load_config(&self) -> Result<ProviderConfig> {
+        if let Some(config) = &self.fixed_config {
+            return Ok((**config).clone());
+        }
         if !self.config_path.exists() {
             return Ok(ProviderConfig {
                 schema_version: AI_SCHEMA_VERSION,
@@ -231,6 +264,11 @@ impl ProviderService {
         mut profile: ProviderProfile,
         secret: Option<SecretInput>,
     ) -> Result<()> {
+        if self.fixed_config.is_some() {
+            return Err(AppError::InvalidProject(
+                "embedded provider profiles are immutable".into(),
+            ));
+        }
         validate_profile_name(name)?;
         if profile.kind == ProviderKind::Command {
             return Err(AppError::InvalidProject(
@@ -275,6 +313,11 @@ impl ProviderService {
     }
 
     pub fn remove_profile(&self, name: &str) -> Result<()> {
+        if self.fixed_config.is_some() {
+            return Err(AppError::InvalidProject(
+                "embedded provider profiles are immutable".into(),
+            ));
+        }
         let mut config = self.load_config()?;
         let profile = config.profiles.remove(name).ok_or_else(|| {
             AppError::InvalidProject(format!("unknown provider profile `{name}`"))
@@ -355,6 +398,11 @@ impl ProviderService {
     }
 
     fn save_config(&self, config: &ProviderConfig) -> Result<()> {
+        if self.fixed_config.is_some() {
+            return Err(AppError::InvalidProject(
+                "embedded provider profiles are immutable".into(),
+            ));
+        }
         let parent = self.config_path.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
         let content = config.to_toml()?;
@@ -365,6 +413,36 @@ impl ProviderService {
             .persist(&self.config_path)
             .map_err(|error| error.error)?;
         set_private_file(&self.config_path)
+    }
+}
+
+#[derive(Debug)]
+struct UnavailableCredentialStore;
+
+impl CredentialStore for UnavailableCredentialStore {
+    fn status(&self) -> CredentialStoreStatus {
+        CredentialStoreStatus::Unavailable
+    }
+
+    fn store(
+        &self,
+        _service: &str,
+        _account: &str,
+        _secret: &str,
+    ) -> std::result::Result<(), CredentialError> {
+        Err(CredentialError::Unavailable)
+    }
+
+    fn load(
+        &self,
+        _service: &str,
+        _account: &str,
+    ) -> std::result::Result<Zeroizing<String>, CredentialError> {
+        Err(CredentialError::Unavailable)
+    }
+
+    fn delete(&self, _service: &str, _account: &str) -> std::result::Result<(), CredentialError> {
+        Err(CredentialError::Unavailable)
     }
 }
 

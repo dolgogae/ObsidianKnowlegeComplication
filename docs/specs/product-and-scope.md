@@ -3,7 +3,7 @@ title: Product and Scope Specification
 status: normative-v1
 owners:
   - architect
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0001
   - ADR-0002
@@ -20,6 +20,7 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -36,6 +37,7 @@ Compile heterogeneous Obsidian Vault snapshots into safe, deterministic, evidenc
 | User | Job | V3 surface |
 |---|---|---|
 | Rust developer | Embed inspection, planning, compilation, and verification | `okc-core` crate |
+| Python/Node.js developer | Automate schema-3 projects and approval workflows without a CLI subprocess | `okc-compiler` language packages |
 | Build/release engineer | Run reproducible local or CI compilation | `okc` CLI |
 | AI integration developer | Connect any local or hosted model without core changes | traits and NDJSON protocol |
 | Knowledge curator | Review conflicts, proposals, and provenance | `okc` TUI and versioned control files |
@@ -73,6 +75,7 @@ Compile heterogeneous Obsidian Vault snapshots into safe, deterministic, evidenc
 - **REQ-INT-005:** Taxonomy, cluster, omission, waiver, and manual-amendment authority MUST be immutable hash-bound approval records; a dependent change makes prior authority stale.
 - **REQ-INT-006:** V3 materialization MUST emit canonical notes and source redirect stubs with closed source/proposal/critic/approval provenance.
 - **REQ-SDK-001:** SDK and CLI MUST expose inspect, plan, augment, validate, approve, compile, verify, and provenance explanation operations.
+- **REQ-SDK-002:** The Python and Node.js libraries MUST expose the current V3 project, provider, integration, human-approval, compile, verify, and explain workflow through one versioned Rust interop facade; MUST require explicit absolute paths and per-call remote disclosure consent; MUST resolve secrets only from named process environment variables at job start; and MUST provide bounded cancellable jobs, stable structured errors, type declarations, clean-install packages, and equivalent artifact bytes without importing CLI/TUI side effects.
 - **REQ-APP-001:** One `okc` executable MUST expose CLI and TUI surfaces backed by the same `okc-app` services and a private, resumable `.okc-project` format.
 - **REQ-APP-002:** Without `--project`, `okc` MUST deterministically discover the cwd workspace and safe Vault candidates, keep projects and output outside every source, and run core/provider/compile/verify work through a bounded single-writer worker so the TUI remains responsive and cancellation reaches every pre-publication stage.
 - **REQ-REL-001:** A stable release MUST pass QG-001 through QG-008 on all supported targets and include checksums, SBOM, attestation, and required macOS/Windows native signatures.

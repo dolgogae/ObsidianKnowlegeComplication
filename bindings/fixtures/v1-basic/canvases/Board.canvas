@@ -1,0 +1,18 @@
+{
+  "edges": [],
+  "fixture_root_unknown": {
+    "retained": true
+  },
+  "nodes": [
+    {
+      "file": "../knowledge/Topic.md",
+      "fixture_unknown": "preserve-me",
+      "height": 180,
+      "id": "node-1",
+      "type": "file",
+      "width": 320,
+      "x": 0,
+      "y": 0
+    }
+  ]
+}

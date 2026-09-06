@@ -3,7 +3,7 @@ title: Current State
 status: normative-v1
 owners:
   - release-maintainer
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0015
   - ADR-0016
@@ -16,19 +16,21 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-CURRENT-PLAN
 ---
 
 # Current State
 
-## Snapshot: 2026-09-05
+## Snapshot: 2026-09-06
 
-The repository contains a locally verified `0.3.0` schema-3 development slice
-and frozen V1/V2 read-only artifact compatibility. It is not a complete or
-public stable V3 release: semantic scale, V3 Pack/non-Markdown materialization,
+The repository contains a locally verified `0.3.0` schema-3 development slice,
+frozen V1/V2 read-only artifact compatibility, and initial Python/Node.js
+library packages over one Rust interop facade. It is not a complete or public
+stable V3 release: semantic scale, V3 Pack/non-Markdown materialization,
 provider-backed PTY, remote-platform, fuzzing, performance, and native-signing
-evidence do not yet exist.
+evidence do not yet exist. The language packages have not been published.
 
 ## Implemented product surface
 
@@ -46,7 +48,16 @@ The Rust workspace is organized as follows:
   objects, internal schema-4 append-only source-set/run/task/exchange/revision/
   approval/plan/output/feedback journal, cwd discovery, sensitive
   preflight/routing, native credential service, integration review/compile
-  service, bounded worker, writer locking, and receipt-aware updating;
+  service, bounded worker, writer locking, shared V1/V2/V3 artifact reader
+  dispatch, and feature-gated native keyring/receipt-aware updating;
+- `okc-interop`: runtime-neutral API-v1 DTO/error/client/project/job facade,
+  explicit absolute-path checks, a bounded four-worker default scheduler,
+  per-project mutation reservations, progress/cancellation/publication state,
+  and environment-secret-only provider setup;
+- `okc-python`: PyO3 `abi3-py311` adapter distributed as `okc-compiler` and
+  imported as the typed `okc` module on CPython 3.11+;
+- `okc-node`: napi-rs Node-API 9 adapter with typed ESM/CommonJS entry points
+  distributed as `okc-compiler` for Node.js 22.13+;
 - `okc`: the only executable, containing the Clap CLI and Ratatui/Crossterm
   V3 CLI and functional ten-screen TUI;
 - `okc-legacy-v1` and `okc-legacy-protocol`: frozen internal readers and
@@ -148,6 +159,26 @@ permissions where supported, WAL/foreign keys/`FULL` SQLite state, no-clobber
 object writes, and invalidates downstream state after source changes. Project
 data is intentionally plaintext and shared-location warnings are present.
 
+Python and Node.js expose project create/open, provider test, source and route
+updates, preflight/integration resume, taxonomy and cluster review/approval/
+regeneration, provider-free V3 compile, and auto-detected V1/V2/V3 verify and
+explain. Every filesystem/provider/compiler call returns a bounded `Job`; a
+second same-project mutation fails immediately with `PROJECT_BUSY`, while
+distinct projects may run in parallel. The bindings accept only explicit
+absolute paths and immutable provider profiles with `api_key_env`; they contain
+no cwd lookup, prompt, signal handler, updater, native keyring, or global
+tracing setup. V1/V2 writers and V3 Pack are absent from their public APIs.
+Dropping a runtime client never joins an in-flight worker on a Python/Node
+finalizer thread; queued jobs drain before detached workers consume their
+shutdown markers. Provider errors redact reflected authorization values, and
+credential-looking option keys are rejected recursively.
+
+The Python and Node.js V3 end-to-end tests use equivalent loopback fixture
+providers and independently produce literal artifact inventory SHA-256
+`452ca0671e806a93b4f36f218cf9e62da899f6404c74705c2cf0ca14e413c7e5`.
+This locally binds their compiled bytes, IDs, provenance records, verify, and
+explain behavior to one golden; remote platform execution is still pending.
+
 `axoupdater 0.10.0` is pinned. `okc update` supports stable, latest, or an exact
 canonical SemVer, refuses cargo/manual copies without a matching cargo-dist
 receipt, and requires interactive confirmation unless `--yes` is supplied.
@@ -161,8 +192,8 @@ All commands ran on macOS arm64 with Rust 1.97.1:
 
 | Command | Result |
 |---|---|
-| `cargo test --workspace --all-features --no-fail-fast` | passed: all V3 provider/journal/integration/CLI tests, the prior 323-test V1/V2 baseline, and all doctests |
-| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | passed with zero warnings |
+| `cargo test --locked --workspace --all-features --no-fail-fast` | passed: all V3 provider/journal/integration/CLI tests, the prior 323-test V1/V2 baseline, and all doctests |
+| `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` | passed with zero warnings |
 | `cargo fmt --all -- --check` | passed after formatting |
 | `cargo test --locked -p okc-core --test documentation_contract` | every repository-relative Markdown link resolved |
 | debug CLI schema-3 project/source/default-and-role route/status smoke | passed; invalid Clap positional ordering found during smoke was corrected and regression-tested |
@@ -170,6 +201,11 @@ All commands ran on macOS arm64 with Rust 1.97.1:
 | `cd guide && npm ci && npm run docs:build` | VitePress production site built successfully with Node.js 24.13.1 |
 | `cd guide && npm audit --audit-level=high` | zero known vulnerabilities reported |
 | cargo-dist 0.32.0 `dist plan --tag v0.2.0 --output-format=json --allow-dirty` | passed; planned four native archives, two installers, SHA-256, source archive, CycloneDX SBOM, and GitHub attestations |
+| Python `pytest` against the installed abi3 wheel | 10 passed on CPython 3.13, including the complete V3 approval/compile/verify/explain flow, V1/V2 fixtures, structured provider/environment-secret and remote-consent failures, output safety, source immutability, and shared artifact golden |
+| `mypy 1.18.2 --strict` against the public Python stub contract | passed with no issues |
+| Maturin 1.15.0 wheel and sdist builds | produced `cp311-abi3` macOS arm64 wheel with embedded CycloneDX SBOM and a source distribution containing `Cargo.lock`; clean wheel and pinned-backend, no-build-isolation source installs passed on CPython 3.13 |
+| `npm run build && npm test && npm run typecheck` in `bindings/node` | release addon built without overwriting the public adapters; 10 CommonJS/ESM/V3/legacy, provider, consent, and safety tests plus strict declarations passed on Node.js 24.13.1 |
+| root plus macOS-arm64 npm tarball clean install | both local tarballs installed together offline; CommonJS and ESM imports returned API v1 |
 
 The cargo-dist binary used for the last check was the official
 `cargo-dist-aarch64-apple-darwin.tar.xz`; its observed SHA-256
@@ -180,16 +216,25 @@ matched the publisher's adjacent checksum file.
 
 | Gate | State | Evidence or remaining work |
 |---|---|---|
-| QG-001 Functional | partial | V3 Markdown directory workflow and the prior 323-test regression baseline pass locally; maximum-scale fixtures, full parser corpus, provider-backed PTY execution, and four-host evidence remain |
+| QG-001 Functional | partial | V3 Markdown directory workflow, both language-binding approval workflows, and the prior 323-test regression baseline pass locally; maximum-scale fixtures, full parser corpus, provider-backed PTY execution, and four-host evidence remain |
 | QG-002 Determinism | partial | same-host plan/artifact/Pack and absolute-root invariance pass; cross-platform/toolchain bytes and reverse-order 10-Vault evidence remain |
 | QG-003 Provenance | locally verified | typed graph, audit envelope, decisions/proposals/approvals, attribution, directory/Pack explanation parity, and semantic reseal attacks pass |
 | QG-004 Safety | partial | current traversal/archive/symlink/publication/control/provider tests pass; descriptor-relative source opening, Windows reparse execution, fuzz/property campaigns, and process-crash testing remain |
-| QG-005 Compatibility | partial | frozen V1 artifacts/Packs can be verified and explained; V1 project import/rebind migration workflow and forward-version matrix remain |
+| QG-005 Compatibility | partial | frozen V1 artifacts/Packs can be verified and explained through shared CLI/binding dispatch; V1 project import/rebind migration workflow and forward-version matrix remain |
 | QG-006 Performance | not passed | the 10-Vault, 100,000-note, 20 GB, ≤20-minute, ≤2 GB RSS benchmark has not run; accepted source members are still buffered |
 | QG-007 Documentation | locally passed | current state, traceability, specs, ADRs, decision log, root/docs/guide relative links, and the VitePress production build are synchronized |
-| QG-008 Supply chain | partial | lockfile, dual licenses, validated cargo-dist plan, SBOM/attestation configuration, and receipt-aware updater exist; remote builds, audit evidence, protected signing, notarization, and publication remain |
+| QG-008 Supply chain | partial | lockfiles, dual licenses, validated cargo-dist plan, wheel/npm packaging, local clean installs, SBOM/checksum CI definitions, and receipt-aware updater exist; remote builds, audit evidence, protected signing, notarization, and publication remain |
 
 ## Release blockers and known gaps
+
+- `.github/workflows/sdk-bindings.yml` defines four native package builds,
+  CPython 3.11–3.14, Node.js 22.13/current, clean installation, checksum, and
+  SBOM gates, but no remote run of that matrix exists yet. PyPI/npm publication
+  and credentials are intentionally absent. Both official registry JSON
+  endpoints returned HTTP 404 for `okc-compiler` on 2026-09-06, but package
+  name availability MUST be checked again immediately before publication. The
+  bindings MUST NOT be declared stable while the following schema-3 blockers
+  remain.
 
 - The `0.3.0` development CLI still exposes the frozen V2 inspect/plan/augment/
   approve/compile commands to retain the existing regression harness. The

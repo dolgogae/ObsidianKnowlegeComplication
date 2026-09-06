@@ -7,5 +7,11 @@
 *.sqlite-wal
 /.quickstart/
 /guide/node_modules/
+/bindings/node/node_modules/
+/bindings/node/*.node
+/bindings/node/npm/**/*.node
+/bindings/node/native.d.ts
+/bindings/python/.pytest_cache/
+/bindings/python/**/__pycache__/
 /guide/.vitepress/cache/
 /guide/.vitepress/dist/

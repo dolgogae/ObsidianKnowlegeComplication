@@ -3,13 +3,14 @@ title: Glossary
 status: normative-v1
 owners:
   - architect
-last_updated: 2026-09-03
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0003
   - ADR-0015
   - ADR-0017
   - ADR-0022
   - ADR-0024
+  - ADR-0026
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
 ---
@@ -35,6 +36,10 @@ source_refs:
 | Disposition | Exactly one V3 treatment for a block or metadata value: integrated, preserved verbatim, or omission proposed. |
 | Critic report | Independent structured comparison of a synthesis proposal with its complete source evidence; major/critical findings block approval. |
 | Approved integration plan | Complete schema-3 offline compilation authority binding corpus, taxonomy, synthesis, critic, approvals, waivers/omissions, and provider recordings. |
+| Interop DTO | Runtime-neutral, schema-versioned value crossing the shared Rust facade into a language binding; Python projects names as snake_case and Node.js as camelCase. |
+| Job | Bounded asynchronous filesystem/provider/compiler operation with progress events, cooperative cancellation, publication-barrier semantics, and a retained terminal result. |
+| Provider profile | Immutable non-secret provider configuration. Language bindings may name a process environment variable but never accept or persist its raw API-key value. |
+| Language binding | Thin Python or Node.js adapter over `okc-interop`; it shares project and compiler policy and never owns canonical state. |
 | Compiled Vault | Newly materialized Obsidian-compatible output containing selected and generated knowledge, not embedded raw source snapshots. |
 | OKCPack | Deterministic `tar.zst` distribution artifact with content, manifest, provenance, and checksums; V2 is implemented, while the V3 profile remains unimplemented. |
 | MCP adapter | Thin Model Context Protocol surface over framework operations or an external retrieval engine. |

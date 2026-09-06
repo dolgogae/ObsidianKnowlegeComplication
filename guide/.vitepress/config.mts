@@ -19,6 +19,7 @@ export default defineConfig({
       { text: "V2 Regression", link: "/" },
       { text: "CLI", link: "/cli" },
       { text: "TUI", link: "/tui" },
+      { text: "Python · Node.js", link: "/python-node" },
       { text: "AI Provider", link: "/ai-provider" },
       {
         text: "v0.3.0-dev",
@@ -44,6 +45,7 @@ export default defineConfig({
         items: [
           { text: "CLI 사용법", link: "/cli" },
           { text: "TUI 사용법", link: "/tui" },
+          { text: "Python · Node.js", link: "/python-node" },
         ],
       },
       {

@@ -3,7 +3,7 @@ title: Public SDK and CLI Contract
 status: normative-v1
 owners:
   - core-rust-engineer
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0001
   - ADR-0004
@@ -21,11 +21,99 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-COMPILER-PLAN
 ---
 
 # Public SDK and CLI Contract
+
+## Python and Node.js API v1
+
+The first language-library surface is implemented by the runtime-neutral
+`okc-interop` facade and thin native adapters. The package and type names are:
+
+| Concept | Python | Node.js |
+|---|---|---|
+| distribution/package | `okc-compiler` | `okc-compiler` |
+| module/client | `okc.OkcClient` | `OkcClient` |
+| project | `okc.Project` | `Project` |
+| asynchronous work | `okc.Job[T]` | `Job<T>` |
+| provider configuration | `okc.ProviderProfile` | `ProviderProfile` |
+| structured failure | `okc.OkcError` | `OkcError` |
+
+All serialized result and progress DTO envelopes carry
+`interop_schema_version = 1`; scalar job state/cancel values and the stable
+error shape below are not DTO envelopes. Python names are snake_case and
+JavaScript names are camelCase. Published packages MUST include `py.typed` plus
+`.pyi` files or `index.d.ts`, respectively. The public adapters MUST NOT print,
+prompt, install a global tracing subscriber, discover the cwd, handle process
+signals, access a native keychain, or invoke the updater.
+
+`OkcClient` receives an immutable list of provider profiles and
+`max_concurrent_jobs`, which defaults to four and is bounded at 64. A provider
+profile contains `name`, `kind`, `endpoint`, `model`, optional `api_key_env`,
+timeout/response/input/batch limits, and provider options. It MUST NOT contain
+a raw API key or `os_keychain`. A named environment variable is resolved by
+Rust when each provider job begins, and neither its value nor length may enter
+the project, event queue, error, recording, provenance, or debug output.
+Credential-like provider option names are rejected. Schema-3 command profiles
+are rejected until their supervised adapter is implemented.
+
+Every project, source, output, and artifact path passed by a language binding
+MUST be an explicit absolute lexical path. Relative paths and cwd search fail
+with `PATH_NOT_ABSOLUTE`. The libraries open the same schema-3 project manifest,
+private schema-4 journal, immutable objects, and `project.lock` as CLI/TUI;
+they create no binding-only state or migration.
+
+The API operations are:
+
+| Owner | Operations |
+|---|---|
+| Client | API/version information; create/open project; provider capability test; auto-detected V1/V2/V3 artifact verify/explain |
+| Project setup | manifest/status; source add/rebind/atomic replace; language; default or role-specific AI route |
+| V3 integration | sensitive preflight; execute/resume; taxonomy get/approve; clusters get/approve/regenerate; provider-free compile |
+
+V1/V2 compatibility is read-only and limited to auto-detected verify/explain.
+The binding surface has no V1/V2 writer, V2 Pack writer, V3 Pack writer, manual
+section-amendment API, or command provider. A `.vaultpack` is detected as V1,
+an existing `.okcpack` as V2 until V3 Pack exists, and a directory is accepted
+only when exactly one supported family marker is present. Mixed, symlinked, or
+unknown artifacts fail closed.
+
+`integrate` and cluster regeneration receive both
+`allow_remote_provider` and `remote_disclosure_confirmed` explicitly. On every
+cache miss that would contact a remote provider, both MUST be true. These flags
+are per-call facts, are not stored, and do not carry to a resumed job. Taxonomy
+and cluster approvals remain explicit, immutable, and hash-bound; bindings do
+not auto-approve proposals or critic waivers.
+
+Filesystem, provider, and compiler calls return `Job<T>`. The state values are
+`queued`, `running`, `cancelling`, `publishing`, `completed`, `failed`, and
+`cancelled`. `events()` drains at most 64 retained progress events; intermediate
+events may coalesce, while `result()` retains and returns the terminal value or
+error on every call. `cancel()` returns `requested` before publication,
+`too_late` after the publication barrier, or `already_finished` after a terminal
+state. A second mutating job for the same project fails immediately with
+`PROJECT_BUSY`; jobs for distinct projects may execute in parallel. The
+existing on-disk writer lock independently rejects another process.
+
+`OkcError` has stable fields `code`, `category`, `message`, `retryable`, and
+`details`. Consumers MUST branch on code/category, not parse `message`. API v1
+codes include argument/path/resource-limit, project/busy,
+provider/authentication/authorization/environment-secret/rate-limit/timeout/
+response/transport/unsupported, remote-consent/sensitive-route,
+approval/staleness, output/existing/overlap/durability, verification,
+cancellation, and internal families.
+
+Python targets CPython 3.11 and newer with PyO3 `abi3-py311` and Maturin. Node
+targets Node.js 22.13 and newer with Node-API 9 and napi-rs, and publishes ESM
+and CommonJS entry points. Native package targets are Linux x86_64 GNU, Windows
+x86_64 MSVC, macOS x86_64, and macOS arm64. A release candidate requires
+wheels, sdist, root and per-platform npm tarballs, checksum and SBOM artifacts,
+clean-install smoke tests, supported-language tests, and identical shared-fixture
+artifact IDs, bytes, provenance, and verification. Registry publishing and
+credentials are intentionally absent from repository CI.
 
 ## Schema-3 application workflow
 
@@ -343,7 +431,9 @@ practical and two after `1.0`.
 
 ## Language bindings
 
-V2 offers the Rust crates, TUI, and CLI/JSON/NDJSON interoperability. Python and Node
-bindings are later conveniences, not separate compiler implementations. Other
-languages SHOULD invoke the CLI or implement the subprocess protocol until
-stable bindings exist.
+The initial V3 Python and Node.js bindings are the API-v1 surfaces specified
+above and remain development packages until their remote matrix and all shared
+V3 release gates pass. They are thin adapters over `okc-interop`, not separate
+compiler implementations. Other languages SHOULD invoke the CLI or implement
+the subprocess protocol until a later binding receives its own accepted
+contract.

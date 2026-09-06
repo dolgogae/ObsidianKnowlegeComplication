@@ -3,7 +3,7 @@ title: Documentation Index
 status: normative-v1
 owners:
   - release-maintainer
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0002
   - ADR-0015
@@ -12,6 +12,7 @@ decision_refs:
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
 source_refs:
   - HIST-CURRENT-PLAN
 ---
@@ -36,6 +37,8 @@ source_refs:
   commands, global-option scope, and automation exit codes.
 - [`TUI`](../guide/tui.md) — cwd discovery, provider/keychain setup, Vault
   selection, review/regeneration, worker cancellation, compile, and verify.
+- [`Python · Node.js`](../guide/python-node.md) — explicit-path library setup,
+  provider consent, complete V3 approval flow, jobs, and structured errors.
 - [`Conflict review`](../guide/conflicts.md) and
   [`AI Provider`](../guide/ai-provider.md) — explicit human-decision and
   untrusted-proposal workflows.
@@ -83,7 +86,8 @@ gates are met and an ADR promotes them.
 - V3 boundary: [`ADR-0022`](adr/0022-v3-ai-required-format-and-legacy-boundary.md),
   [`ADR-0023`](adr/0023-provider-profiles-disclosure-and-recording.md),
   [`ADR-0024`](adr/0024-evidence-complete-integration-and-critic-gate.md), and
-  [`ADR-0025`](adr/0025-cwd-workspace-worker-and-keychain-boundary.md)
+  [`ADR-0025`](adr/0025-cwd-workspace-worker-and-keychain-boundary.md), plus
+  [`ADR-0026`](adr/0026-python-node-library-boundary.md)
 - Append-only decision log: [`history/DECISION_LOG.md`](history/DECISION_LOG.md)
 - Open design questions: [`history/OPEN_QUESTIONS.md`](history/OPEN_QUESTIONS.md)
 - Historical summaries: [`history/summaries/`](history/summaries/)

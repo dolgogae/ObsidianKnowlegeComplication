@@ -1,0 +1,39 @@
+[package]
+name = "okc-node"
+description = "Node.js native adapter for the Obsidian Knowledge Compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi.workspace = true
+napi-derive.workspace = true
+okc-interop = { path = "../../crates/okc-interop" }
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+napi-build.workspace = true
+
+# napi-rs expands its registration macros to audited generated unsafe code.
+# The runtime-neutral `okc-interop` crate remains `unsafe_code = "forbid"`;
+# this exception is scoped to the native Node adapter and ADR-0026.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# napi-rs owns JavaScript strings at the generated ABI boundary even when the
+# handwritten adapter only borrows them for strict JSON decoding.
+needless_pass_by_value = "allow"

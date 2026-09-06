@@ -1,16 +1,17 @@
 # Obsidian Knowledge Compilation (OKC)
 
 `okc` compiles immutable Obsidian Vault snapshots into a new deterministic,
-auditable Compiled Vault. The Rust SDK owns inspection, planning, approval,
-compilation, verification, and provenance. V3 requires recorded AI integration
-proposals; live providers remain replaceable adapters and are never required
-for offline replay/compile/verify. MCP servers and Obsidian plugins are optional
-adapters.
+auditable Compiled Vault. The Rust core owns inspection, planning, approval,
+compilation, verification, and provenance; the CLI/TUI and typed Python and
+Node.js libraries call the same application services. V3 requires recorded AI
+integration proposals; live providers remain replaceable adapters and are
+never required for offline replay/compile/verify. MCP servers and Obsidian
+plugins are optional adapters.
 
 The implementation contract starts at [`AGENTS.md`](AGENTS.md) and
 [`docs/INDEX.md`](docs/INDEX.md).
 
-> **Development status (2026-09-05):** `0.3.0` contains a locally verified
+> **Development status (2026-09-06):** `0.3.0` contains a locally verified
 > schema-3 AI integration/directory-compilation slice plus frozen V1/V2 readers,
 > but it is **not a complete or public stable release**. V3 HNSW/chunking,
 > manual amendment, Pack and non-Markdown materialization, command-provider,
@@ -29,11 +30,13 @@ The implementation contract starts at [`AGENTS.md`](AGENTS.md) and
 | Provider adapters | OpenAI, Anthropic, Gemini, Ollama, and OpenAI-compatible HTTP adapters are mock-conformance tested; environment references and native OS-keychain references are supported; live smoke tests are opt-in |
 | V3 Pack and non-Markdown output | Not implemented: attachment/Canvas/Base carry-through, complete link rewriting, and V3 OKCPack remain blockers |
 | TUI | Functional cwd workflow: provider setup, Vault selection, preflight/consent, taxonomy editing, cluster review/regeneration, compile, verify, and provenance; PTY/platform evidence remains |
+| Python / Node.js | Initial typed `okc-compiler` packages expose the current V3 approval workflow and V1/V2/V3 read-only verification through one Rust facade; remote four-platform package evidence remains |
 | Legacy boundary | V1/V2 artifacts dispatch through read-only readers, but development-only V2 writer commands remain exposed for the regression harness |
 
 Start with the Korean [`V3 AI integration guide`](guide/v3-integration.md).
 The [`5-minute Quickstart`](guide/index.md) preserves the frozen V2 regression
-walkthrough; the focused [`CLI`](guide/cli.md) and [`TUI`](guide/tui.md) guides
+walkthrough; the focused [`CLI`](guide/cli.md), [`TUI`](guide/tui.md), and
+[`Python · Node.js`](guide/python-node.md) guides
 cover the non-interactive and interactive workflows.
 
 ## Overview
@@ -54,6 +57,8 @@ The project is intended to be embedded in:
 
 - local developer tools and knowledge-management applications through the Rust
   SDK;
+- CPython 3.11+ and Node.js 22.13+ applications through the typed
+  `okc-compiler` language packages;
 - reproducible automation and review workflows through the `okc` CLI;
 - provider-neutral AI workflows where an LLM may propose content but cannot
   silently change the compilation plan;
@@ -160,6 +165,12 @@ compilation, or Pack writing.
 - `okc-protocol`: frozen V2 and schema-3 provider envelopes;
 - `okc-app`: schema-3 project persistence, schema-4 application journal,
   disclosure, and services;
+- `okc-interop`: runtime-neutral API-v1 client/project/job facade shared by
+  language bindings;
+- `okc-python`: PyO3 `abi3-py311` adapter for the `okc-compiler` Python
+  distribution and `okc` import module;
+- `okc-node`: napi-rs Node-API 9 adapter behind ESM/CommonJS `okc-compiler`
+  entry points;
 - `okc`: the only executable, containing the CLI, Ratatui TUI, and supervised
   NDJSON subprocess adapter;
 - `okc-legacy-v1` / `okc-legacy-v2`: verify/explain-only readers;
@@ -199,6 +210,41 @@ warning-free Clippy. Its OKCPack test compares the complete archive against a
 single literal SHA-256 golden on every host. The workflow definition is not
 release evidence by itself; the required same-commit remote runs have not yet
 completed.
+
+### Python and Node.js development packages
+
+The language packages are implemented but not published to PyPI or npm. Their
+first-candidate names and runtime contracts are:
+
+| Runtime | Package contract |
+|---|---|
+| Python | distribution `okc-compiler`, import `okc`, CPython 3.11+, `abi3-py311` |
+| Node.js | package `okc-compiler`, Node.js 22.13+, Node-API 9, ESM/CommonJS/TypeScript |
+
+Build and exercise them from this source checkout with the pinned development
+tools used by the package workflow:
+
+```sh
+python -m venv .venv-sdk
+source .venv-sdk/bin/activate
+python -m pip install maturin==1.15.0 pytest==8.4.2 mypy==1.18.2
+python -m maturin develop --manifest-path bindings/python/Cargo.toml --release --locked
+python -m pytest bindings/python/tests
+python -m mypy --strict bindings/python/tests/typing_contract.py
+
+npm ci --ignore-scripts --prefix bindings/node
+npm run build --prefix bindings/node
+npm test --prefix bindings/node
+npm run typecheck --prefix bindings/node
+```
+
+All project, source, output, and artifact paths passed through these libraries
+must be absolute. Provider profiles accept an environment-variable name, never
+a raw secret, and every remote cache miss requires explicit per-call disclosure
+consent. Filesystem, provider, and compiler work returns a cancellable `Job`;
+taxonomy and cluster approvals remain explicit human actions. See the complete
+[`Python · Node.js guide`](guide/python-node.md) and the normative
+[`API-v1 contract`](docs/specs/public-sdk-and-cli.md).
 
 ## Projects and TUI
 

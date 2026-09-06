@@ -1,0 +1,56 @@
+{
+  "name": "okc-compiler",
+  "version": "0.3.0",
+  "description": "Node.js bindings for the Obsidian Knowledge Compiler",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dolgogae/okc.git"
+  },
+  "type": "module",
+  "main": "index.cjs",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.cjs"
+    }
+  },
+  "files": [
+    "index.cjs",
+    "index.js",
+    "index.d.ts",
+    "native.cjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "napi build --platform --release --no-js --dts native.d.ts",
+    "build:debug": "napi build --platform --no-js --dts native.d.ts",
+    "test": "node --test tests/public-api.cjs tests/esm.mjs",
+    "typecheck": "tsc --noEmit --strict tests/types.ts"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0",
+    "typescript": "^5.9.0"
+  },
+  "optionalDependencies": {
+    "okc-compiler-darwin-arm64": "0.3.0",
+    "okc-compiler-darwin-x64": "0.3.0",
+    "okc-compiler-linux-x64-gnu": "0.3.0",
+    "okc-compiler-win32-x64-msvc": "0.3.0"
+  },
+  "napi": {
+    "binaryName": "okc-compiler",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin"
+    ]
+  }
+}

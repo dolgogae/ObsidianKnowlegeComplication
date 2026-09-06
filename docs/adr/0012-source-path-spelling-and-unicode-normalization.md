@@ -1,6 +1,6 @@
 ---
 title: ADR-0012 — Source Path Spelling and Unicode Normalization
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

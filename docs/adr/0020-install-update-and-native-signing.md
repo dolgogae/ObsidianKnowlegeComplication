@@ -1,6 +1,6 @@
 ---
 title: ADR-0020 — Install, Update, and Native Signing Policy
-status: normative-v1
+status: normative
 owners:
   - release-maintainer
   - qa-security-engineer

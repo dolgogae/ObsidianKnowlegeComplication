@@ -1,6 +1,6 @@
 ---
 title: Algorithms and AI Engineer Role Guide
-status: normative-v1
+status: normative
 owners:
   - algorithms-ai-engineer
 last_updated: 2026-08-16

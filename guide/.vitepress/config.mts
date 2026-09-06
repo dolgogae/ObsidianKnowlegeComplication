@@ -15,8 +15,8 @@ export default defineConfig({
   ],
   themeConfig: {
     nav: [
-      { text: "V3 Integration", link: "/v3-integration" },
-      { text: "V2 Regression", link: "/" },
+      { text: "Integration", link: "/integration" },
+      { text: "Quickstart", link: "/" },
       { text: "CLI", link: "/cli" },
       { text: "TUI", link: "/tui" },
       { text: "Python · Node.js", link: "/python-node" },
@@ -36,8 +36,8 @@ export default defineConfig({
       {
         text: "시작하기",
         items: [
-          { text: "V3 AI 통합", link: "/v3-integration" },
-          { text: "V2 회귀 Quickstart", link: "/" },
+          { text: "AI 통합", link: "/integration" },
+          { text: "Quickstart", link: "/" },
         ],
       },
       {
@@ -91,7 +91,7 @@ export default defineConfig({
     lightModeSwitchTitle: "밝은 테마로 전환",
     darkModeSwitchTitle: "어두운 테마로 전환",
     footer: {
-      message: "MIT OR Apache-2.0 · V3는 아직 개발 중이며 안정 릴리스가 아닙니다.",
+      message: "MIT OR Apache-2.0 · 현재 빌드는 아직 안정 릴리스가 아닙니다.",
       copyright: "Obsidian Knowledge Compilation",
     },
   },

@@ -1,6 +1,6 @@
 ---
 title: ALG-PRV-001 — Provenance and Evidence Closure
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

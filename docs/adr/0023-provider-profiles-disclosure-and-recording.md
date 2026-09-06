@@ -1,15 +1,16 @@
 ---
 title: ADR-0023 — Provider Profiles, Disclosure, and Recording
-status: normative-v1
+status: normative
 owners:
   - architect
   - algorithms-ai-engineer
   - qa-security-engineer
-last_updated: 2026-09-03
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0004
   - ADR-0011
   - ADR-0023
+  - ADR-0027
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -18,7 +19,10 @@ source_refs:
 
 ## Status
 
-Accepted on 2026-09-03.
+Accepted on 2026-09-03. Amended by ADR-0027 on 2026-09-06: the current public
+capability name is generation-neutral, and no command-provider kind or adapter
+is exposed on main. The original decision text below is preserved as the
+historical decision.
 
 ## Context
 

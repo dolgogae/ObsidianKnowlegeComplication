@@ -299,15 +299,6 @@ pub struct BaseArtifact {
     pub source_file: SourceFile,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EvidenceRef {
-    pub snapshot_id: SnapshotId,
-    pub document_id: DocumentId,
-    pub block_id: Option<BlockId>,
-    pub span: Option<SourceSpan>,
-    pub content_hash: ContentHash,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalWorkspace {
     pub schema_version: u32,

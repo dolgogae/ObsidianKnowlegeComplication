@@ -1,6 +1,6 @@
 ---
 title: ALG-SEM-001 — Semantic Candidates and Taxonomy
-status: normative-v1
+status: normative
 owners:
   - algorithms-ai-engineer
   - core-rust-engineer
@@ -22,8 +22,8 @@ merge authority or a probability of semantic equivalence.
 
 ## Inputs and outputs
 
-Inputs are the sealed V3 corpus, deterministic Markdown chunks, one embedding
-profile/model/options identity, exact-duplicate groups, V2 MinHash candidates,
+Inputs are the sealed current corpus, deterministic Markdown chunks, one embedding
+profile/model/options identity, exact-duplicate groups, retained MinHash candidates,
 and title/alias/link candidates. Outputs are ordered embeddings, an ordered
 candidate list, and a taxonomy proposal assigning every `DocumentId` to
 exactly one cluster with one safe canonical path.
@@ -70,7 +70,7 @@ input.
 For `C` chunks, dimension `d`, bounded HNSW degree `M`, and `P` final pairs:
 embedding validation is `O(Cd)`, index construction is expected
 `O(C log C * M)`, and canonical pair reduction is `O(P log P)`. Implementations
-must spill vectors/candidates to the V3 workspace at policy thresholds.
+must spill vectors/candidates to the current workspace at policy thresholds.
 
 ## Edge and security cases
 

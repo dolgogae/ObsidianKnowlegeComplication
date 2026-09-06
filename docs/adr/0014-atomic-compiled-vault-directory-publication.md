@@ -1,6 +1,6 @@
 ---
 title: ADR-0014 — Atomic Compiled Vault Directory Publication
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

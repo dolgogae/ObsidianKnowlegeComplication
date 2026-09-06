@@ -97,7 +97,7 @@ jobs:
           PYTHONPATH="$RUNNER_TEMP/python-smoke" python -m pytest \
             --import-mode=importlib bindings/python/tests -q
           PYTHONPATH="$RUNNER_TEMP/python-smoke" python -c \
-            "import okc; assert okc.INTEROP_SCHEMA_VERSION == 1"
+            "import okc; assert okc.INTEROP_SCHEMA_VERSION == 2"
 
       - name: Build and test Node addon
         shell: bash
@@ -233,7 +233,7 @@ jobs:
           "$RUNNER_TEMP/sdist-smoke/bin/python" -m pip install \
             --no-build-isolation "$RUNNER_TEMP"/sdk-dist/okc_compiler-*.tar.gz
           "$RUNNER_TEMP/sdist-smoke/bin/python" -c \
-            "import okc; assert okc.INTEROP_SCHEMA_VERSION == 1"
+            "import okc; assert okc.INTEROP_SCHEMA_VERSION == 2"
           python bindings/build_artifact_manifest.py "$RUNNER_TEMP/sdk-dist"
 
       - name: Upload source package

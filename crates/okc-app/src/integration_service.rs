@@ -5,26 +5,22 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use okc_ai::{AiRole, DataBoundaryV3, ProviderClient};
-use okc_core::canonical::to_canonical_json;
-use okc_core::identity::{BlockId, ContentHash, DocumentId};
+use okc_ai::{AiRole, DataBoundary, ProviderClient};
 use okc_core::integration::{
-    ApprovalBinding, ApprovedClusterRevision, ClusterApproval, CriticSeverity, DispositionKind,
-    FindingWaiver, IntegrationCorpus, IntegrationDocument, MetadataValueV3, OmissionApproval,
-    SourceBlockV3, TaxonomyCluster, TaxonomyProposal, V3CompiledArtifact, V3Manifest,
-    verify_v3_directory,
+    ApprovalBinding, ApprovedClusterRevision, ClusterApproval, CompiledArtifact,
+    CompiledVaultManifest, CriticSeverity, DispositionKind, FindingWaiver, OmissionApproval,
+    TaxonomyCluster, TaxonomyProposal, verify,
 };
-use okc_core::{CompilerPolicy, OkcCompiler, SourceSpec};
+use okc_core::{CorpusBuilder, DocumentId, PreparedCorpus, SourceSpec, to_canonical_json};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
-use crate::provider_service::ProviderService;
-use crate::v3::{
+use crate::project_state::{
     ApprovedTaxonomy, ClusterRegenerationRequest, ClusterTaskOutput, RunRecord,
     SENSITIVE_SCANNER_VERSION, TaskCacheKey, TaskStage, TaskStatus, TaxonomyTaskOutput,
     cluster_feedback_hash, scan_sensitive_block,
 };
+use crate::provider_service::ProviderService;
 use crate::{
     AppError, OperationControl, OperationKind, OperationPhase, ProgressEvent, ProjectStore, Result,
 };
@@ -46,7 +42,7 @@ pub enum IntegrationCheckpoint {
 pub struct RoleBoundary {
     pub role: AiRole,
     pub profile_name: String,
-    pub boundary: DataBoundaryV3,
+    pub boundary: DataBoundary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,7 +97,7 @@ impl IntegrationService {
         }
         if let Some(path) = project.latest_verified_output()?
             && path.is_dir()
-            && verify_v3_directory(&path).is_ok()
+            && verify(&path).is_ok()
         {
             return Ok(IntegrationCheckpoint::Verified);
         }
@@ -157,27 +153,26 @@ impl IntegrationService {
         let project = ProjectStore::open(&self.project_path)?;
         let _lock = project.acquire_writer_lock()?;
         observe(control, OperationPhase::Reading, 0, None);
-        let compiler = OkcCompiler::builder()
-            .policy(CompilerPolicy::default())
-            .workspace(project.root().join("workspace/build.sqlite3"))
-            .build()?;
+        let builder =
+            CorpusBuilder::new().workspace(project.root().join("workspace/build.sqlite3"));
         let sources = project
             .manifest()
             .sources
             .iter()
             .map(source_spec)
             .collect::<Result<Vec<_>>>()?;
-        let inspection = compiler.inspect(sources)?;
+        let PreparedCorpus {
+            corpus,
+            block_texts: block_text,
+            source_count,
+        } = builder.build(sources)?;
         ensure_not_cancelled(control)?;
         observe(
             control,
             OperationPhase::Processing,
             0,
-            Some(inspection.snapshots.len() as u64),
+            Some(source_count as u64),
         );
-        let draft = compiler.plan(&inspection)?;
-        ensure_not_cancelled(control)?;
-        let (corpus, block_text) = build_corpus(&draft)?;
         let config_bytes = to_canonical_json(&project.manifest().ai_routes)?;
         let config_hash = raw_hash(b"okc:integration-config:v3\0", &config_bytes);
         let run = project.begin_or_resume_run(&corpus.corpus_hash.hex(), &config_hash)?;
@@ -476,7 +471,7 @@ impl IntegrationService {
         &self,
         destination: impl AsRef<Path>,
         control: &OperationControl,
-    ) -> Result<(V3CompiledArtifact, V3Manifest)> {
+    ) -> Result<(CompiledArtifact, CompiledVaultManifest)> {
         ensure_not_cancelled(control)?;
         let project = ProjectStore::open(&self.project_path)?;
         let plan = project.latest_approved_integration_plan()?.ok_or_else(|| {
@@ -499,9 +494,9 @@ impl IntegrationService {
         // The core owns the atomic publication barrier. Once called, callers
         // must report publication as non-cancellable until it returns.
         observe(control, OperationPhase::Publishing, 0, Some(1));
-        let artifact = project.compile_v3(&plan, &absolute)?;
+        let artifact = project.compile(&plan, &absolute)?;
         observe(control, OperationPhase::Verifying, 0, Some(1));
-        let manifest = verify_v3_directory(&artifact.path)?;
+        let manifest = verify(&artifact.path)?;
         let _lock = project.acquire_writer_lock()?;
         project.record_verified_output(&artifact.path, &manifest)?;
         observe(control, OperationPhase::Complete, 1, Some(1));
@@ -512,11 +507,11 @@ impl IntegrationService {
         &self,
         artifact: impl AsRef<Path>,
         control: &OperationControl,
-    ) -> Result<V3Manifest> {
+    ) -> Result<CompiledVaultManifest> {
         ensure_not_cancelled(control)?;
         observe(control, OperationPhase::Verifying, 0, Some(1));
         let project = ProjectStore::open(&self.project_path)?;
-        let manifest = verify_v3_directory(artifact.as_ref())?;
+        let manifest = verify(artifact.as_ref())?;
         let _lock = project.acquire_writer_lock()?;
         project.record_verified_output(artifact.as_ref(), &manifest)?;
         observe(control, OperationPhase::Complete, 1, Some(1));
@@ -537,9 +532,6 @@ impl IntegrationService {
             else {
                 return Ok(false);
             };
-            if profile.kind == okc_ai::ProviderKind::Command {
-                return Ok(false);
-            }
             let client = ProviderClient::new(profile.clone())?;
             let capabilities = okc_ai::StructuredGenerator::capabilities(&client);
             if !capabilities.structured_generation
@@ -618,74 +610,6 @@ pub(crate) fn source_spec(binding: &crate::SourceBinding) -> Result<SourceSpec> 
         source = source.with_owner_display_name(owner.clone())?;
     }
     Ok(source)
-}
-
-pub type BlockTextMap = BTreeMap<(DocumentId, BlockId), String>;
-
-pub fn build_corpus(plan: &okc_core::DraftPlan) -> Result<(IntegrationCorpus, BlockTextMap)> {
-    let mut texts = BTreeMap::new();
-    let mut documents = Vec::new();
-    for document in plan.workspace.documents.values() {
-        let document_id = DocumentId::from_parts(
-            "okc:document:v3\0",
-            &[document.document_id.hash().as_bytes()],
-        );
-        let mut blocks = Vec::new();
-        for block in &document.blocks {
-            let block_id = BlockId::from_parts(
-                "okc:block:v3\0",
-                &[
-                    document_id.hash().as_bytes(),
-                    block.block_id.hash().as_bytes(),
-                ],
-            );
-            let content_hash = ContentHash::from_domain_bytes(
-                "okc:block-content:v3\0",
-                block.comparison_text.as_bytes(),
-            );
-            blocks.push(SourceBlockV3 {
-                block_id,
-                content_hash,
-                text: block.comparison_text.clone(),
-            });
-            texts.insert((document_id, block_id), block.comparison_text.clone());
-        }
-        let mut metadata = Vec::new();
-        if let Some(Value::Object(frontmatter)) = &document.frontmatter {
-            for (key, value) in frontmatter {
-                if let Value::Array(values) = value {
-                    for (index, value) in values.iter().enumerate() {
-                        metadata.push(MetadataValueV3::new(
-                            document_id,
-                            key,
-                            u32::try_from(index).map_err(|_| {
-                                AppError::InvalidProject(
-                                    "frontmatter array exceeds u32::MAX values".into(),
-                                )
-                            })?,
-                            value,
-                        )?);
-                    }
-                } else {
-                    metadata.push(MetadataValueV3::new(document_id, key, 0, value)?);
-                }
-            }
-        }
-        documents.push(IntegrationDocument {
-            source_id: document.source_file.source_id.clone(),
-            document_id,
-            original_path: document.source_file.original_path.clone(),
-            document_hash: ContentHash::from_domain_bytes(
-                "okc:document-body:v3\0",
-                document.comparison_text.as_bytes(),
-            ),
-            blocks,
-            metadata,
-        });
-    }
-    let policy_hash =
-        ContentHash::from_domain_bytes("okc:policy:v3\0", &to_canonical_json(&plan.policy)?);
-    Ok((IntegrationCorpus::seal(policy_hash, documents)?, texts))
 }
 
 pub(crate) fn raw_hash(domain: &[u8], bytes: &[u8]) -> String {

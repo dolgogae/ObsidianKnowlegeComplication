@@ -1,6 +1,6 @@
 ---
 title: ADR-0001 — Rust Compiler Core
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

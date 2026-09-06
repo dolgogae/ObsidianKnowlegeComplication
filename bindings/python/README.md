@@ -24,8 +24,9 @@ project = client.create_project(
 
 Filesystem, provider, and compiler operations return `Job[T]`. Use `state`,
 `events()`, blocking `result()`, and `cancel()`; branch on the structured
-`OkcError.code` or `.category`, never its message. V1 and V2 are exposed only
-through auto-detected `verify_artifact()` and `explain_artifact()`.
+`OkcError.code` or `.category`, never its message. Only current Schema 3
+directories can be verified or explained; recognizable Schema 1/2 inputs
+return `ARTIFACT_SCHEMA_UNSUPPORTED`.
 
 From the repository root, build and test the extension with:
 
@@ -36,5 +37,5 @@ python -m pytest bindings/python/tests -q
 python -m mypy --strict bindings/python/tests/typing_contract.py
 ```
 
-The complete V3 approval example and release limitations are in the
+The complete current approval example and release limitations are in the
 [Python · Node.js guide](https://github.com/dolgogae/okc/blob/main/guide/python-node.md).

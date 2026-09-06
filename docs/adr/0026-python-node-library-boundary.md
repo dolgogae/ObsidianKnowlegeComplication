@@ -1,6 +1,6 @@
 ---
 title: ADR-0026 — Python and Node.js Library Boundary
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer
@@ -15,6 +15,7 @@ decision_refs:
   - ADR-0024
   - ADR-0025
   - ADR-0026
+  - ADR-0027
 source_refs:
   - HIST-CURRENT-PLAN
 ---
@@ -23,7 +24,10 @@ source_refs:
 
 ## Status
 
-Accepted on 2026-09-06 for the first non-Rust public library surfaces.
+Accepted on 2026-09-06 for the first non-Rust public library surfaces. Amended
+by ADR-0027 on 2026-09-06: artifact dispatch is current-schema-only and the
+breaking typed result boundary uses `interop_schema_version = 2`. The original
+text is preserved.
 
 ## Context
 

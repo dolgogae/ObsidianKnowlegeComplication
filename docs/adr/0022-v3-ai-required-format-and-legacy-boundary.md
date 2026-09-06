@@ -1,15 +1,16 @@
 ---
 title: ADR-0022 — V3 AI-Required Format and Legacy Boundary
-status: normative-v1
+status: normative
 owners:
   - architect
   - release-maintainer
-last_updated: 2026-09-03
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0015
   - ADR-0018
   - ADR-0019
   - ADR-0022
+  - ADR-0027
 source_refs:
   - HIST-CURRENT-PLAN
 ---
@@ -18,7 +19,9 @@ source_refs:
 
 ## Status
 
-Accepted on 2026-09-03.
+Accepted on 2026-09-03. Amended by ADR-0027 on 2026-09-06: the Schema 3 format
+and approval contract remains current, while its V1/V2 reader, rollback, and
+project-upgrade decisions are superseded. The original text is preserved.
 
 ## Context
 

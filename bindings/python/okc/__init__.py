@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Callable, Generic, Mapping, Sequence, TypeVar, cast
+from typing import Any, Callable, Generic, Mapping, Sequence, TypeVar, TypedDict, cast
 
 from . import _native
 
@@ -18,10 +18,25 @@ __all__ = [
     "Project",
     "ProviderProfile",
     "SourceInput",
+    "VerificationResult",
+    "ExplanationResult",
 ]
 
 INTEROP_SCHEMA_VERSION = _native.interop_schema_version()
 _T = TypeVar("_T")
+
+
+class VerificationResult(TypedDict):
+    interop_schema_version: int
+    valid: bool
+    artifact_path: str
+    manifest: dict[str, Any]
+
+
+class ExplanationResult(TypedDict):
+    interop_schema_version: int
+    artifact_path: str
+    record: dict[str, Any]
 
 
 def _path(value: os.PathLike[str] | str) -> str:
@@ -193,23 +208,16 @@ class OkcClient:
     def test_provider(self, name: str) -> Job[dict[str, Any]]:
         return Job(self._native.test_provider(name))
 
-    def verify_artifact(self, path: os.PathLike[str] | str) -> Job[dict[str, Any]]:
+    def verify_artifact(self, path: os.PathLike[str] | str) -> Job[VerificationResult]:
         return Job(self._native.verify_artifact(_path(path)))
 
     def explain_artifact(
         self,
         path: os.PathLike[str] | str,
         *,
-        output_path: str | None = None,
-        package: bool = False,
-        limit: int | None = None,
-        cursor: str | None = None,
-    ) -> Job[dict[str, Any]]:
-        return Job(
-            self._native.explain_artifact(
-                _path(path), output_path, package, limit, cursor
-            )
-        )
+        output_path: str,
+    ) -> Job[ExplanationResult]:
+        return Job(self._native.explain_artifact(_path(path), output_path))
 
     def _project_result(self, payload: Any) -> Project:
         if not isinstance(payload, dict) or payload.get("result_type") != "project":

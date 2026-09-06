@@ -1,6 +1,6 @@
 ---
 title: Core Rust Engineer Role Guide
-status: normative-v1
+status: normative
 owners:
   - core-rust-engineer
 last_updated: 2026-09-02
@@ -33,7 +33,7 @@ Read [`../../AGENTS.md`](../../AGENTS.md), [`../../PROJECT_CONTEXT.md`](../../PR
 ## Owned interfaces and invariants
 
 - public `okc-core` and sole `okc` executable behavior, plus the deprecated
-  `vaultc` facade and frozen V1 reader boundary;
+  current-only public surface and explicit retired-schema unsupported boundary;
 - source byte immutability and streaming limits;
 - deterministic ordered serialization and IDs;
 - stage-verify-atomic-publish workflow;

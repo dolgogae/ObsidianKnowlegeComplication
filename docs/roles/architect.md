@@ -1,6 +1,6 @@
 ---
 title: Architect Role Guide
-status: normative-v1
+status: normative
 owners:
   - architect
 last_updated: 2026-08-16
@@ -27,7 +27,7 @@ Read [`../../AGENTS.md`](../../AGENTS.md), [`../../PROJECT_CONTEXT.md`](../../PR
 
 ## Owned interfaces and invariants
 
-- boundaries among `vaultc`, protocols, adapters, and experimental packages;
+- boundaries among the current compiler, application services, adapters, and experimental packages;
 - IR and format version ownership;
 - immutable snapshot, canonical-source, provider-neutrality, approval, and provenance invariants;
 - precedence and requirement-ID consistency.

@@ -1,6 +1,6 @@
 ---
 title: ADR-0004 — Deterministic Core and Provider-Neutral AI
-status: normative-v1
+status: normative
 owners:
   - architect
   - algorithms-ai-engineer

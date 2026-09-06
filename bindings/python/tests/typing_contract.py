@@ -17,6 +17,15 @@ project_job: okc.Job[okc.Project] = client.create_project(
 )
 source = okc.SourceInput("fixture", Path("/tmp/vault"))
 project_job.cancel()
+verification_job: okc.Job[okc.VerificationResult] = client.verify_artifact(
+    Path("/tmp/CompiledVault")
+)
+explanation_job: okc.Job[okc.ExplanationResult] = client.explain_artifact(
+    Path("/tmp/CompiledVault"),
+    output_path="knowledge/topic.md",
+)
+verification_job.cancel()
+explanation_job.cancel()
 
 
 def exercise_project(value: okc.Project) -> None:

@@ -610,3 +610,31 @@ Append-only. Normative details live in specifications and accepted ADRs.
 - Rechecked the official PyPI and npm JSON endpoints for `okc-compiler`; both
   returned HTTP 404 on 2026-09-06. This is temporary availability evidence,
   not a reservation or publication authorization.
+
+## 2026-09-06 — Current Schema 3 single-source cleanup
+
+- Accepted ADR-0027 and published annotated `archive/v0.1.0` and
+  `archive/v0.2.0` tags. Their remote peeled commits are respectively
+  `7181fc2dea54288f176b66a00e2335da7f58bdfd` and
+  `b9f9e88bc531095fbeb2ece4155c980bdf10708b`; neither tag is a release.
+- Removed the Schema 1/2 compiler/readers, retired protocol crates, deprecated
+  facade, old command-provider surface, committed retired artifacts, and their
+  workspace dependencies. All seven remaining crates use version `0.3.0`.
+- Hid the retained hostile-input snapshot/Markdown/planning machinery behind
+  `CorpusBuilder::build -> PreparedCorpus`, renamed current Rust APIs without
+  generation suffixes, and preserved every current stored/hash/database/output
+  contract and the existing project schema.
+- Reduced CLI and `ArtifactService` to current directory operations. Python and
+  Node.js now expose typed interop-schema-2 verification/explanation results,
+  require an output path for explanation, and return a stable explicit error
+  for recognizable Schema 1/2 markers while other invalid inputs fail closed.
+- Normalized 56 active document statuses to `normative`, added current-only
+  specifications/guides/traceability, and retained prior ADR bodies and
+  immutable transcripts as historical records.
+- Passed the locked seven-package Rust check, 86 tests and doc-test targets,
+  warnings-as-errors Clippy, rustfmt, link test, and VitePress build. Fresh
+  Python and Node native builds each passed 12 tests plus strict type/package
+  smoke checks; Rust, Python, and Node retained artifact inventory SHA-256
+  `452ca0671e806a93b4f36f218cf9e62da899f6404c74705c2cf0ca14e413c7e5`.
+- Remote platform, performance, fuzz/TOCTOU, non-Markdown/Pack, signing, and
+  protected-publication gates remain open; stable `0.3.0` is still prohibited.

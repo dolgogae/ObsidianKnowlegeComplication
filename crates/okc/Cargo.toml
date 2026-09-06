@@ -17,9 +17,6 @@ ctrlc = "3"
 okc-app = { path = "../okc-app", features = ["native-keyring", "updater"] }
 okc-ai = { path = "../okc-ai" }
 okc-core = { path = "../okc-core" }
-okc-legacy-v1 = { package = "okc-legacy-v1", path = "../okc-legacy-v1" }
-okc-legacy-v2 = { path = "../okc-legacy-v2" }
-okc-protocol = { path = "../okc-protocol" }
 ratatui.workspace = true
 serde.workspace = true
 serde_json.workspace = true

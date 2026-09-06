@@ -1,6 +1,6 @@
 ---
 title: ALG-CNF-001 — Conflict Resolution and Output Layout
-status: normative-v1
+status: normative
 owners:
   - core-rust-engineer
 last_updated: 2026-09-02

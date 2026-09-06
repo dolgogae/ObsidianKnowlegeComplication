@@ -4,21 +4,6 @@ use thiserror::Error;
 
 pub type Result<T, E = OkcError> = std::result::Result<T, E>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StagingDispositionAction {
-    Remove,
-    MarkIncompleteAndRetain,
-}
-
-impl std::fmt::Display for StagingDispositionAction {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Remove => formatter.write_str("remove"),
-            Self::MarkIncompleteAndRetain => formatter.write_str("mark incomplete and retain"),
-        }
-    }
-}
-
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum OkcError {
@@ -50,29 +35,8 @@ pub enum OkcError {
         #[source]
         source: std::io::Error,
     },
-    #[error(
-        "Compiled Vault `{compiled_vault}` remains published after OKCPack `{pack}` publication failed: {source}"
-    )]
-    PackPublicationAfterCompile {
-        compiled_vault: PathBuf,
-        pack: PathBuf,
-        #[source]
-        source: Box<OkcError>,
-    },
-    #[error(
-        "failed to {action} staging directory `{staging}` after compilation failed ({original}): {disposition_error}"
-    )]
-    StagingDispositionFailed {
-        staging: PathBuf,
-        action: StagingDispositionAction,
-        original: Box<OkcError>,
-        #[source]
-        disposition_error: std::io::Error,
-    },
     #[error("verification failed: {0}")]
     VerificationFailed(String),
-    #[error("provider failed: {0}")]
-    Provider(String),
     #[error("I/O error at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -81,10 +45,6 @@ pub enum OkcError {
     },
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("TOML decode error: {0}")]
-    TomlDecode(#[from] toml::de::Error),
-    #[error("TOML encode error: {0}")]
-    TomlEncode(#[from] toml::ser::Error),
     #[cfg(feature = "sqlite")]
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),

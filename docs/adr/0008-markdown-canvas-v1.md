@@ -1,6 +1,6 @@
 ---
 title: ADR-0008 — Markdown and Canvas Are First-Class in V1
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

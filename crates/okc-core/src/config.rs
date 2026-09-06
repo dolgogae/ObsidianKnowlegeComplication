@@ -1,6 +1,3 @@
-use std::fs;
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
 
 use crate::error::{OkcError, Result};
@@ -32,18 +29,6 @@ impl Default for CompilerPolicy {
 }
 
 impl CompilerPolicy {
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let bytes = fs::read(path).map_err(|error| OkcError::io(path, error))?;
-        let text = std::str::from_utf8(&bytes).map_err(|error| OkcError::MalformedInput {
-            path: path.display().to_string(),
-            reason: error.to_string(),
-        })?;
-        let policy: Self = toml::from_str(text)?;
-        policy.validate()?;
-        Ok(policy)
-    }
-
     pub fn validate(&self) -> Result<()> {
         if self.schema_version != POLICY_SCHEMA_VERSION {
             return Err(OkcError::InvalidConfig(format!(
@@ -84,12 +69,12 @@ impl CompilerPolicy {
         }
         if self.paths.follow_symlinks {
             return Err(OkcError::InvalidConfig(
-                "following source symlinks is not supported by the V2 safety policy".into(),
+                "following source symlinks is not supported by the snapshot safety policy".into(),
             ));
         }
         if !self.output.reject_existing_destination {
             return Err(OkcError::InvalidConfig(
-                "V2 always rejects an existing destination; an update workflow requires a new ADR"
+                "the compiler always rejects an existing destination; an update workflow requires a new ADR"
                     .into(),
             ));
         }
@@ -128,7 +113,7 @@ impl CompilerPolicy {
             || self.dedup.rows_per_band != 4
         {
             return Err(OkcError::InvalidConfig(
-                "V2 identity policy requires 128 MinHash components in 32x4 bands".into(),
+                "the identity policy requires 128 MinHash components in 32x4 bands".into(),
             ));
         }
         if self.dedup.max_candidates_per_document == 0 {
@@ -274,7 +259,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v2_cannot_disable_existing_destination_rejection() {
+    fn policy_cannot_disable_existing_destination_rejection() {
         let mut policy = CompilerPolicy::default();
         policy.output.reject_existing_destination = false;
         assert!(matches!(policy.validate(), Err(OkcError::InvalidConfig(_))));

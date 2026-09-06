@@ -1,202 +1,54 @@
-//! Version-detecting, read-only artifact application service.
+//! Current-schema artifact verification and provenance explanation.
 //!
-//! This module is the single dispatch boundary used by the CLI and language
-//! bindings. Detection happens before a version-specific decoder is selected;
-//! mixed or unknown families fail closed.
+//! Detection happens before decoding. Recognizable retired artifacts receive
+//! an explicit unsupported-schema error; mixed, malformed, symlinked, or
+//! unknown inputs continue to fail closed as verification errors.
 
 use std::fs::{self, File};
 use std::io::Read as _;
 use std::path::Path;
 
-use okc_core::integration::{
-    V3Manifest, V3ProvenanceRecord, explain_v3_directory, verify_v3_directory,
-};
-use serde::{Deserialize, Serialize};
+use okc_core::integration::{CompiledVaultManifest, ProvenanceRecord, explain, verify};
+use serde::Deserialize;
 
 use crate::{AppError, Result};
 
 const MANIFEST_HEADER_LIMIT: u64 = 1024 * 1024;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArtifactFamily {
-    V1,
-    V2,
-    V3,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ArtifactVerification {
-    V1(okc_legacy_v1::VerificationReport),
-    V2(okc_core::VerificationReport),
-    V3(V3Manifest),
-}
-
-impl ArtifactVerification {
-    pub const fn family(&self) -> ArtifactFamily {
-        match self {
-            Self::V1(_) => ArtifactFamily::V1,
-            Self::V2(_) => ArtifactFamily::V2,
-            Self::V3(_) => ArtifactFamily::V3,
-        }
-    }
-
-    pub fn payload_json(&self) -> Result<serde_json::Value> {
-        match self {
-            Self::V1(value) => Ok(serde_json::to_value(value)?),
-            Self::V2(value) => Ok(serde_json::to_value(value)?),
-            Self::V3(value) => Ok(serde_json::to_value(value)?),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ArtifactExplanation {
-    V1(okc_legacy_v1::ProvenancePage),
-    V2(okc_core::ProvenancePage),
-    V3(V3ProvenanceRecord),
-}
-
-impl ArtifactExplanation {
-    pub const fn family(&self) -> ArtifactFamily {
-        match self {
-            Self::V1(_) => ArtifactFamily::V1,
-            Self::V2(_) => ArtifactFamily::V2,
-            Self::V3(_) => ArtifactFamily::V3,
-        }
-    }
-
-    pub fn payload_json(&self) -> Result<serde_json::Value> {
-        match self {
-            Self::V1(value) => Ok(serde_json::to_value(value)?),
-            Self::V2(value) => Ok(serde_json::to_value(value)?),
-            Self::V3(value) => Ok(serde_json::to_value(value)?),
-        }
-    }
-}
+const SUPPORTED_ARTIFACT_SCHEMA: u32 = 3;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ArtifactService;
 
 impl ArtifactService {
-    pub fn detect(&self, artifact: impl AsRef<Path>) -> Result<ArtifactFamily> {
-        detect_family(artifact.as_ref())
-    }
-
-    pub fn verify(&self, artifact: impl AsRef<Path>) -> Result<ArtifactVerification> {
+    pub fn verify(&self, artifact: impl AsRef<Path>) -> Result<CompiledVaultManifest> {
         let artifact = artifact.as_ref();
-        match detect_family(artifact)? {
-            ArtifactFamily::V1 => {
-                let compiler =
-                    okc_legacy_v1::VaultCompiler::builder()
-                        .build()
-                        .map_err(|error| {
-                            AppError::Artifact(format!("could not initialize V1 reader: {error}"))
-                        })?;
-                let mut report = compiler
-                    .verify(artifact)
-                    .map_err(|error| AppError::Artifact(error.to_string()))?;
-                // Pack verification uses a private extraction path. Never leak it.
-                report.artifact_path = artifact.to_path_buf();
-                Ok(ArtifactVerification::V1(report))
-            }
-            ArtifactFamily::V2 => {
-                let reader = okc_legacy_v2::LegacyV2Reader::new()?;
-                let mut report = reader
-                    .verify(artifact)
-                    .map_err(|error| AppError::Artifact(error.to_string()))?;
-                report.artifact_path = artifact.to_path_buf();
-                Ok(ArtifactVerification::V2(report))
-            }
-            ArtifactFamily::V3 => Ok(ArtifactVerification::V3(
-                verify_v3_directory(artifact)
-                    .map_err(|error| AppError::Artifact(error.to_string()))?,
-            )),
-        }
+        require_current_schema(artifact)?;
+        verify(artifact).map_err(|error| AppError::Artifact(error.to_string()))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn explain(
         &self,
         artifact: impl AsRef<Path>,
-        output_path: Option<&str>,
-        package: bool,
-        limit: usize,
-        cursor: Option<&str>,
-    ) -> Result<ArtifactExplanation> {
+        output_path: &str,
+    ) -> Result<ProvenanceRecord> {
         let artifact = artifact.as_ref();
-        match detect_family(artifact)? {
-            ArtifactFamily::V1 => {
-                let compiler =
-                    okc_legacy_v1::VaultCompiler::builder()
-                        .build()
-                        .map_err(|error| {
-                            AppError::Artifact(format!("could not initialize V1 reader: {error}"))
-                        })?;
-                let mut query = if package {
-                    okc_legacy_v1::ProvenanceQuery::package()
-                } else {
-                    okc_legacy_v1::ProvenanceQuery::artifact_path(required_output(output_path)?)
-                };
-                query = query
-                    .with_limit(limit)
-                    .map_err(|error| AppError::Artifact(error.to_string()))?;
-                if let Some(cursor) = cursor {
-                    query = query.with_cursor(cursor.to_owned());
-                }
-                Ok(ArtifactExplanation::V1(
-                    compiler
-                        .explain_provenance_page(artifact, &query)
-                        .map_err(|error| AppError::Artifact(error.to_string()))?,
-                ))
-            }
-            ArtifactFamily::V2 => {
-                let reader = okc_legacy_v2::LegacyV2Reader::new()?;
-                let mut query = if package {
-                    okc_core::ProvenanceQuery::package()
-                } else {
-                    okc_core::ProvenanceQuery::artifact_path(required_output(output_path)?)
-                };
-                query = query.with_limit(limit)?;
-                if let Some(cursor) = cursor {
-                    query = query.with_cursor(cursor.to_owned());
-                }
-                Ok(ArtifactExplanation::V2(
-                    reader
-                        .explain(artifact, &query)
-                        .map_err(|error| AppError::Artifact(error.to_string()))?,
-                ))
-            }
-            ArtifactFamily::V3 => {
-                if package || cursor.is_some() {
-                    return Err(AppError::Artifact(
-                        "V3 directory explanation requires one output path and has no Pack cursor"
-                            .into(),
-                    ));
-                }
-                Ok(ArtifactExplanation::V3(
-                    explain_v3_directory(artifact, required_output(output_path)?.as_str())
-                        .map_err(|error| AppError::Artifact(error.to_string()))?,
-                ))
-            }
+        require_current_schema(artifact)?;
+        if output_path.is_empty() {
+            return Err(AppError::Artifact(
+                "provenance explanation requires an output path".into(),
+            ));
         }
+        explain(artifact, output_path).map_err(|error| AppError::Artifact(error.to_string()))
     }
 }
 
-fn required_output(output_path: Option<&str>) -> Result<String> {
-    output_path
-        .filter(|path| !path.is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| AppError::Artifact("provenance explanation requires an output path".into()))
-}
-
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct ManifestHeader {
     format_family: String,
     schema_version: u32,
 }
 
-fn detect_family(path: &Path) -> Result<ArtifactFamily> {
+fn require_current_schema(path: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() {
         return Err(AppError::Artifact(format!(
@@ -210,39 +62,38 @@ fn detect_family(path: &Path) -> Result<ArtifactFamily> {
             .and_then(|value| value.to_str())
             .unwrap_or_default();
         if extension.eq_ignore_ascii_case("vaultpack") {
-            return Ok(ArtifactFamily::V1);
+            return Err(unsupported_schema("vaultc", 1));
         }
         if extension.eq_ignore_ascii_case("okcpack") {
-            // V3 Pack publication is not implemented; every supported
-            // `.okcpack` is therefore the frozen schema-2 profile.
-            return Ok(ArtifactFamily::V2);
+            return Err(unsupported_schema("okc", 2));
         }
         return Err(AppError::Artifact(
-            "artifact file must end in .vaultpack or .okcpack".into(),
+            "artifact must be a Schema 3 Compiled Vault directory".into(),
         ));
     }
     if !metadata.is_dir() {
         return Err(AppError::Artifact(
-            "artifact must be a regular file or directory".into(),
+            "artifact must be a regular directory".into(),
         ));
     }
-    let okc_manifest = path.join(".okc/manifest.json");
-    let has_v1 = has_safe_manifest_marker(path, ".vaultc")?;
-    let has_okc = has_safe_manifest_marker(path, ".okc")?;
-    if has_v1 && has_okc {
+
+    let has_retired_marker = has_safe_manifest_marker(path, ".vaultc")?;
+    let has_current_marker = has_safe_manifest_marker(path, ".okc")?;
+    if has_retired_marker && has_current_marker {
         return Err(AppError::Artifact(
-            "artifact contains mixed V1 and V2/V3 manifest families".into(),
+            "artifact contains mixed manifest families".into(),
         ));
     }
-    if has_v1 {
-        return Ok(ArtifactFamily::V1);
+    if has_retired_marker {
+        return Err(unsupported_schema("vaultc", 1));
     }
-    if !has_okc {
+    if !has_current_marker {
         return Err(AppError::Artifact(
             "artifact directory has no recognized manifest".into(),
         ));
     }
-    let header: ManifestHeader = read_manifest_header(&okc_manifest)?;
+
+    let header = read_manifest_header(&path.join(".okc/manifest.json"))?;
     if header.format_family != "okc" {
         return Err(AppError::Artifact(format!(
             "unsupported artifact format family `{}`",
@@ -250,11 +101,19 @@ fn detect_family(path: &Path) -> Result<ArtifactFamily> {
         )));
     }
     match header.schema_version {
-        2 => Ok(ArtifactFamily::V2),
-        3 => Ok(ArtifactFamily::V3),
-        version => Err(AppError::Artifact(format!(
-            "unsupported OKC artifact schema {version}"
+        SUPPORTED_ARTIFACT_SCHEMA => Ok(()),
+        1 | 2 => Err(unsupported_schema("okc", header.schema_version)),
+        schema => Err(AppError::Artifact(format!(
+            "unsupported OKC artifact schema {schema}"
         ))),
+    }
+}
+
+fn unsupported_schema(format_family: &str, detected_schema: u32) -> AppError {
+    AppError::ArtifactSchemaUnsupported {
+        supported_schema: SUPPORTED_ARTIFACT_SCHEMA,
+        detected_schema,
+        detected_format_family: format_family.into(),
     }
 }
 
@@ -323,64 +182,138 @@ fn read_manifest_header(path: &Path) -> Result<ManifestHeader> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn detection_is_explicit_and_rejects_mixed_or_unknown_families() {
-        let temporary = tempfile::tempdir().expect("temporary");
-        let root = temporary.path().join("artifact");
-        fs::create_dir_all(root.join(".okc")).expect("OKC metadata");
-        fs::write(
-            root.join(".okc/manifest.json"),
-            br#"{"format_family":"okc","schema_version":3}"#,
-        )
-        .expect("manifest");
-        assert_eq!(
-            ArtifactService.detect(&root).expect("V3 detection"),
-            ArtifactFamily::V3
-        );
-        fs::create_dir_all(root.join(".vaultc")).expect("legacy metadata");
-        fs::write(root.join(".vaultc/manifest.json"), b"{}").expect("legacy manifest");
-        assert!(ArtifactService.detect(&root).is_err());
-
-        fs::remove_dir_all(root.join(".vaultc")).expect("remove legacy marker");
-        fs::remove_file(root.join(".okc/manifest.json")).expect("remove manifest");
-        fs::create_dir(root.join(".okc/manifest.json")).expect("directory manifest");
-        assert!(ArtifactService.detect(&root).is_err());
-
-        let unknown = temporary.path().join("unknown.okcpack.bad");
-        fs::write(&unknown, b"not an artifact").expect("unknown");
-        assert!(ArtifactService.detect(&unknown).is_err());
+    fn write_marker(root: &Path, directory: &str, manifest: &[u8]) {
+        fs::create_dir_all(root.join(directory)).expect("artifact marker");
+        fs::write(root.join(directory).join("manifest.json"), manifest).expect("manifest");
     }
 
     #[test]
-    fn invalid_manifest_json_is_an_artifact_failure() {
+    fn current_schema_is_accepted_and_mixed_or_unknown_inputs_fail_closed() {
         let temporary = tempfile::tempdir().expect("temporary");
         let root = temporary.path().join("artifact");
-        fs::create_dir_all(root.join(".okc")).expect("OKC metadata");
-        fs::write(root.join(".okc/manifest.json"), b"{not-json").expect("manifest");
+        write_marker(
+            &root,
+            ".okc",
+            br#"{"format_family":"okc","schema_version":3,"artifact_id":"artifact_test"}"#,
+        );
+        require_current_schema(&root).expect("current-schema marker");
 
-        let error = ArtifactService.detect(&root).expect_err("invalid JSON");
+        write_marker(&root, ".vaultc", b"{}");
         assert!(matches!(
-            error,
-            AppError::Artifact(message) if message.starts_with("artifact manifest is invalid JSON")
+            require_current_schema(&root),
+            Err(AppError::Artifact(message)) if message.contains("mixed")
+        ));
+
+        let unknown = temporary.path().join("unknown.bin");
+        fs::write(&unknown, b"not an artifact").expect("unknown");
+        assert!(matches!(
+            require_current_schema(&unknown),
+            Err(AppError::Artifact(_))
+        ));
+    }
+
+    #[test]
+    fn recognizable_retired_schemas_have_explicit_unsupported_details() {
+        let temporary = tempfile::tempdir().expect("temporary");
+        let schema_one = temporary.path().join("schema-one");
+        write_marker(&schema_one, ".vaultc", b"{}");
+        assert!(matches!(
+            require_current_schema(&schema_one),
+            Err(AppError::ArtifactSchemaUnsupported {
+                supported_schema: 3,
+                detected_schema: 1,
+                ref detected_format_family,
+            }) if detected_format_family == "vaultc"
+        ));
+
+        let schema_two = temporary.path().join("schema-two");
+        write_marker(
+            &schema_two,
+            ".okc",
+            br#"{"format_family":"okc","schema_version":2}"#,
+        );
+        assert!(matches!(
+            require_current_schema(&schema_two),
+            Err(AppError::ArtifactSchemaUnsupported {
+                supported_schema: 3,
+                detected_schema: 2,
+                ref detected_format_family,
+            }) if detected_format_family == "okc"
+        ));
+
+        let schema_one_pack = temporary.path().join("retired.vaultpack");
+        fs::write(&schema_one_pack, b"marker").expect("schema one pack");
+        assert!(matches!(
+            require_current_schema(&schema_one_pack),
+            Err(AppError::ArtifactSchemaUnsupported {
+                supported_schema: 3,
+                detected_schema: 1,
+                ..
+            })
+        ));
+
+        let schema_two_pack = temporary.path().join("retired.okcpack");
+        fs::write(&schema_two_pack, b"marker").expect("schema two pack");
+        assert!(matches!(
+            require_current_schema(&schema_two_pack),
+            Err(AppError::ArtifactSchemaUnsupported {
+                supported_schema: 3,
+                detected_schema: 2,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn malformed_and_oversized_manifests_fail_closed() {
+        let temporary = tempfile::tempdir().expect("temporary");
+        let malformed = temporary.path().join("malformed");
+        write_marker(&malformed, ".okc", b"{not-json");
+        assert!(matches!(
+            require_current_schema(&malformed),
+            Err(AppError::Artifact(message)) if message.starts_with("artifact manifest is invalid JSON")
+        ));
+
+        let oversized = temporary.path().join("oversized");
+        write_marker(
+            &oversized,
+            ".okc",
+            &vec![b' '; usize::try_from(MANIFEST_HEADER_LIMIT + 1).expect("limit")],
+        );
+        assert!(matches!(
+            require_current_schema(&oversized),
+            Err(AppError::Artifact(message)) if message.contains("size limit")
         ));
     }
 
     #[cfg(unix)]
     #[test]
-    fn detection_rejects_symlinked_marker_directories() {
+    fn symlinked_roots_markers_and_manifests_are_rejected() {
         use std::os::unix::fs::symlink;
 
         let temporary = tempfile::tempdir().expect("temporary");
-        let artifact = temporary.path().join("artifact");
         let external = temporary.path().join("external");
-        fs::create_dir(&artifact).expect("artifact");
-        fs::create_dir(&external).expect("external");
-        fs::write(
-            external.join("manifest.json"),
+        write_marker(
+            &external,
+            ".okc",
             br#"{"format_family":"okc","schema_version":3}"#,
+        );
+        let root_alias = temporary.path().join("root-alias");
+        symlink(&external, &root_alias).expect("root symlink");
+        assert!(require_current_schema(&root_alias).is_err());
+
+        let marker_alias = temporary.path().join("marker-alias");
+        fs::create_dir(&marker_alias).expect("artifact");
+        symlink(external.join(".okc"), marker_alias.join(".okc")).expect("marker symlink");
+        assert!(require_current_schema(&marker_alias).is_err());
+
+        let manifest_alias = temporary.path().join("manifest-alias");
+        fs::create_dir_all(manifest_alias.join(".okc")).expect("marker");
+        symlink(
+            external.join(".okc/manifest.json"),
+            manifest_alias.join(".okc/manifest.json"),
         )
-        .expect("manifest");
-        symlink(&external, artifact.join(".okc")).expect("marker symlink");
-        assert!(ArtifactService.detect(&artifact).is_err());
+        .expect("manifest symlink");
+        assert!(require_current_schema(&manifest_alias).is_err());
     }
 }

@@ -310,28 +310,6 @@ pub(crate) fn collect_entries(
     }
 }
 
-pub(crate) fn read_source_entry(
-    source: &SourceSpec,
-    expected_file: &SourceFile,
-    policy: &CompilerPolicy,
-) -> Result<Vec<u8>> {
-    let mut diagnostics = Vec::new();
-    let entries = collect_entries(source, policy, &mut diagnostics)?;
-    let entry = entries
-        .into_iter()
-        .find(|entry| entry.logical_path == expected_file.logical_path)
-        .ok_or_else(|| OkcError::IdentityMismatch(expected_file.logical_path.clone()))?;
-    if entry.original_path != expected_file.original_path
-        || entry.path_encoding != expected_file.path_encoding
-    {
-        return Err(OkcError::IdentityMismatch(format!(
-            "source path spelling changed for `{}`",
-            expected_file.logical_path
-        )));
-    }
-    Ok(entry.bytes)
-}
-
 #[allow(
     clippy::too_many_lines,
     reason = "directory traversal keeps exclusion, containment, race, and limit checks adjacent"
@@ -405,8 +383,11 @@ fn collect_directory(
             &excludes,
         ) {
             diagnostics.push(
-                Diagnostic::warning(DiagnosticCode::ExcludedPath, "path excluded by V2 policy")
-                    .for_path(path_pair.logical_path),
+                Diagnostic::warning(
+                    DiagnosticCode::ExcludedPath,
+                    "path excluded by snapshot policy",
+                )
+                .for_path(path_pair.logical_path),
             );
             continue;
         }
@@ -463,8 +444,11 @@ fn collect_directory(
     pruned.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
     pruned.dedup();
     diagnostics.extend(pruned.drain(..).map(|logical| {
-        Diagnostic::warning(DiagnosticCode::ExcludedPath, "path excluded by V2 policy")
-            .for_path(logical)
+        Diagnostic::warning(
+            DiagnosticCode::ExcludedPath,
+            "path excluded by snapshot policy",
+        )
+        .for_path(logical)
     }));
     reject_duplicate_paths(&entries)?;
     Ok(entries)
@@ -536,8 +520,11 @@ fn collect_zip(
         }
         if is_excluded(&central_entry.path.logical_path, false, false, &excludes) {
             diagnostics.push(
-                Diagnostic::warning(DiagnosticCode::ExcludedPath, "path excluded by V2 policy")
-                    .for_path(central_entry.path.logical_path.clone()),
+                Diagnostic::warning(
+                    DiagnosticCode::ExcludedPath,
+                    "path excluded by snapshot policy",
+                )
+                .for_path(central_entry.path.logical_path.clone()),
             );
             continue;
         }
@@ -837,6 +824,10 @@ fn collect_zip(
 }
 
 #[cfg(feature = "archives")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "archive validation keeps one ordered, fail-closed resource-accounting path"
+)]
 fn collect_tar_zst(
     path: &Path,
     policy: &CompilerPolicy,
@@ -899,8 +890,11 @@ fn collect_tar_zst(
         }
         if is_excluded(&path_pair.logical_path, false, false, &excludes) {
             diagnostics.push(
-                Diagnostic::warning(DiagnosticCode::ExcludedPath, "path excluded by V2 policy")
-                    .for_path(path_pair.logical_path),
+                Diagnostic::warning(
+                    DiagnosticCode::ExcludedPath,
+                    "path excluded by snapshot policy",
+                )
+                .for_path(path_pair.logical_path),
             );
             continue;
         }

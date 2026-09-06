@@ -1,5 +1,5 @@
 from os import PathLike
-from typing import Any, Callable, Generic, Literal, Mapping, Sequence, TypeVar
+from typing import Any, Callable, Generic, Literal, Mapping, Sequence, TypeVar, TypedDict
 
 INTEROP_SCHEMA_VERSION: int
 ProviderKind = Literal["open_ai", "anthropic", "gemini", "ollama", "open_ai_compatible"]
@@ -7,6 +7,17 @@ JobState = Literal["queued", "running", "cancelling", "publishing", "completed",
 CancelOutcome = Literal["requested", "too_late", "already_finished"]
 AiRole = Literal["embedding", "organizer", "synthesis", "critic"]
 _T = TypeVar("_T")
+
+class VerificationResult(TypedDict):
+    interop_schema_version: int
+    valid: bool
+    artifact_path: str
+    manifest: dict[str, Any]
+
+class ExplanationResult(TypedDict):
+    interop_schema_version: int
+    artifact_path: str
+    record: dict[str, Any]
 
 class OkcError(RuntimeError):
     code: str
@@ -49,8 +60,8 @@ class OkcClient:
     def create_project(self, path: PathLike[str] | str, *, name: str, curator_id: str, policy_version: str = "policy-v3", language: str | None = None) -> Job[Project]: ...
     def open_project(self, path: PathLike[str] | str) -> Job[Project]: ...
     def test_provider(self, name: str) -> Job[dict[str, Any]]: ...
-    def verify_artifact(self, path: PathLike[str] | str) -> Job[dict[str, Any]]: ...
-    def explain_artifact(self, path: PathLike[str] | str, *, output_path: str | None = None, package: bool = False, limit: int | None = None, cursor: str | None = None) -> Job[dict[str, Any]]: ...
+    def verify_artifact(self, path: PathLike[str] | str) -> Job[VerificationResult]: ...
+    def explain_artifact(self, path: PathLike[str] | str, *, output_path: str) -> Job[ExplanationResult]: ...
 
 class Project:
     @property

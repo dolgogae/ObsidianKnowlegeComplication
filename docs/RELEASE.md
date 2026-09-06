@@ -1,6 +1,6 @@
 ---
 title: OKC Release Procedure
-status: normative-v1
+status: normative
 owners:
   - release-maintainer
   - qa-security-engineer
@@ -14,6 +14,7 @@ decision_refs:
   - ADR-0024
   - ADR-0025
   - ADR-0026
+  - ADR-0027
 source_refs:
   - HIST-CURRENT-PLAN
 ---
@@ -38,10 +39,10 @@ evidence is attached to that SHA:
    npm tarballs. Tests cover CPython 3.11 through every supported stable minor,
    Node.js 22.13.0 and the current supported line, Python type stubs,
    ESM/CommonJS imports, and TypeScript declarations.
-6. CLI, Python, and Node.js run the shared fixtures with identical artifact
-   bytes, identities, provenance, verification, and explanation results. The
-   complete V3 human-approval workflow and frozen V1/V2 read-only fixtures pass
-   in both language packages.
+6. Rust, CLI, Python, and Node.js run the shared current fixture with identical
+   artifact bytes, identities, provenance, verification, and explanation
+   results. Temporary recognizable Schema 1/2 markers return only the exact
+   current unsupported-schema error in every public surface.
 7. Both macOS binaries pass Developer ID verification and Apple notarization.
 8. The Windows PE passes Authenticode verification and carries a valid RFC3161
    timestamp. cargo-dist's SSL.com production signer is configured, but its
@@ -79,8 +80,8 @@ environment, Apple certificate/notarization workflow, remote two-pass CI
 evidence, remote language-version/native-package matrix evidence, and QG-006
 benchmark evidence do not exist in this checkout. Local macOS arm64 wheel,
 sdist, root npm tarball, platform-addon tarball, clean-install, type, checksum,
-and SBOM checks pass, but neither language package is published. The V3
+and SBOM checks pass, but neither language package is published. The current
 semantic scale, Pack/non-Markdown materialization, manual-section review,
-schema-3 command adapter, provider conformance, and TUI PTY/platform gates in
+current command adapter, provider conformance, and TUI PTY/platform gates in
 the testing specification are also open.
 Therefore publishing stable `0.3.0` is currently prohibited.

@@ -84,6 +84,19 @@ export interface RemoteConsent {
 
 export type JsonObject = Record<string, unknown>
 
+export interface VerificationResult {
+  interopSchemaVersion: number
+  valid: boolean
+  artifactPath: string
+  manifest: JsonObject
+}
+
+export interface ExplanationResult {
+  interopSchemaVersion: number
+  artifactPath: string
+  record: JsonObject
+}
+
 export class OkcClient {
   constructor(options?: ClientOptions)
   readonly providerProfiles: readonly ProviderProfile[]
@@ -91,8 +104,8 @@ export class OkcClient {
   createProject(path: string, options: { name: string; curatorId: string; policyVersion?: string; language?: string | null }): Job<Project>
   openProject(path: string): Job<Project>
   testProvider(name: string): Job<JsonObject>
-  verifyArtifact(path: string): Job<JsonObject>
-  explainArtifact(path: string, options?: { outputPath?: string | null; package?: boolean; limit?: number | null; cursor?: string | null }): Job<JsonObject>
+  verifyArtifact(path: string): Job<VerificationResult>
+  explainArtifact(path: string, options: { outputPath: string }): Job<ExplanationResult>
 }
 
 export class Project {

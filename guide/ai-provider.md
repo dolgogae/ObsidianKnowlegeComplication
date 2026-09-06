@@ -1,149 +1,127 @@
 ---
 title: AI Provider 연결
-description: 명시적 공개, recording, replay와 proposal approval 사용법
+description: 현재 provider profile, credential, disclosure와 proposal approval 경계
 ---
 
 # AI Provider 연결하기
 
-새 V3 Vault를 만들 때 AI integration은 필수입니다. provider는 파일을 직접
-바꾸지 않고 evidence에 묶인 proposal만 반환하며, schema validation,
-critic, 사람의 명시적 승인을 모두 통과해야 합니다. 완료 recording을
-사용한 offline compile/verify에는 live provider가 필요 없습니다.
+현재 Schema 3 integration에는 embedding, organizer, synthesis, critic 역할이
+필요합니다. Provider는 evidence에 묶인 proposal만 반환합니다. Local schema와
+identity/evidence 검증, critic, curator approval을 모두 통과해야 output에
+반영됩니다. 완료 recording을 사용하는 compile/verify/explain에는 live
+provider가 필요 없습니다.
 
-V3 profile/route 설정과 review 명령은 [V3 AI 통합](./v3-integration.md)을
-따르세요.
+전체 실행 순서는 [AI 통합](./integration.md)을 따르세요.
 
-## V3 credential 저장 경계
+## Profile 만들기
 
-TUI에서는 OS keychain 또는 환경변수 참조를 선택할 수 있습니다. keychain
-token은 고정 길이 mask로 입력하며 profile TOML에는 고정 OKC service 아래의
-profile별 account 이름만 기록됩니다. token 값과 길이는 project, SQLite,
-recording, 오류, `Debug`, 화면에 기록되지 않고 입력 buffer는 사용 뒤
-zeroize됩니다. keychain이 잠겼거나 지원되지 않으면 환경변수 이름을
-사용하거나 취소해야 하며 평문 파일로 대체하지 않습니다.
-
-CLI profile은 기존 환경변수 방식과 `--os-keychain ACCOUNT` 참조를 모두
-지원합니다. 실제 secret을 인자로 전달하지 않습니다.
+지원하는 HTTP adapter는 OpenAI, Anthropic, Gemini, Ollama,
+OpenAI-compatible입니다. Endpoint와 model ID를 명시합니다.
 
 ```sh
-okc provider add default --kind open-ai \
-  --endpoint https://api.openai.com/v1 --model MODEL \
+okc provider add local \
+  --kind ollama \
+  --endpoint http://127.0.0.1:11434 \
+  --model MODEL
+okc provider test local
+```
+
+Hosted profile에는 secret 값 대신 환경변수 이름을 저장합니다.
+
+```sh
+export OPENAI_API_KEY='process-owned-secret'
+okc provider add hosted \
+  --kind open-ai \
+  --endpoint https://api.openai.com/v1 \
+  --model MODEL \
   --api-key-env OPENAI_API_KEY
-
-okc provider add default --kind open-ai \
-  --endpoint https://api.openai.com/v1 --model MODEL \
-  --os-keychain default
 ```
 
-아래 내용은 frozen V2의 선택적 NDJSON augmentation 호환 흐름입니다.
-
-::: warning 아래 V2 Provider는 별도 실행 파일입니다
-이 저장소는 특정 LLM provider를 번들하지 않습니다. `augment`를 사용하려면
-OKC protocol V2 NDJSON을 구현한 실행 파일이 필요합니다.
-:::
-
-## 문서 선택하기
-
-provider에 plan 전체가 자동 공개되지는 않습니다. `plan.json`에서 document
-ID를 확인합니다.
+CLI/TUI에서는 opaque OS-keychain account도 사용할 수 있습니다.
 
 ```sh
-jq -r '.workspace.documents | keys[]' okc-run/plan.json
+okc provider add hosted-keychain \
+  --kind open-ai \
+  --endpoint https://api.openai.com/v1 \
+  --model MODEL \
+  --os-keychain hosted-keychain
 ```
 
-선택한 문서만 보내려면 `--document-id`를 한 번 이상 사용합니다.
+Keychain이 잠겼거나 지원되지 않으면 환경변수 참조를 선택하거나 취소합니다.
+평문 파일 fallback은 없습니다. Python/Node.js profile은 keychain을 열지 않고
+환경변수 이름만 허용합니다.
+
+## 역할별 route
+
+한 profile을 기본값으로 지정하거나 role override를 둡니다.
 
 ```sh
-okc augment okc-run/plan.json \
-  --provider-cmd ./my-okc-provider \
-  --provider-arg model-name \
-  --document-id doc_... \
-  --out okc-run/augmentation.jsonl
+okc --project Team.okc-project project ai-route set hosted
+okc --project Team.okc-project \
+  project ai-route set embedding local-embedding
+okc --project Team.okc-project \
+  project ai-route set critic strict-critic
 ```
 
-모든 문서를 보내려면 의도를 명시해야 합니다.
+Anthropic profile은 native embedding을 선언하지 않으므로 별도 embedding
+profile이 필요합니다. Capability test는 exact provider/model response identity,
+strict structured generation, embedding support와 bounds를 검사합니다.
+
+`command` kind는 예약 값일 뿐 현재 adapter가 없습니다. Profile test와
+language adapter에서 fail-closed로 거부됩니다.
+
+## 공개 전 preflight
 
 ```sh
-okc augment okc-run/plan.json \
-  --provider-cmd ./my-okc-provider \
-  --all-documents \
-  --out okc-run/augmentation.jsonl
+okc --project Team.okc-project integrate
 ```
 
-현재 선택된 문서는 파싱된 모든 block을 전송합니다. block 단위 공개 선택은
-아직 구현되지 않았습니다. provider는 shell 없이 직접 실행되며 stdout에는
-protocol NDJSON만, 로그는 stderr에 써야 합니다.
+OKC는 source block을 먼저 scan하고 finding의 category, 위치, span, content
+hash만 저장합니다. Matched secret text는 기록하지 않습니다. Effective finding이
+있으면 embedding/organizer 및 관련 cluster synthesis/critic은 local route여야
+합니다.
 
-## 기록 검증과 Replay
-
-live exchange는 canonical JSONL recording으로 남습니다. 다음 작업은 provider,
-네트워크 또는 출력 Vault를 사용하지 않습니다.
+Remote cache miss는 비대화형 실행에서 두 명시적 동의를 요구합니다.
 
 ```sh
-okc validate okc-run/plan.json \
-  --augmentation okc-run/augmentation.jsonl
-
-okc replay okc-run/plan.json \
-  --augmentation okc-run/augmentation.jsonl \
-  --out okc-run/replayed-augmentation.jsonl
+okc --project Team.okc-project integrate \
+  --allow-remote-provider --yes
 ```
 
-유효한 replay 결과는 원래 recording과 byte-identical합니다.
+이 값은 한 호출에만 적용되며 project나 recording에 다음 호출의 권한으로
+저장되지 않습니다. Resume/regeneration에서 새 remote miss가 생기면 다시
+동의해야 합니다.
 
-## Proposal 승인하기
+## Recording, validation, approval
 
-validation record의 `proposal_id`와 `proposal_content_hash`를 결정 문서의
-`decisions` 배열에 넣습니다.
+Application service가 portable request schema를 local에서 검사하고 provider
+response의 JSON, bounds, request hash, response identity, IDs, coverage,
+evidence를 다시 검증합니다. Request/response는 immutable object와 journal에
+content hash로 기록됩니다. 동일한 complete cache key만 resume할 수 있습니다.
 
-```json
-{
-  "plan_id": "plan_...",
-  "proposal_id": "proposal-1",
-  "proposal_content_hash": "content hash",
-  "approved": true,
-  "approver": "curator-id",
-  "policy_version": "team-policy-v2"
-}
-```
+Provider가 taxonomy나 synthesis를 반환해도 자동 승인되지 않습니다.
 
 ```sh
-okc approve okc-run/plan.json \
-  --decisions okc-run/decisions.json \
-  --proposals okc-run/replayed-augmentation.jsonl \
-  --out okc-run/approved-plan.json
+okc --project Team.okc-project review taxonomy show
+okc --project Team.okc-project review taxonomy approve
+okc --project Team.okc-project review cluster show CLUSTER_ID
+okc --project Team.okc-project review cluster approve CLUSTER_ID
 ```
 
-승인하지 않을 proposal은 결정 자체를 생략하거나 `approved: false`로 기록할
-수 있습니다. Provider가 conflict를 설명하는 proposal을 내더라도 직접
-target을 선택하거나 자기 proposal을 승인할 수는 없습니다.
+Omission/minor waiver는 exact ID별 curator rationale이 필요하고
+major/critical finding은 regeneration으로 해결해야 합니다.
 
-## 원격 Provider 동의
+## Secret과 오류 안전성
 
-원격 공개는 기본 거부됩니다. Plan을 만들 때 정책으로 허용하고 live call에서
-일회성 동의를 다시 제공해야 합니다.
+Token 값과 길이는 project, SQLite, profile serialization, recording,
+provenance, progress event, 오류, `Debug`, 화면에 들어가지 않습니다. Provider
+job 시작 시 environment 값을 다시 읽고 redacted/zeroizing 타입으로 다룹니다.
+URL credential과 credential-like option key도 거부됩니다.
 
-```toml
-schema_version = 2
+Transport는 TLS verification, bounded response/deadline, cancellation과 제한된
+retry를 적용합니다. 자동화는 human message를 파싱하지 말고 structured error
+code/category를 사용하세요.
 
-[augmentation]
-allow_remote_providers = true
-```
-
-```sh
-okc --policy remote-policy.toml plan \
-  personal=/vaults/Personal \
-  --out okc-run/remote-plan.json
-
-okc augment okc-run/remote-plan.json \
-  --provider-cmd ./my-remote-provider \
-  --all-documents \
-  --allow-remote-provider \
-  --out okc-run/remote-augmentation.jsonl
-```
-
-둘 중 하나라도 빠지면 source projection을 provider에 쓰기 전에 실패합니다.
-Replay는 새 source text를 공개하지 않으므로 동의 플래그를 받지 않습니다.
-
-전체 wire schema와 hard limits는
-[AI Provider 규범 명세](https://github.com/dolgogae/okc/blob/main/docs/specs/ai-provider-and-augmentation.md)를
-참고하세요.
+규범 상세는
+[AI Provider 명세](https://github.com/dolgogae/okc/blob/main/docs/specs/ai-provider-and-augmentation.md)에
+있습니다.

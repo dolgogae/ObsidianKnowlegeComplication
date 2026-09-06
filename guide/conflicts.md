@@ -1,114 +1,89 @@
 ---
-title: 충돌 검토
-description: plan 종료 코드 4와 LINK_AMBIGUITY 결정을 처리하는 방법
+title: 검토와 충돌
+description: taxonomy, contradiction, omission과 critic finding을 안전하게 검토하는 방법
 ---
 
-# 충돌을 검토하고 결정하기
+# 충돌을 추측하지 않고 검토하기
 
-OKC는 모호한 링크를 발견 순서대로 임의 선택하지 않습니다. 선택 가능한
-대상들을 `plan.json`에 밀봉하고, 사용자가 그 후보 중 하나를 선택하거나
-원본 표현을 유지하도록 요구합니다.
+현재 OKC는 AI나 다수결이 어떤 주장이 참인지 결정하게 하지 않습니다.
+Taxonomy는 문서를 정확히 한 cluster에 배치하고, synthesis는 서로 충돌하는
+주장을 각 source/time/context evidence와 함께 보존해야 합니다. 모든 결과는
+critic과 curator review를 통과합니다.
 
-## 종료 코드 4는 무엇인가요?
+## Taxonomy 충돌
 
-다음 메시지는 plan 생성 실패가 아닙니다.
-
-```text
-okc: wrote `okc-run/plan.json` with 1 required conflict(s) awaiting a decision
-```
-
-`plan.json`은 만들어졌고 검토 단계에 진입했습니다. `jq`를 사용하면 미해결
-필수 충돌만 볼 수 있습니다.
+먼저 전체 배치를 확인합니다.
 
 ```sh
-jq '[.conflicts[] | select(.required and .resolution == "unresolved")]' \
-  okc-run/plan.json
+okc --project Team.okc-project review taxonomy show
+okc --project Team.okc-project \
+  review taxonomy export --out taxonomy.json
 ```
 
-각 conflict에서 다음 값을 확인합니다.
-
-- 최상위 `plan_id`
-- conflict의 `conflict_id`
-- conflict의 `content_hash`
-- `subject`와 밀봉된 후보 IDs
-
-## 결정 문서의 바깥 구조
-
-```json
-{
-  "schema_version": 2,
-  "plan_id": "plan_...",
-  "decisions": [],
-  "conflicts": []
-}
-```
-
-AI proposal decision은 `decisions`, link ambiguity decision은 `conflicts`에
-들어갑니다. 모든 값은 현재 plan에서 복사해야 합니다.
-
-## 원본 링크 보존
-
-의도적으로 원본의 모호한 링크를 남기려면 다음 객체를 `conflicts` 배열에
-넣습니다.
-
-```json
-{
-  "plan_id": "plan_...",
-  "conflict_id": "conflict_...",
-  "conflict_content_hash": "plan의 content_hash",
-  "action": { "type": "waive_preserve_original" },
-  "decided_by": "curator-id",
-  "policy_version": "team-policy-v2",
-  "rationale": "두 대상 모두 유지하고 원본 표현을 보존"
-}
-```
-
-## Markdown 대상 선택
-
-`target_document_id`는 해당 conflict의 `documents` 후보 중 정확히 하나여야
-합니다.
-
-```json
-{
-  "type": "select_markdown_target",
-  "target_document_id": "doc_..."
-}
-```
-
-OKC는 target만 바꾸고 embed 여부, display text, heading, block suffix는
-보존합니다. 사용자가 임의의 replacement text나 경로를 넣을 수는 없습니다.
-
-## Canvas 대상 선택
-
-Canvas reference의 밀봉된 후보를 그대로 사용합니다.
-
-```json
-{
-  "type": "select_canvas_target",
-  "target": { "kind": "document", "id": "doc_..." }
-}
-```
-
-실제 후보에 따라 `kind`는 `document`, `asset`, `canvas`, `base`가 될 수
-있습니다. Canvas의 알려지지 않은 JSON 필드는 target 선택 후에도 유지됩니다.
-
-## 승인하기
-
-모든 필수 conflict에 한 번씩 결정한 후 실행합니다.
+편집한 배열은 모든 현재 `DocumentId`를 정확히 한 번 포함해야 하고 canonical
+path가 안전하고 고유해야 합니다. 누락, 중복, foreign ID, traversal path가
+있으면 승인되지 않습니다.
 
 ```sh
-okc approve okc-run/plan.json \
-  --decisions okc-run/decisions.json \
-  --out okc-run/approved-plan.json
+okc --project Team.okc-project \
+  review taxonomy approve \
+  --edited-clusters taxonomy.json \
+  --rationale "중복 주제를 합치고 팀 용어로 이름을 바꿈"
 ```
 
-다음 경우 fail-closed로 거부됩니다.
+수정은 새 taxonomy hash를 만들며 이전 cluster proposal과 approval을 stale로
+만듭니다.
 
-- 다른 plan의 ID나 content hash 사용
-- 같은 conflict에 중복 결정
-- 후보 집합 밖의 target 선택
-- 필요한 conflict decision 누락
-- 자유 형식 replacement 경로 사용
+## Synthesis와 contradiction
 
-Source나 정책이 바뀌었다면 예전 결정을 고쳐 재사용하지 말고 새 plan과 새
-결정을 만드세요.
+```sh
+okc --project Team.okc-project integrate
+okc --project Team.okc-project review cluster list
+okc --project Team.okc-project review cluster show CLUSTER_ID
+```
+
+Cluster 출력에서 다음을 대조합니다.
+
+- 모든 source block/frontmatter value가 exactly-one disposition인지;
+- 각 non-empty section이 current block evidence를 인용하는지;
+- `integrated` content가 section 또는 contradiction에 나타나는지;
+- `preserved_verbatim` content가 출력에서 유지되는지;
+- contradiction의 각 claim이 독립 evidence와 context를 갖는지;
+- critic이 전체 source inventory와 현재 proposal을 비교했는지.
+
+근거가 누락되거나 결론이 한 source를 임의로 지우면 feedback으로 새 revision을
+만듭니다.
+
+```sh
+okc --project Team.okc-project \
+  review cluster regenerate CLUSTER_ID \
+  --feedback "양쪽 주장의 날짜와 source evidence를 모두 보존"
+okc --project Team.okc-project integrate
+```
+
+## Omission과 critic finding
+
+`critical` 또는 `major` finding은 승인할 수 없습니다. Proposal을 고치고 새
+critic을 받아야 합니다. `minor` finding만 exact finding ID와 검토 이유를
+waiver할 수 있습니다.
+
+`omission_proposed` disposition도 자동으로 삭제되지 않습니다. 각 target에
+정확한 key와 이유가 있어야 omission이 효력을 얻습니다.
+
+```sh
+okc --project Team.okc-project review cluster approve CLUSTER_ID \
+  --omission-rationale 'DOCUMENT_ID:TARGET_ID=반복 헤더이며 근거와 대조함' \
+  --minor-waiver 'FINDING_ID=표현상 경고를 검토하고 수용함'
+```
+
+Unknown, duplicate, missing, stale, 또는 다른 revision의 ID는 fail-closed로
+거부됩니다. 자유 형식 replacement text/path를 approval로 주입할 수 없습니다.
+
+## 변경 뒤에는 다시 검토
+
+Source, route, policy, prompt/schema, taxonomy, proposal, critic, recording이
+바뀌면 dependent approval은 stale입니다. 기존 JSON이나 rationale을 고쳐
+권위를 되살리지 말고, 새 revision의 실제 ID/hash를 확인해 다시 승인하세요.
+
+모든 cluster가 승인된 경우에만 `ApprovedIntegrationPlan`이 봉인되고 offline
+compile이 가능해집니다.

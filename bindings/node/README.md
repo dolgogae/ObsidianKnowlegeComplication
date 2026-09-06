@@ -22,8 +22,9 @@ const project = await client.createProject('/absolute/notes.okc-project', {
 
 Filesystem, provider, and compiler operations return `Job<T>`. Use `state`,
 `events()`, asynchronous `result()`, and `cancel()`; branch on the structured
-`OkcError.code` or `.category`, never its message. V1 and V2 are exposed only
-through auto-detected `verifyArtifact()` and `explainArtifact()`.
+`OkcError.code` or `.category`, never its message. Only current Schema 3
+directories can be verified or explained; recognizable Schema 1/2 inputs
+return `ARTIFACT_SCHEMA_UNSUPPORTED`.
 
 From the repository root, build and test the current native addon with:
 
@@ -34,6 +35,6 @@ npm test --prefix bindings/node
 npm run typecheck --prefix bindings/node
 ```
 
-The complete V3 approval example, CommonJS usage, and release limitations are
+The complete current approval example, CommonJS usage, and release limitations are
 in the
 [Python · Node.js guide](https://github.com/dolgogae/okc/blob/main/guide/python-node.md).

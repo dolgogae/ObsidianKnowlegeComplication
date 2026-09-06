@@ -220,8 +220,15 @@ class OkcClient {
     return new Job(this._native.verifyArtifact(path))
   }
 
-  explainArtifact(path, { outputPath = null, package: pack = false, limit = null, cursor = null } = {}) {
-    return new Job(this._native.explainArtifact(path, outputPath, pack, limit, cursor))
+  explainArtifact(path, options) {
+    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+      throw argumentError('explainArtifact requires an options object')
+    }
+    const { outputPath } = options
+    if (typeof outputPath !== 'string' || outputPath.length === 0) {
+      throw argumentError('explainArtifact requires a non-empty outputPath')
+    }
+    return new Job(this._native.explainArtifact(path, outputPath))
   }
 
   _projectResult(value) {

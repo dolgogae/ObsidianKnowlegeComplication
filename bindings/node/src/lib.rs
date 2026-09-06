@@ -20,7 +20,7 @@ fn encode<T: Serialize>(value: &T) -> Result<String> {
 fn decode<T: DeserializeOwned>(value: &str, label: &str) -> Result<T> {
     serde_json::from_str(value).map_err(|error| {
         napi_error(&OkcError::invalid_argument(format!(
-            "{label} must be valid schema-version-1 JSON ({:?})",
+            "{label} must be valid schema-version-2 JSON ({:?})",
             error.classify()
         )))
     })
@@ -167,25 +167,8 @@ impl NativeClient {
     }
 
     #[napi]
-    pub fn explain_artifact(
-        &self,
-        path: String,
-        output_path: Option<String>,
-        package: Option<bool>,
-        limit: Option<u32>,
-        cursor: Option<String>,
-    ) -> NativeJob {
-        NativeJob::new(
-            self.inner
-                .explain_artifact(
-                    path,
-                    output_path,
-                    package.unwrap_or(false),
-                    limit.map(|value| value as usize),
-                    cursor,
-                )
-                .erase(),
-        )
+    pub fn explain_artifact(&self, path: String, output_path: String) -> NativeJob {
+        NativeJob::new(self.inner.explain_artifact(path, output_path).erase())
     }
 }
 

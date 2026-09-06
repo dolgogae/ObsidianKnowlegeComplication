@@ -2353,9 +2353,6 @@ dependencies = [
  "okc-ai",
  "okc-app",
  "okc-core",
- "okc-legacy-v1",
- "okc-legacy-v2",
- "okc-protocol",
  "ratatui",
  "serde",
  "serde_json",
@@ -2386,8 +2383,6 @@ dependencies = [
  "keyring",
  "okc-ai",
  "okc-core",
- "okc-legacy-v1",
- "okc-legacy-v2",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2399,7 +2394,7 @@ dependencies = [
 
 [[package]]
 name = "okc-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "atomicwrites",
  "caseless",
@@ -2407,7 +2402,6 @@ dependencies = [
  "data-encoding",
  "hex",
  "ignore",
- "okc-protocol",
  "rayon",
  "rusqlite",
  "rustix 1.1.4",
@@ -2418,7 +2412,6 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.20",
- "toml",
  "tracing",
  "unicode-normalization",
  "unicode-segmentation",
@@ -2440,50 +2433,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "okc-legacy-protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "okc-legacy-v1"
-version = "0.1.0"
-dependencies = [
- "atomicwrites",
- "caseless",
- "comrak",
- "data-encoding",
- "hex",
- "ignore",
- "okc-legacy-protocol",
- "rayon",
- "rusqlite",
- "rustix 1.1.4",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sha2 0.10.9",
- "tar",
- "tempfile",
- "thiserror 2.0.20",
- "toml",
- "tracing",
- "unicode-normalization",
- "unicode-segmentation",
- "zip",
- "zstd",
-]
-
-[[package]]
-name = "okc-legacy-v2"
-version = "0.2.0"
-dependencies = [
- "okc-core",
-]
-
-[[package]]
 name = "okc-node"
 version = "0.3.0"
 dependencies = [
@@ -2491,14 +2440,6 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "okc-interop",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "okc-protocol"
-version = "0.2.0"
-dependencies = [
  "serde",
  "serde_json",
 ]
@@ -4238,13 +4179,6 @@ dependencies = [
  "js-sys",
  "serde_core",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "vaultc"
-version = "0.2.0"
-dependencies = [
- "okc-core",
 ]
 
 [[package]]

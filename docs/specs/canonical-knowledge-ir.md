@@ -1,18 +1,18 @@
 ---
 title: Canonical Knowledge Intermediate Representation
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer
-last_updated: 2026-09-03
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0003
   - ADR-0008
   - ADR-0012
-  - ADR-0015
   - ADR-0016
   - ADR-0022
   - ADR-0024
+  - ADR-0027
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -22,137 +22,102 @@ source_refs:
 
 ## Purpose
 
-The canonical IR separates source syntax from output policy. It is versioned,
-serializable, deterministic, and sufficient to re-plan semantic output policy
-without reparsing unchanged files. Exact source spans and byte identities live
-in the IR; original bytes remain owned by the immutable source snapshot and are
-reopened when compilation or an exact post-rewrite hash requires them. Raw
-source copies MUST NOT be embedded in `DraftPlan` or Compiled Vault audit data.
+Canonical IR separates hostile source syntax from semantic and output policy.
+Original bytes remain owned by immutable snapshots. Parsed comparison text,
+frontmatter values, exact source spans, and domain-separated identities are
+sealed into a deterministic corpus; raw source copies MUST NOT enter a plan or
+Compiled Vault audit directory.
 
 ## Identity hierarchy
 
 ```text
 SourceId
 └── SnapshotId
-    ├── SourceFileId
-    │   ├── DocumentId
-    │   │   ├── SectionId
-    │   │   │   └── BlockId
-    │   │   └── LinkId / EvidenceRef
-    │   ├── CanvasId
-    │   ├── BaseArtifactId
-    │   └── AssetId
-    └── Manifest identity
+    └── SourceFileId
+        ├── DocumentId
+        │   ├── SectionId
+        │   └── BlockId
+        ├── CanvasId
+        ├── BaseArtifactId
+        └── AssetId
 ```
 
-IDs MUST be domain-separated hashes as specified by [`../algorithms/stable/snapshot-identity-and-hashing.md`](../algorithms/stable/snapshot-identity-and-hashing.md). Display names never serve as identity.
+Display names and absolute source paths are not identities. Existing stored
+Schema 3 identities and `okc:*:v3\0` domains MUST remain unchanged. The
+retained private snapshot/parser stages keep their established domains where
+changing them would alter the resulting Schema 3 corpus.
 
-## Core records
+## Source records
 
-### Source and snapshot
+- `SourceSpec` is a typed directory, ZIP, or `tar.zst`/`.tzst` descriptor with
+  a stable `SourceId` and optional display-only owner.
+- Each accepted file retains exact portable UTF-8 spelling, NFC logical path,
+  kind, byte length, raw SHA-256, content hash, and source identity.
+- Filesystem time, inode, hostname, absolute root, input order, and MCP origin
+  MUST NOT affect semantic identity or output.
+- Source symlinks are not followed. Lossy path decoding is forbidden.
 
-- `SourceDescriptor`: stable source ID, user label, input kind, policy overrides.
-- `VaultSnapshot`: schema version, snapshot ID, source-independent whole-Vault content ID, source ID, observations, ordered file manifest, and exclusion report.
-- `SourceFile`: required exact accepted UTF-8 `original_path`, required NFC
-  `logical_path`, required tagged path encoding (`utf8` in V2), media type,
-  byte length, raw SHA-256, domain-separated content hash, and safety classification. Both paths are portable `/`
-  component sequences; `N_path(original_path) == logical_path`.
+## Parsed records
 
-Timestamps from the input filesystem MAY be preserved as informational metadata but MUST NOT influence deterministic identity or output bytes.
+The private parser represents Markdown documents, headings, sections, blocks,
+frontmatter, wikilinks, embeds, ordinary links, tags, callouts, code, and math
+with source byte spans and comparison forms. Original and normalized forms are
+distinct. Frontmatter has an original span for preservation and typed values
+for policy.
 
-### Knowledge content
+Canvas nodes, edges, file references, and unknown JSON fields remain typed in
+the parser. Base files remain opaque. These records support hostile-input
+validation but do not imply current Canvas/Base materialization.
 
-- `Document`: file identity and source-byte hash/reference, decoded text policy, frontmatter, title/aliases/tags, ordered sections, syntax spans, outbound links. It does not embed the original file bytes.
-- `Section`: stable section ID, heading level/path, source span, and ordered block IDs.
-- `Block`: stable block ID, typed heading/list/quote/callout/code/math/paragraph kind, source span, raw slice hash, and comparison form.
-- `Link`: syntax kind, raw target, parsed path/heading/block components, display text, embed flag, resolution state.
-- `Asset`: media type, byte hash, size, original logical paths.
-- `Canvas`: typed nodes/edges plus preserved unknown JSON fields and source file references. Each file reference retains its unique node ID and raw path plus a tagged `pending`, `resolved`, `unresolved`, or `ambiguous` state. Resolved and ambiguous targets use typed Document, Asset, Canvas, or Base identities.
-- `BaseArtifact`: `BaseArtifactId` and an opaque source-file reference/path; no inferred internal semantics in V2. Its bytes remain in the immutable source snapshot and are copied without interpretation.
-- `EvidenceRef`: snapshot ID, document ID, optional block ID/span, and content hash.
+## Integration corpus
 
-### V3 integration records
+`CorpusBuilder::build` returns `PreparedCorpus` containing a sealed
+`IntegrationCorpus`, stable block text map, and source count. The corpus
+contains every Markdown document with:
 
-Schema 3 adds a sealed `IntegrationCorpus` containing every Markdown
-`DocumentId`, its ordered source blocks with content hash and retained text,
-and every individual frontmatter value with identity, content hash, and typed
-value. It then uses:
+- source and document identities, original relative path, and document hash;
+- ordered `SourceBlock` records with block ID, content hash, and retained text;
+- individual `MetadataValue` records with key, value index, typed value, and
+  content hash.
 
-- `TaxonomyProposal` and `TaxonomyCluster` for exactly-one cluster assignment;
-- `SynthesisSection` plus exact `SectionEvidence`;
-- one `SourceDisposition` per source block and metadata value;
-- typed `RelatedLink` and `ContradictionSet` records;
-- `CriticReport`, omission approvals, minor waivers, and cluster approvals;
-- `ApprovedIntegrationPlan` as the complete offline compilation authority.
+Corpus documents, blocks, and metadata are sorted by explicit keys before the
+corpus hash is sealed. Source order MUST NOT affect the value.
 
-The three legal dispositions are `integrated`, `preserved_verbatim`, and
-`omission_proposed`. Integrated blocks MUST be cited by an output section or
-preserved contradiction claim. Preserved blocks and non-omitted metadata MUST
-remain materialized. An omission has no effect without an exact curator-bound
-approval. All schema-3 semantic IDs and hashes use `okc:*:v3\0` domains.
+## Integration records
 
-### Research semantic records
+- `TaxonomyProposal` and `TaxonomyCluster` assign every document exactly once.
+- `SynthesisSection` cites exact ordered `SectionEvidence`.
+- `SourceDisposition` gives every block and metadata value one of
+  `integrated`, `preserved_verbatim`, or `omission_proposed`.
+- `RelatedLink` and `ContradictionSet` retain cross-topic and conflicting
+  evidence without inventing a winner.
+- `CriticReport`, `OmissionApproval`, `FindingWaiver`, `ClusterApproval`, and
+  `ApprovedClusterRevision` bind explicit review authority.
+- `ApprovedIntegrationPlan` is the complete offline compilation input.
 
-`Entity`, probabilistic `Claim`, `Relationship`, `Topic`, and calibrated
-`SourceEvidence` graphs remain `normative-future`. V3 uses explicit section and
-contradiction evidence, not `ALG-MEM-006` or an uncalibrated claim-confidence
-number. A future `Claim` cannot exist without one or more evidence records.
+Integrated blocks MUST be cited by a section or contradiction. Preserved
+content MUST remain materialized. An omission has no effect without exact
+curator-bound approval. Critical or major critic findings block approval; a
+minor finding requires a hash-bound waiver.
 
-## Parsing and preservation
+## Evolution
 
-The current implementation pins Comrak `0.48` for a normalized CommonMark
-structural projection and supplements it with a custom Obsidian-aware byte-span
-scanner for blocks, wikilinks, embeds, and ordinary Markdown links. Parser or
-Unicode-library upgrades are semantic changes and require frozen golden-vector
-review.
-
-Frontmatter is represented twice:
-
-1. original byte span for preservation;
-2. normalized typed map for comparison and policy.
-
-Mapping key order and formatting MUST NOT be destroyed when a file is copied unchanged. When generated frontmatter is emitted, canonical field order and scalar rules from the output specification apply.
-
-## Link resolution
-
-Resolution produces zero, one, or many candidates and records the reason. It
-first checks the originating Vault's exact relative path, then its normalized
-path/stem/title/alias indexes, and only then the corresponding cross-source
-indexes. A source-local exact match wins over every foreign homonym. One
-candidate is rewritten, many candidates create `LINK_AMBIGUITY`, and zero
-candidates preserve only a root-contained spelling with a warning. Attachments
-are never guessed solely from a foreign matching filename.
-
-The `0.2.0` implementation applies the same source-local resolution and sealed
-output maps to Markdown links and Canvas file nodes. Canvas targets may be a
-Document, Asset, Canvas, or opaque Base. Zero candidates preserve the raw path
-with a diagnostic; multiple candidates create a node-scoped required conflict.
-Rewritten Canvas uses canonical JSON while unchanged Canvas remains
-byte-for-byte copied. Duplicate JSON object keys and duplicate Canvas node IDs
-fail closed because they cannot be preserved or addressed unambiguously.
-
-## Schema evolution
-
-Every serialized IR document includes `schema_version`. Readers must support
-explicitly listed older versions through pure migrations and reject unknown
-newer major versions. Migration MUST preserve IDs and provenance unless the
-version notes define an intentional identity break through an ADR. The schema-3
-project reader accepts only schema 3. V1 and V2 artifact readers are frozen
-behind `verify` and `explain`; they are not general IR migrations. `project
-upgrade --out` reconstructs schema-3 source bindings in a new path and carries
-no downstream V2 plans, proposals, or approvals.
+Current readers accept only Schema 3 project and artifact data. Unknown or
+mixed schemas fail closed. Recognizable Schema 1 or Schema 2 artifacts are
+identified only far enough to return `ARTIFACT_SCHEMA_UNSUPPORTED`; they are
+not migrated or decoded into current IR. Any future schema change requires an
+ADR, explicit migration policy, new golden vectors, and traceability updates.
 
 ## Invariants
 
-1. Every IR item resolves to exactly one immutable snapshot.
-2. Every source span lies within the hashed source bytes and uses byte offsets.
-3. Ordered collections have defined sort keys; map iteration order never affects output.
-4. Original and normalized forms are distinct fields.
-5. Invalid UTF-8 is either rejected or represented under an explicit binary policy; lossy decoding is forbidden.
-6. Unknown Canvas fields are preserved through round trips.
-7. V2 rejects non-UTF-8 source paths and never labels CP437 or replacement-
-   decoded archive names as UTF-8.
-8. V3 assigns every Markdown document to exactly one taxonomy cluster.
-9. V3 assigns every source block and frontmatter value exactly one disposition.
-10. Every generated section and contradiction claim has locally validated,
-    cluster-owned evidence.
+1. Every current IR item resolves to one immutable source snapshot.
+2. Every source span is within the hashed source bytes and uses byte offsets.
+3. Ordered collections have declared keys; map iteration never affects bytes.
+4. Original and normalized values remain distinct.
+5. Lossy text or path decoding is forbidden.
+6. Duplicate logical paths and ambiguous duplicate Canvas node IDs fail.
+7. Every Markdown document belongs to exactly one taxonomy cluster.
+8. Every source block and frontmatter value has exactly one disposition.
+9. Every generated section and contradiction claim has locally validated,
+   cluster-owned evidence.
+10. Experimental claim/memory records remain outside the default compiler.

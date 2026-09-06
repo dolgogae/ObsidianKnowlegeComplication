@@ -1,280 +1,157 @@
 ---
 title: Testing and Quality Gates
-status: normative-v1
+status: normative
 owners:
   - qa-security-engineer
-  - core-rust-engineer
+  - release-maintainer
 last_updated: 2026-09-06
 decision_refs:
+  - ADR-0003
   - ADR-0004
-  - ADR-0007
-  - ADR-0008
-  - ADR-0010
-  - ADR-0011
   - ADR-0012
-  - ADR-0013
   - ADR-0014
-  - ADR-0015
-  - ADR-0017
-  - ADR-0018
   - ADR-0019
   - ADR-0020
   - ADR-0022
-  - ADR-0023
   - ADR-0024
   - ADR-0025
   - ADR-0026
+  - ADR-0027
 source_refs:
   - HIST-COMPILER-PLAN
 ---
 
 # Testing and Quality Gates
 
-## Release gates
+No stable-release claim is allowed until every required gate passes on its
+declared matrix. A local macOS arm64 pass is development evidence, not
+cross-platform release evidence.
 
-- **QG-001 Functional:** all stable requirement tests pass on supported platforms.
-- **QG-002 Determinism:** identical fixtures/configuration/transcript produce identical manifest, output hashes, and OKCPack bytes across two clean runs; cross-platform semantic hashes match.
-- **QG-003 Provenance:** every output node has a complete derivation path; generated items have evidence and approval.
-- **QG-004 Safety:** hostile-input corpus, traversal/symlink/archive and malicious-proposal tests pass fail-closed.
-- **QG-005 Compatibility:** schema backward/forward behavior matches the version matrix.
-- **QG-006 Performance:** reference workload meets ≤20 minutes and ≤2 GB peak RSS without AI on 8 cores, 16 GB RAM, NVMe.
-- **QG-007 Documentation:** Markdown links resolve; traceability reflects code/tests; release changes and ADR impact are recorded.
-- **QG-008 Supply chain:** licenses, lockfiles, vulnerability policy, provenance/SBOM, and reproducible release process pass.
+## Gates
 
-## V3-specific acceptance gates
-
-Before V3 can be called stable, automated evidence MUST cover:
-
-- every Markdown document exactly once in taxonomy and every block/frontmatter
-  value exactly once in dispositions;
-- source-owned evidence for each section and contradiction claim, exact
-  omission approvals, minor-only waivers, and stale taxonomy/proposal/critic
-  approvals;
-- provider conformance for all advertised HTTP/command adapters, portable
-  schemas, error normalization, timeout/cancel/retry/limits, missing credentials,
-  and non-disclosure of secret values;
-- deterministic block chunking, one embedding space, HNSW/candidate union,
-  resume after process/provider failure, and no repeat call for complete tasks;
-- byte-identical directory and OKCPack replay from one recording/approval set,
-  provider-free compile/verify/explain, and rejection without AI recordings;
-- canonical notes, legacy redirects, attachments, Canvas/Base behavior, link
-  rewrites, and complete provenance in directory and Pack;
-- TUI worker/reducer/snapshot/PTY coverage for setup, sensitive preflight,
-  taxonomy/cluster review, cancellation, resume, and terminal restoration;
-- cwd/project/Vault discovery, atomic source-set replacement, schema-4 journal
-  migration, OS-keychain mock behavior and complete secret non-disclosure;
-- V2 upgrade source immutability and source-binding-only reconstruction;
-- a 100,000-note semantic candidate benchmark with cost, latency, memory, and
-  cross-platform determinism reports.
-
-The current slice has local unit/contract coverage for strict schemas, initial
-HTTP shapes, retry/error/cancellation policy, secret-free profiles, sensitive
-routing, append-only resume, V2 upgrade, disposition/evidence/critic/approval
-closure, provider-free deterministic directory materialization, V3 verify and
-explain, and the frozen V1/V2 regression suite. HNSW, V3 Pack, passthrough
-assets/Canvas/Base, manual-edit loops, command profiles, provider-backed PTY,
-real provider smoke tests, and scale/cross-platform results remain open.
-
-## Current local evidence
-
-The exact local command results and test count are recorded in
-[`../CURRENT_STATE.md`](../CURRENT_STATE.md). Local evidence never substitutes
-for the supported-platform or protected-release gates:
-
-| Gate | Current state |
+| Gate | Requirement |
 |---|---|
-| QG-001 | partial: current functions pass locally; the complete Markdown/Canvas corpora and supported-platform matrix remain |
-| QG-002 | partial: same-host and cross-absolute-source-root byte equality pass; cross-platform/toolchain comparison remains |
-| QG-003 | implemented and locally verified: typed stored graph, virtual audit envelope, RecordIds, attribution retention, bounded explanation, and semantic reseal cases pass; supported-platform evidence remains |
-| QG-004 | partial: targeted hostile-input suite passes; fuzz/property campaigns and remaining platform/adversarial classes remain |
-| QG-005 | partial: frozen V1/V2 verify/explain readers and V2-to-new-V3 source-binding upgrade exist; broader forward-compatibility evidence remains |
-| QG-006 | not run at the 100,000-note/20 GB reference workload |
-| QG-007 | evaluated per change after link, traceability, current-state, ADR, and decision-log validation |
-| QG-008 | partial: licenses, lockfile, cargo-dist/SBOM/attestation configuration, and receipt-aware updater exist; protected native signing/notarization and published evidence do not |
+| QG-001 Functional | current source, project, provider, review, compile, verify, explain, CLI/TUI, and language API behavior matches specifications |
+| QG-002 Determinism | identical approved inputs produce identical Schema 3 IDs, paths, manifests, provenance, and every file byte across repetitions, source order, absolute roots, and supported hosts |
+| QG-003 Provenance | every output record closes over exact source evidence, proposal, critic, approval, and plan; forgery/staleness fails |
+| QG-004 Safety | hostile directories, archives, symlinks, paths, JSON/Markdown, provider responses, output races, and cancellation fail safely |
+| QG-005 Schema boundary | current Schema 3 projects open without migration; recognizable Schema 1/2 inputs get only structured unsupported errors; unknown/mixed/corrupt inputs fail closed |
+| QG-006 Performance | 10 Vaults, 100,000 notes, and 20 GB meet the accepted time/RSS budget with semantic candidate evidence |
+| QG-007 Documentation | current state, requirements, algorithms, ADRs, traceability, guides, help, and relative links agree |
+| QG-008 Supply chain | locked dependencies, audits, licenses, checksums, SBOMs, attestations, clean installs, and required native signing pass |
 
-The authoritative live status and exact limitations are in
-[`../CURRENT_STATE.md`](../CURRENT_STATE.md); the mapping to code/tests is in
-[`../TRACEABILITY.md`](../TRACEABILITY.md).
+## Required current-schema coverage
 
-## Cross-platform CI contract
+Automated tests MUST cover:
 
-The required hosted baseline has four host-native jobs: Linux x86_64, Windows
-x86_64, macOS x86_64, and macOS arm64. Each job MUST use the repository-pinned
-Rust toolchain and `Cargo.lock`, report its actual Rust host triple, and run the
-complete workspace test suite with all features. The matrix MUST use
-`fail-fast: false` so one platform failure does not erase evidence from the
-others.
+- immutable source bytes and metadata; directory, ZIP, and `tar.zst` safety;
+- traversal, absolute/reserved names, symlinks, duplicate source IDs/content,
+  excluded `.obsidian`/`.git` data, bounds, and SQLite persistence;
+- `CorpusBuilder` order invariance and deterministic sealed corpus/block maps;
+- complete taxonomy, dispositions, evidence, contradiction, critic, omission,
+  waiver, approval, recording, and stale-hash closure;
+- provider profile/schema/bounds/credentials/disclosure, transport error
+  normalization, cancellation, and deterministic recording/resume;
+- two-directory compile equality, no-clobber publication, missing authority,
+  materialized-byte regeneration, manifest/checksum/provenance integrity;
+- ArtifactService root/marker/manifest symlinks, mixed markers, malformed and
+  oversized manifests, corrupt content, and safe output-path explanation;
+- current project schema opening and private journal schema behavior without
+  migration;
+- CLI help and parse rejection proving retired commands/options do not return;
+- Python and Node.js type declarations, structured errors, scheduler lifecycle,
+  consent, output safety, source immutability, and complete current workflow.
 
-At least one job MUST additionally enforce workspace rustfmt, all-feature
-all-target Clippy with warnings denied, and repository-relative Markdown link
-integrity across root, `docs/`, and `guide/` sources. A canonical basic-Vault build MUST compare its complete OKCPack
-bytes against a literal raw-SHA-256 golden on every host; same-run equality
-alone is not cross-platform evidence.
+Retired artifacts MUST NOT be committed as active fixtures. Tests create
+minimal temporary `.vaultc`, `.vaultpack`, Schema 2 `.okc`, and `.okcpack`
+markers, then assert `ARTIFACT_SCHEMA_UNSUPPORTED`, `supported_schema = 3`, and
+the exact detected schema/family through Rust service, CLI, Python, and Node.js.
+Mixed, symlinked, malformed, oversized, and unknown inputs remain ordinary
+fail-closed verification errors.
 
-Workflow permissions MUST be read-only unless a separate reviewed publication
-workflow requires more. Third-party or GitHub-maintained actions MUST be pinned
-to reviewed full commit identities, with the human-readable release recorded
-in a comment. The workflow definition being present or compiling locally is
-not a passed platform gate: only completed remote jobs on the named hosts count
-as Linux, Windows, or macOS CI evidence. Symlink/reparse-point skips MUST state
-the missing runner capability rather than silently count as coverage.
+## Byte invariant
 
-A stable tag additionally requires two consecutive complete matrix successes
-on the exact same full commit SHA. A successful run plus a rerun of only failed
-jobs is not sufficient.
+The language-binding fixture inventory is a cross-surface golden. Rust,
+Python, and Node.js MUST independently compile the current fixture and produce
+SHA-256:
 
-## Python and Node.js package gates
+```text
+452ca0671e806a93b4f36f218cf9e62da899f6404c74705c2cf0ca14e413c7e5
+```
 
-`REQ-SDK-002` adds gates without replacing QG-001 through QG-008. Python tests
-MUST cover CPython 3.11 and every currently supported stable minor. Node tests
-MUST cover exactly 22.13.0 plus the current supported Node major. Each of the
-four native hosts MUST build its own abi3 wheel and Node-API addon, install the
-result from package artifacts in a clean target/project, and exercise the
-public import plus CommonJS/ESM entry points.
+The inventory includes sorted relative paths and each file's exact bytes. A
+source-only cleanup MUST additionally compare manifest, approved plan,
+provenance, file paths, IDs/hashes, and all output bytes before/after. Any
+difference is a compatibility failure unless an accepted format ADR explicitly
+authorizes it.
 
-The combined runtime-neutral interop and public binding suites MUST cover
-versioned DTO/error mapping, absolute-path rejection, missing environment
-secrets, provider errors, explicit remote consent, source immutability,
-same-project `PROJECT_BUSY`, distinct-project parallelism, bounded events,
-cancellation/publication state, stale approvals, output overlap/no-clobber, and
-V1/V2/V3 verify/explain. Python and Node.js MUST each execute the complete
-currently implemented V3 approval workflow against a bounded local mock
-provider. Their shared fixture MUST produce the same literal artifact inventory
-SHA-256, thereby binding artifact bytes, IDs, provenance, and verification to
-the same golden. CLI parity remains required because all three surfaces call
-the same `IntegrationService` and artifact service; an adapter-specific
-compiler or verifier is forbidden.
+## Rust checks
 
-Release-candidate outputs are Python wheels and sdist, the root npm tarball,
-one npm addon tarball per supported platform, SHA-256 inventories, and
-CycloneDX SBOMs. CI MUST inspect the wheel for its embedded SBOM and create a
-runtime Node dependency SBOM. It MUST NOT contain PyPI/npm publication jobs or
-registry credentials. Presence of the workflow is only a local definition;
-the four-host jobs must complete remotely before any cross-platform or release
-gate is passed.
+The pinned Rust 1.97.1 toolchain MUST pass:
 
-## Test layers
+```text
+cargo check --locked --workspace --all-targets --all-features
+cargo test --locked --workspace --all-features --no-fail-fast
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check
+cargo tree --workspace
+```
 
-### Unit and golden tests
+Source hygiene MUST show no removed workspace member, crate dependency,
+generation-suffixed public symbol, retired CLI implementation, committed
+retired fixture, or deprecated facade. Contractual stored/protocol literals
+listed in ADR-0027 are excluded from cosmetic hygiene checks.
 
-- domain-separated identifiers and canonical serialization;
-- Markdown/frontmatter source spans and rewrite output;
-- wikilinks, embeds, aliases, heading/block refs, callouts, math, code fences;
-- JSON Canvas typed fields and unknown-field preservation;
-- exact and near-duplicate golden vectors;
-- path/case/title/frontmatter conflict resolution;
-- checksums, provenance records, approval invalidation, and pack archive headers.
-- literal typed provenance RecordId vectors, strict record ordering, allowed
-  edge matrix/cardinality, attribution states, and cursor bindings.
+## Python checks
 
-### Property and fuzz tests
+Against a freshly built native extension and clean environment:
 
-- parser/scanner never panics for arbitrary bytes;
-- normalization is idempotent;
-- path allocator returns safe unique paths or an explicit error;
-- compilation never mutates source fixture hashes;
-- provenance graph is closed and acyclic in derivation edges;
-- serialization/parse round trips preserve semantic identity;
-- concurrent and sequential planning yield the same result.
+```text
+pytest bindings/python/tests
+mypy --strict bindings/python/tests/typing_contract.py
+maturin build --release --locked
+maturin sdist
+```
 
-### Adversarial corpus
+The wheel and source distribution MUST install without repository imports;
+`import okc`, API info, interop schema 2, native loading, and a bounded smoke
+operation MUST work. Stubs must expose typed `VerificationResult` and
+`ExplanationResult`, and `output_path` is required for explanation.
 
-Include ZIP slip, tar traversal, symlink/hardlink escape, decompression bomb, huge frontmatter, deeply nested Markdown/JSON, duplicate archive members, malformed UTF-8/YAML/JSON, NFC/NFD/case collisions, Windows reserved names, control characters, malicious HTML, fake tool instructions, forged/stale proposal IDs, invalid evidence spans, extension spoofing, and interrupted writes.
+## Node.js checks
 
-The normalization corpus MUST also cover directory/archive original-path
-spelling, strict raw ZIP/tar UTF-8 rejection, leading BOM byte offsets,
-frontmatter-adjacent BOM content, CRLF/lone-CR preservation outside rewritten
-spans, combining marks and emoji, full-fold `ß/ss` and sigma vectors, multiple
-grow/shrink rewrites, existing escaped delimiters, root-escape links, and
-Canvas raw file values whose lookup key normalizes while stored JSON remains
-unchanged.
+Against a freshly built native addon and clean package install:
 
-### Integration and end-to-end
+```text
+npm run build
+npm test
+npm run typecheck
+npm pack --dry-run
+```
 
-- Rust SDK and CLI create equivalent plans.
-- Provider subprocess capability negotiation, timeout, crash, oversized/malformed response, cancellation, and transcript replay.
-- Public SDK projection/live recording/offline replay parity, exact four-record
-  transcripts, remote policy plus per-call consent, cooperative cancellation,
-  and byte-identical SDK/CLI canonical recordings.
-- Compile interruption never publishes partial output.
-- Compiled Vault publication preserves every existing file, directory,
-  symlink/reparse point, and deterministic pre-commit race winner; concurrent
-  SDK/CLI creators have exactly one complete verified winner.
-- Public SDK/CLI pack creation never exposes a partial requested destination,
-  never overwrites an existing entry or symlink referent, and has exactly one
-  winner under concurrent publication.
-- Independent verifier catches each intentionally corrupted artifact class.
-- TUI reducer and render snapshots cover all screens, English/Korean, 80×24
-  fallback, long Unicode paths, hostile terminal controls, and
-  color-independent status. PTY E2E covers keyboard-only conflict selection,
-  cancellation, provider crash, signal/panic restoration, and the publication
-  barrier.
-- Future MCP and Obsidian adapters pass contract and permission tests without bypassing framework invariants.
+CommonJS and ESM imports, Node-API loading, interop schema 2, declarations,
+typed verify/explain results, and mandatory `{outputPath}` MUST pass. A root
+package and applicable platform addon must install together without source-tree
+fallback.
 
-Typed provenance acceptance MUST cover Copy, Markdown/Canvas rewrite, exact
-note/asset deduplication, generated evidence and approval, Markdown/Canvas
-waivers, the four stored audit paths, the three virtual audit-envelope paths,
-directory/pack inner parity, and an explicit virtual package subject. Fully
-resealed attacks include missing/extra/duplicate producer edges, dangling or
-wrong-kind endpoints, cycles, unrelated valid source substitution, ordered
-evidence changes, attribution removal, stale decisions/approvals, legacy flat
-records, graph schema changes, and cursor replay across subject/artifact.
+## Documentation and release checks
 
-### Required regression status
+The repository-relative Markdown test and `guide` production build MUST pass.
+The active specifications and guides MUST contain no retired execution or
+compatibility promise. ADR bodies and append-only history remain historical
+records and may name old generations; ADR-0027 markings define current
+precedence.
 
-The SDK/CLI augmentation suite now implements projection determinism, exact
-four-record live recording, empty-transcript rejection, fresh approval
-validation, policy-and-consent preflight, provider-free byte-identical replay,
-canonical JSONL, nested unknown/duplicate-field rejection, header binding,
-SDK/CLI parity, cancellation, stale/cross-plan attacks, and replay no-clobber.
+SDK CI covers CPython 3.11–3.14, Node.js 22.13/current, and Linux x86_64 GNU,
+Windows x86_64 MSVC, macOS x86_64, and macOS arm64 native artifacts. A release
+requires remote success, reproducibility evidence, checksums/SBOMs, protected
+publication, and signing/notarization where applicable.
 
-The normalization/original-path and archive-accounting regressions are now
-implemented, including
-`cross_source_nfc_nfd_collision_is_typed_and_preserves_original_path` and
-`archive_declared_member_count_and_compressed_bytes_are_bounded`.
+## Fuzz, property, and performance backlog
 
-The locally implemented atomic-pack acceptance includes
-`sdk_pack_failure_does_not_leave_partial_destination`,
-`sdk_pack_existing_destination_is_preserved`,
-`sdk_pack_dangling_symlink_is_rejected_without_following_target`,
-`sdk_pack_destination_inside_compiled_vault_is_rejected_without_mutation`,
-`sdk_pack_concurrent_publish_has_exactly_one_winner`,
-`compile_options_reject_output_pack_aliases_before_publication`, and
-`compile_with_pack_failure_leaves_valid_compiled_vault_and_no_partial_pack`.
-Fault-seam tests distinguish pre-commit absence from the complete published
-file returned with `PublishedButDurabilityUncertain` after a parent-sync
-failure. The private fault seam additionally verifies the exact
-write-to-parent-sync order and all pre/post-commit states. Supported-platform
-concurrent destination and Windows reparse-point tests remain release-matrix
-requirements even after local acceptance passes.
-
-The locally implemented atomic-directory acceptance includes
-`sdk_directory_concurrent_creators_have_exactly_one_winner`,
-`sdk_directory_distinct_concurrent_builds_never_mix_or_replace_winner`,
-`sdk_directory_existing_file_and_directory_are_preserved`,
-`sdk_directory_live_and_dangling_symlinks_are_rejected_without_following_referents`,
-`directory_publish_barrier_preserves_external_file_directory_and_symlink_winners`,
-`directory_precommit_faults_cleanup_staging_by_default`,
-`directory_retain_policy_marks_only_the_exact_failed_stage`,
-`directory_cleanup_failure_reports_residue`,
-`directory_parent_sync_failure_retains_verified_output`, and
-`directory_unsupported_primitive_never_falls_back_to_replacing_rename`.
-The source/publication disjointness matrix covers the Compiled Vault and
-integrated Pack, equality, both containment directions, lexical `..`,
-existing-ancestor symlink aliases, and portable case/normalization aliases.
-Normal concurrent builds are supplemental; the
-private before-publish barrier is required to prove that a late empty-directory
-or symlink winner is not replaced.
-
-These behaviors have both public SDK/CLI coverage and a private deterministic
-barrier/fault seam. They are locally verified on macOS arm64; Linux, Windows,
-reparse-point, filesystem, and process-crash evidence remains mandatory before
-the parent release requirement is called cross-platform verified.
-
-## Algorithm status gates
-
-Stable algorithms require worked examples, golden vectors, boundary tests, and cross-platform determinism. Experimental algorithms require offline baselines, held-out evaluation, calibration/error bars, ablation, resource cost, safety/privacy review, and rollback behavior. Passing an experiment does not promote it; an ADR and normative spec update are also required.
-
-## Benchmark hygiene
-
-LLM-generated queries cannot be both the sole test generator and judge. Retrieval benchmarks use source notes as traceable ground truth, split generation/evaluation sources when possible, avoid train/test leakage, report topic/cohort sizes and confidence intervals, and retain failure cases. There is no single absolute quality score across unrelated topics.
+Before stable release, fuzz/property campaigns must cover archive paths and
+sizes, Markdown/frontmatter/Canvas, JSON schemas, provenance, manifests,
+publisher races, and cancellation. The full performance fixture must report
+wall time, peak RSS, accepted bytes/files, candidate counts, provider token
+cost, and failure slices. The current bounded in-memory source accumulation is
+a known blocker for the 20 GB gate.

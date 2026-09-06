@@ -12,10 +12,9 @@ import pytest
 import okc
 
 
-_V3_FIXTURE_ARTIFACT_SHA256 = (
+_FIXTURE_ARTIFACT_SHA256 = (
     "452ca0671e806a93b4f36f218cf9e62da899f6404c74705c2cf0ca14e413c7e5"
 )
-_BINDING_FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 
 
 def _artifact_digest(root: Path) -> str:
@@ -138,7 +137,7 @@ def _structured_output(task_input: dict[str, Any]) -> dict[str, Any]:
 
 def test_api_info_and_relative_path_error_are_structured() -> None:
     client = okc.OkcClient()
-    assert client.api_info()["interop_schema_version"] == 1
+    assert client.api_info()["interop_schema_version"] == 2
 
     job = client.open_project("relative.okc-project")
     with pytest.raises(okc.OkcError) as raised:
@@ -161,19 +160,19 @@ def test_create_open_and_manifest_round_trip(tmp_path: Path) -> None:
     assert Path(client.open_project(root).result().path).samefile(root)
 
 
-def test_provider_profile_is_immutable_and_command_is_rejected() -> None:
+def test_provider_profile_is_immutable_and_unknown_kind_is_rejected() -> None:
     profile = okc.ProviderProfile(
         name="local", kind="ollama", endpoint="http://127.0.0.1:11434", model="test"
     )
     with pytest.raises((AttributeError, TypeError)):
         profile.options["secret"] = "value"  # type: ignore[index]
 
-    command = okc.ProviderProfile(
-        name="command", kind="command", endpoint="ignored", model="ignored"
+    unsupported = okc.ProviderProfile(
+        name="unsupported", kind="not_a_provider", endpoint="ignored", model="ignored"
     )
     with pytest.raises(okc.OkcError) as raised:
-        okc.OkcClient([command])
-    assert raised.value.code == "PROVIDER_UNSUPPORTED"
+        okc.OkcClient([unsupported])
+    assert raised.value.code == "INVALID_ARGUMENT"
 
 
 def test_missing_environment_secret_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,21 +241,46 @@ def test_remote_cache_miss_requires_per_call_consent(tmp_path: Path) -> None:
     assert raised.value.category == "consent"
 
 
-@pytest.mark.parametrize(("directory", "family"), [("v1-basic", "v1"), ("v2-basic", "v2")])
-def test_legacy_artifacts_are_auto_detected_verified_and_explained(
-    directory: str, family: str
+@pytest.mark.parametrize(
+    ("kind", "schema"),
+    [
+        ("schema-one-marker", 1),
+        ("schema-one-pack", 1),
+        ("schema-two-marker", 2),
+        ("schema-two-pack", 2),
+    ],
+)
+def test_retired_artifacts_have_typed_unsupported_errors(
+    tmp_path: Path, kind: str, schema: int
 ) -> None:
-    artifact = (_BINDING_FIXTURES / directory).resolve()
+    artifact = tmp_path / kind
+    if kind == "schema-one-marker":
+        marker = artifact / ".vaultc"
+        marker.mkdir(parents=True)
+        (marker / "manifest.json").write_text("{}", encoding="utf-8")
+    elif kind == "schema-two-marker":
+        marker = artifact / ".okc"
+        marker.mkdir(parents=True)
+        (marker / "manifest.json").write_text(
+            '{"format_family":"okc","schema_version":2}', encoding="utf-8"
+        )
+    else:
+        artifact = artifact.with_suffix(
+            ".vaultpack" if kind == "schema-one-pack" else ".okcpack"
+        )
+        artifact.write_bytes(b"retired pack marker")
+
     client = okc.OkcClient()
-    verification = client.verify_artifact(artifact).result()
-    assert verification["interop_schema_version"] == 1
-    assert verification["family"] == family
-    assert verification["valid"] is True
-    explanation = client.explain_artifact(
-        artifact, output_path="knowledge/Topic.md"
-    ).result()
-    assert explanation["interop_schema_version"] == 1
-    assert explanation["family"] == family
+    for job in [
+        client.verify_artifact(artifact),
+        client.explain_artifact(artifact, output_path="knowledge/Topic.md"),
+    ]:
+        with pytest.raises(okc.OkcError) as raised:
+            job.result()
+        assert raised.value.code == "ARTIFACT_SCHEMA_UNSUPPORTED"
+        assert raised.value.category == "verification"
+        assert raised.value.details["supported_schema"] == 3
+        assert raised.value.details["detected_schema"] == schema
 
 
 def test_invalid_language_does_not_leave_partial_project(tmp_path: Path) -> None:
@@ -269,7 +293,7 @@ def test_invalid_language_does_not_leave_partial_project(tmp_path: Path) -> None
     assert not root.exists()
 
 
-def test_complete_v3_approval_compile_verify_and_explain(tmp_path: Path) -> None:
+def test_complete_approval_compile_verify_and_explain(tmp_path: Path) -> None:
     server = ThreadingHTTPServer(("127.0.0.1", 0), _FixtureProvider)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -290,7 +314,7 @@ def test_complete_v3_approval_compile_verify_and_explain(tmp_path: Path) -> None
         )
         client = okc.OkcClient([profile])
         project = client.create_project(
-            tmp_path / "python-v3.okc-project",
+            tmp_path / "python.okc-project",
             name="SDK parity",
             curator_id="sdk-test",
             language="en",
@@ -301,10 +325,10 @@ def test_complete_v3_approval_compile_verify_and_explain(tmp_path: Path) -> None
         first = project.integrate(
             allow_remote_provider=False, remote_disclosure_confirmed=False
         ).result()
-        assert first["interop_schema_version"] == 1
+        assert first["interop_schema_version"] == 2
         assert first["checkpoint"] == "needs_taxonomy"
         taxonomy = project.taxonomy().result()
-        assert taxonomy["interop_schema_version"] == 1
+        assert taxonomy["interop_schema_version"] == 2
         cluster_id = taxonomy["taxonomy"]["clusters"][0]["cluster_id"]
         project.approve_taxonomy(rationale="fixture taxonomy reviewed").result()
 
@@ -322,14 +346,18 @@ def test_complete_v3_approval_compile_verify_and_explain(tmp_path: Path) -> None
         output = tmp_path / "python-output"
         compiled = project.compile(output).result()
         assert compiled["path"] == str(output)
-        assert _artifact_digest(output) == _V3_FIXTURE_ARTIFACT_SHA256
+        assert _artifact_digest(output) == _FIXTURE_ARTIFACT_SHA256
         verification = client.verify_artifact(output).result()
-        assert verification["family"] == "v3"
+        assert verification["interop_schema_version"] == 2
         assert verification["valid"] is True
+        assert verification["artifact_path"] == str(output)
+        assert verification["manifest"]["schema_version"] == 3
         explanation = client.explain_artifact(
             output, output_path="knowledge/sdk/fixture.md"
         ).result()
-        assert explanation["family"] == "v3"
+        assert explanation["interop_schema_version"] == 2
+        assert explanation["artifact_path"] == str(output)
+        assert explanation["record"]["output_path"] == "knowledge/sdk/fixture.md"
         with pytest.raises(okc.OkcError) as exists:
             project.compile(output).result()
         assert exists.value.code == "OUTPUT_EXISTS"

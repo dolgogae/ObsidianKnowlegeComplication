@@ -1,9 +1,11 @@
 import {
+  ExplanationResult,
   Job,
   OkcClient,
   Project,
   ProviderProfile,
   SourceInput,
+  VerificationResult,
 } from '../index.js'
 
 const profile = new ProviderProfile({
@@ -17,6 +19,12 @@ const projectJob: Job<Project> = client.createProject('/tmp/types.okc-project', 
   name: 'Types',
   curatorId: 'curator',
 })
+const verificationJob: Job<VerificationResult> = client.verifyArtifact('/tmp/CompiledVault')
+const explanationJob: Job<ExplanationResult> = client.explainArtifact('/tmp/CompiledVault', {
+  outputPath: 'knowledge/topic.md',
+})
+void verificationJob
+void explanationJob
 void projectJob.result().then(project => {
   const source = new SourceInput({ sourceId: 'source-a', path: '/tmp/vault' })
   void project.addSource(source)

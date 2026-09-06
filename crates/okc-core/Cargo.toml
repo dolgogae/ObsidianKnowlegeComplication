@@ -1,6 +1,6 @@
 [package]
 name = "okc-core"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -26,11 +26,9 @@ sha2.workspace = true
 tar = { workspace = true, optional = true }
 tempfile.workspace = true
 thiserror.workspace = true
-toml.workspace = true
 tracing.workspace = true
 unicode-normalization.workspace = true
 unicode-segmentation.workspace = true
-okc-protocol = { path = "../okc-protocol" }
 zip = { workspace = true, optional = true }
 zstd = { workspace = true, optional = true }
 

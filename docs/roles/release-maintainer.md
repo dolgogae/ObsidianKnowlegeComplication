@@ -1,6 +1,6 @@
 ---
 title: Release Maintainer Role Guide
-status: normative-v1
+status: normative
 owners:
   - release-maintainer
 last_updated: 2026-08-16

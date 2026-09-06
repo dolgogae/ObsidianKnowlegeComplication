@@ -1,6 +1,6 @@
 ---
 title: ADR-0024 — Evidence-Complete Integration and Critic Gate
-status: normative-v1
+status: normative
 owners:
   - architect
   - algorithms-ai-engineer

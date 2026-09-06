@@ -19,7 +19,7 @@ fn encode<T: Serialize>(value: &T) -> PyResult<String> {
 fn decode<T: DeserializeOwned>(value: &str, label: &str) -> PyResult<T> {
     serde_json::from_str(value).map_err(|error| {
         py_error(&OkcError::invalid_argument(format!(
-            "{label} must be valid schema-version-1 JSON ({:?})",
+            "{label} must be valid schema-version-2 JSON ({:?})",
             error.classify()
         )))
     })
@@ -135,20 +135,8 @@ impl NativeClient {
         NativeJob::new(self.inner.verify_artifact(path).erase())
     }
 
-    #[pyo3(signature = (path, output_path = None, package = false, limit = None, cursor = None))]
-    fn explain_artifact(
-        &self,
-        path: &str,
-        output_path: Option<String>,
-        package: bool,
-        limit: Option<usize>,
-        cursor: Option<String>,
-    ) -> NativeJob {
-        NativeJob::new(
-            self.inner
-                .explain_artifact(path, output_path, package, limit, cursor)
-                .erase(),
-        )
+    fn explain_artifact(&self, path: &str, output_path: String) -> NativeJob {
+        NativeJob::new(self.inner.explain_artifact(path, output_path).erase())
     }
 }
 

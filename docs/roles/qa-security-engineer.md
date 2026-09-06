@@ -1,6 +1,6 @@
 ---
 title: QA and Security Engineer Role Guide
-status: normative-v1
+status: normative
 owners:
   - qa-security-engineer
 last_updated: 2026-08-16

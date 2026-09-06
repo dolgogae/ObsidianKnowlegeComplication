@@ -1,6 +1,6 @@
 ---
 title: ADR-0021 — Scoped Updater Runtime Exception
-status: normative-v1
+status: normative
 owners:
   - architect
   - release-maintainer

@@ -1,6 +1,6 @@
 ---
 title: ADR-0011 — SDK Augmentation Recording and Offline Replay
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

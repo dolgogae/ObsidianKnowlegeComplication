@@ -1,6 +1,6 @@
 ---
 title: ADR-0019 — Single OKC Application and Project Format
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

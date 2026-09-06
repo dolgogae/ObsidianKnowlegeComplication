@@ -16,22 +16,23 @@ use std::thread::{self, JoinHandle};
 
 use okc_ai::{AI_SCHEMA_VERSION, ProviderConfig};
 use okc_app::integration_service::{ClusterReviewDecision, PreflightSummary, RoleBoundary};
-use okc_app::v3::{IntegrationStatus, TaxonomyTaskOutput};
+use okc_app::project_state::{IntegrationStatus, TaxonomyTaskOutput};
 use okc_app::{
-    AppError, ArtifactFamily, ArtifactService, ArtifactVerification, IntegrationCheckpoint,
-    IntegrationExecution, IntegrationService, OperationControl, OperationPhase,
-    ProgressEvent as AppProgressEvent, ProgressObserver, ProjectStore, ProviderService,
-    SourceBinding,
+    AppError, ArtifactService, IntegrationCheckpoint, IntegrationExecution, IntegrationService,
+    OperationControl, OperationPhase, ProgressEvent as AppProgressEvent, ProgressObserver,
+    ProjectStore, ProviderService, SourceBinding,
 };
 use okc_core::SourceId;
-use okc_core::integration::{IntegrationCorpus, TaxonomyCluster, TaxonomyProposal, V3Manifest};
+use okc_core::integration::{
+    CompiledVaultManifest, IntegrationCorpus, ProvenanceRecord, TaxonomyCluster, TaxonomyProposal,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub use okc_ai::AiRole;
 
-pub const INTEROP_SCHEMA_VERSION: u32 = 1;
+pub const INTEROP_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
 pub const MAX_EVENT_QUEUE: usize = 64;
 const MAX_CONCURRENT_JOBS: usize = 64;
@@ -44,7 +45,6 @@ pub enum ProviderKind {
     Gemini,
     Ollama,
     OpenAiCompatible,
-    Command,
 }
 
 impl From<ProviderKind> for okc_ai::ProviderKind {
@@ -55,7 +55,6 @@ impl From<ProviderKind> for okc_ai::ProviderKind {
             ProviderKind::Gemini => Self::Gemini,
             ProviderKind::Ollama => Self::Ollama,
             ProviderKind::OpenAiCompatible => Self::OpenAiCompatible,
-            ProviderKind::Command => Self::Command,
         }
     }
 }
@@ -157,6 +156,7 @@ pub enum ErrorCode {
     OutputExists,
     OutputOverlap,
     OutputDurabilityUncertain,
+    ArtifactSchemaUnsupported,
     VerificationFailed,
     Cancelled,
     Internal,
@@ -383,26 +383,24 @@ pub struct CompileResult {
     pub path: PathBuf,
     pub integration_plan_id: String,
     pub file_count: usize,
-    pub manifest: V3Manifest,
+    pub manifest: CompiledVaultManifest,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VerificationResult {
     pub interop_schema_version: u32,
-    pub family: ArtifactFamily,
     pub valid: bool,
     pub artifact_path: PathBuf,
-    pub payload: Value,
+    pub manifest: CompiledVaultManifest,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExplanationResult {
     pub interop_schema_version: u32,
-    pub family: ArtifactFamily,
     pub artifact_path: PathBuf,
-    pub payload: Value,
+    pub record: ProvenanceRecord,
 }
 
 type RawResult = std::result::Result<Value, OkcError>;
@@ -891,14 +889,6 @@ impl OkcClient {
                     "provider profile name is invalid",
                 ));
             }
-            if profile.kind == ProviderKind::Command {
-                return Err(OkcError::new(
-                    ErrorCode::ProviderUnsupported,
-                    ErrorCategory::Provider,
-                    "schema-3 command provider profiles are not implemented",
-                )
-                .detail("profile_name", profile.name));
-            }
             let name = profile.name.clone();
             if public_profiles
                 .insert(name.clone(), profile.clone())
@@ -979,7 +969,7 @@ impl OkcClient {
         };
         let reservation = reservation_path(&path);
         if let Some(language) = language.as_deref()
-            && let Err(error) = okc_app::v3::validate_bcp47(language)
+            && let Err(error) = okc_app::project_state::validate_bcp47(language)
         {
             return project_job(
                 typed_failed::<ProjectDescriptor>("project.create".into(), map_app_error(error)),
@@ -1066,21 +1056,20 @@ impl OkcClient {
         self.inner
             .scheduler
             .submit("artifact.verify", None, false, move |_| {
-                normalize_verification(
-                    &path,
-                    &ArtifactService.verify(&path).map_err(map_app_error)?,
-                )
+                let manifest = ArtifactService.verify(&path).map_err(map_app_error)?;
+                Ok(VerificationResult {
+                    interop_schema_version: INTEROP_SCHEMA_VERSION,
+                    valid: true,
+                    artifact_path: path,
+                    manifest,
+                })
             })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn explain_artifact(
         &self,
         path: impl Into<PathBuf>,
-        output_path: Option<String>,
-        package: bool,
-        limit: Option<usize>,
-        cursor: Option<String>,
+        output_path: String,
     ) -> Job<ExplanationResult> {
         let path = match absolute_lexical(path.into(), "artifact path") {
             Ok(path) => path,
@@ -1089,20 +1078,13 @@ impl OkcClient {
         self.inner
             .scheduler
             .submit("artifact.explain", None, false, move |_| {
-                let explanation = ArtifactService
-                    .explain(
-                        &path,
-                        output_path.as_deref(),
-                        package,
-                        limit.unwrap_or(256),
-                        cursor.as_deref(),
-                    )
+                let record = ArtifactService
+                    .explain(&path, &output_path)
                     .map_err(map_app_error)?;
                 Ok(ExplanationResult {
                     interop_schema_version: INTEROP_SCHEMA_VERSION,
-                    family: explanation.family(),
                     artifact_path: path,
-                    payload: explanation.payload_json().map_err(map_app_error)?,
+                    record,
                 })
             })
     }
@@ -1458,21 +1440,6 @@ fn source_binding(source: SourceInput) -> std::result::Result<SourceBinding, Okc
     })
 }
 
-fn normalize_verification(
-    path: &Path,
-    verification: &ArtifactVerification,
-) -> std::result::Result<VerificationResult, OkcError> {
-    let family = verification.family();
-    let payload = verification.payload_json().map_err(map_app_error)?;
-    Ok(VerificationResult {
-        interop_schema_version: INTEROP_SCHEMA_VERSION,
-        family,
-        valid: true,
-        artifact_path: path.to_path_buf(),
-        payload,
-    })
-}
-
 fn absolute_lexical(path: PathBuf, label: &str) -> std::result::Result<PathBuf, OkcError> {
     if !path.is_absolute() {
         return Err(OkcError::new(
@@ -1571,6 +1538,18 @@ fn map_app_error(error: AppError) -> OkcError {
             ErrorCategory::Verification,
             message,
         ),
+        AppError::ArtifactSchemaUnsupported {
+            supported_schema,
+            detected_schema,
+            detected_format_family,
+        } => OkcError::new(
+            ErrorCode::ArtifactSchemaUnsupported,
+            ErrorCategory::Verification,
+            "artifact schema is recognized but unsupported by this build",
+        )
+        .detail("supported_schema", supported_schema)
+        .detail("detected_schema", detected_schema)
+        .detail("detected_format_family", detected_format_family),
     }
 }
 
@@ -1701,47 +1680,15 @@ fn map_core_error(error: okc_core::OkcError) -> OkcError {
         )
         .detail("path", path.to_string_lossy().to_string())
         .detail("io_kind", format!("{:?}", source.kind())),
-        Core::PackPublicationAfterCompile {
-            compiled_vault,
-            pack,
-            source,
-        } => OkcError::new(
-            ErrorCode::OutputDurabilityUncertain,
-            ErrorCategory::Output,
-            "Compiled Vault remains published after Pack publication failed",
-        )
-        .detail(
-            "compiled_vault",
-            compiled_vault.to_string_lossy().to_string(),
-        )
-        .detail("pack", pack.to_string_lossy().to_string())
-        .detail("cause", map_core_error(*source).to_json()),
-        Core::StagingDispositionFailed {
-            staging, original, ..
-        } => OkcError::new(
-            ErrorCode::Internal,
-            ErrorCategory::Output,
-            "staging disposition failed after an output error",
-        )
-        .detail("staging", staging.to_string_lossy().to_string())
-        .detail("cause", map_core_error(*original).to_json()),
         Core::VerificationFailed(message) => OkcError::new(
             ErrorCode::VerificationFailed,
             ErrorCategory::Verification,
             message,
         ),
-        Core::Provider(message) => {
-            OkcError::new(ErrorCode::ProviderInvalid, ErrorCategory::Provider, message)
-        }
         Core::Io { path, source } => {
             map_io_error(&source).detail("path", path.to_string_lossy().to_string())
         }
         Core::Json(error) => serialization_error(&error),
-        Core::TomlDecode(_) | Core::TomlEncode(_) => OkcError::new(
-            ErrorCode::InvalidArgument,
-            ErrorCategory::Argument,
-            "configuration serialization failed",
-        ),
         Core::Sqlite(_) => OkcError::new(
             ErrorCode::ProjectInvalid,
             ErrorCategory::Project,
@@ -1951,25 +1898,25 @@ mod tests {
     }
 
     #[test]
-    fn provider_profiles_reject_command_and_never_expose_raw_keys() {
+    fn provider_errors_never_expose_raw_keys() {
         let profile = ProviderProfile {
-            name: "command".into(),
-            kind: ProviderKind::Command,
-            endpoint: "command://local".into(),
+            name: "invalid".into(),
+            kind: ProviderKind::OpenAi,
+            endpoint: "http://127.0.0.1:9".into(),
             model: "model".into(),
             api_key_env: None,
             timeout_ms: default_timeout_ms(),
             max_response_bytes: default_max_response_bytes(),
             max_input_bytes: default_max_input_bytes(),
             max_batch_items: default_max_batch_items(),
-            options: BTreeMap::new(),
+            options: BTreeMap::from([("api_key".into(), json!("raw-secret"))]),
         };
-        let error = OkcClient::new([profile], None).expect_err("command unsupported");
-        assert_eq!(error.code, ErrorCode::ProviderUnsupported);
+        let error = OkcClient::new([profile], None).expect_err("credential-bearing option");
+        assert_eq!(error.code, ErrorCode::ProviderInvalid);
         assert!(
             !serde_json::to_string(&error)
                 .expect("error JSON")
-                .contains("api_key")
+                .contains("raw-secret")
         );
     }
 
@@ -2048,7 +1995,51 @@ mod tests {
             routes: Vec::new(),
         });
         let encoded = serde_json::to_value(result).expect("result JSON");
+        assert_eq!(INTEROP_SCHEMA_VERSION, 2);
         assert_eq!(encoded["interop_schema_version"], INTEROP_SCHEMA_VERSION);
         assert_eq!(encoded["run_id"], "run_fixture");
+    }
+
+    #[test]
+    fn retired_artifact_schemas_map_to_the_stable_unsupported_error() {
+        let temporary = tempfile::tempdir().expect("temporary");
+        let schema_one = temporary.path().join("schema-one");
+        std::fs::create_dir_all(schema_one.join(".vaultc")).expect("schema one marker");
+        std::fs::write(schema_one.join(".vaultc/manifest.json"), b"{}").expect("manifest");
+        let schema_two = temporary.path().join("schema-two");
+        std::fs::create_dir_all(schema_two.join(".okc")).expect("schema two marker");
+        std::fs::write(
+            schema_two.join(".okc/manifest.json"),
+            br#"{"format_family":"okc","schema_version":2}"#,
+        )
+        .expect("manifest");
+        let schema_one_pack = temporary.path().join("schema-one.vaultpack");
+        std::fs::write(&schema_one_pack, b"retired pack marker").expect("schema one pack");
+        let schema_two_pack = temporary.path().join("schema-two.okcpack");
+        std::fs::write(&schema_two_pack, b"retired pack marker").expect("schema two pack");
+
+        let client = client(1);
+        for (path, schema) in [
+            (&schema_one, 1),
+            (&schema_one_pack, 1),
+            (&schema_two, 2),
+            (&schema_two_pack, 2),
+        ] {
+            for error in [
+                client
+                    .verify_artifact(path)
+                    .result()
+                    .expect_err("verify unsupported"),
+                client
+                    .explain_artifact(path, "knowledge/Topic.md".into())
+                    .result()
+                    .expect_err("explain unsupported"),
+            ] {
+                assert_eq!(error.code, ErrorCode::ArtifactSchemaUnsupported);
+                assert_eq!(error.category, ErrorCategory::Verification);
+                assert_eq!(error.details["supported_schema"], 3);
+                assert_eq!(error.details["detected_schema"], schema);
+            }
+        }
     }
 }

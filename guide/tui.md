@@ -1,6 +1,6 @@
 ---
 title: TUI 사용법
-description: 현재 폴더에서 provider 연결부터 V3 compile·verify까지 실행하는 방법
+description: 현재 폴더에서 provider 연결부터 compile·verify까지 실행하는 방법
 ---
 
 # TUI 사용법
@@ -10,7 +10,7 @@ description: 현재 폴더에서 provider 연결부터 V3 compile·verify까지 
 검토, compile, 독립 verify를 순서대로 완료할 수 있습니다.
 
 ::: warning 개발 빌드 범위
-현재 TUI 출력은 Markdown-only V3 directory입니다. V3 OKCPack과
+현재 TUI 출력은 Markdown-only Schema 3 directory입니다. Current OKCPack과
 attachment/Canvas/Base carry-through, 대규모 HNSW 경로는 아직 release
 blocker입니다. source Vault는 읽기 전용으로 취급되며 출력은 source 밖의 새
 경로에만 생성됩니다.
@@ -44,12 +44,11 @@ AI 연결과 source 선택을 마친 뒤 안전한 `.okc-work/*.okc-project`를 
 
 ## 2. AI 연결
 
-미완료 V3 AI 작업이 있고 사용할 profile이 없으면 **AI Connection**이 먼저
+미완료 AI 작업이 있고 사용할 profile이 없으면 **AI Connection**이 먼저
 열립니다.
 
 1. `Left`/`Right`로 OpenAI, Anthropic, Gemini, Ollama,
-   OpenAI-compatible 중 하나를 고릅니다. schema-3 command provider는 아직
-   선택할 수 없습니다.
+   OpenAI-compatible 중 하나를 고릅니다.
 2. `Up`/`Down` 또는 `Tab`으로 profile, endpoint, 명시적 model ID를
    입력합니다. 표준 provider와 Ollama에는 기본 endpoint가 채워집니다.
 3. credential mode에서 `Space`로 OS keychain과 환경변수 참조를 바꿉니다.

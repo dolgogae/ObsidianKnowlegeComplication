@@ -1,6 +1,6 @@
 ---
 title: ADR-0013 — Atomic VaultPack Publication
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

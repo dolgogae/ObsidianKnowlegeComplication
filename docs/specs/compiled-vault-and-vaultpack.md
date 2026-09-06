@@ -1,259 +1,124 @@
 ---
-title: Compiled Vault and OKCPack Format
-status: normative-v1
+title: Compiled Vault and Future Pack Format
+status: normative
 owners:
+  - architect
   - core-rust-engineer
   - release-maintainer
-last_updated: 2026-09-03
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0003
-  - ADR-0004
   - ADR-0006
-  - ADR-0009
-  - ADR-0010
-  - ADR-0012
-  - ADR-0013
   - ADR-0014
-  - ADR-0015
-  - ADR-0017
-  - ADR-0018
-  - ADR-0020
   - ADR-0022
   - ADR-0024
+  - ADR-0027
 source_refs:
   - HIST-COMPILER-PLAN
 ---
 
-# Compiled Vault and OKCPack Format
+# Compiled Vault and Future Pack Format
 
-## Schema-3 directory profile
+## Current directory layout
 
-The implemented V3 directory layout is:
+The implemented Schema 3 directory is:
 
 ```text
 CompiledVault/
-├── knowledge/<approved taxonomy>/<slug>.md
-├── legacy/<source-id>/<original path>.md
+├── knowledge/<canonical-path>.md
+├── legacy/<source-id>/<original-path>.md
 └── .okc/
-    ├── manifest.json
     ├── integration-plan.json
     ├── provenance.jsonl
+    ├── manifest.json
     └── checksums.txt
 ```
 
-Every canonical note is reconstructed solely from the approved typed sections,
-contradiction sets, retained non-omitted metadata, and blocks explicitly marked
-`preserved_verbatim`. Every legacy stub links to its canonical note. Both note
-and stub provenance bind the integration plan, cluster, proposal, critic,
-cluster approval, and exact source block evidence. The verifier reseals the
-plan and regenerates every materialized byte before accepting the inventory.
-
-Compilation rejects an existing destination and makes no provider call. The
-manifest uses schema 3, product version `0.3.0`, V3 domains, and the reserved
-profile name `okc-tar-zstd-deterministic-v3`. V3 OKCPack encoding/publication is
-not implemented in this development slice, so the profile name is not evidence
-of a supported Pack writer. Attachments, Canvas, Base, and their V3 link
-rewrites are also not yet materialized and remain release blockers.
-
-## Frozen schema-2 output layout
-
-### Output layout
-
-```text
-CompiledVault/
-├── knowledge/
-│   ├── ... preserved/selected notes ...
-│   └── _generated/ ... approved generated notes ...
-├── attachments/
-│   └── ab/abcdef...-sanitized-name.ext
-├── canvases/
-├── views/ ... opaque `.base` files ...
-└── .okc/
-    ├── manifest.json
-    ├── plan.json
-    ├── provenance.jsonl
-    ├── conflicts.json
-    ├── diagnostics.json
-    ├── checksums.txt
-    └── ai-transcript.jsonl
-```
-
-The output MUST NOT contain raw source Vault archives or a `_sources` copy. It MAY contain selected source-derived notes and assets, each tied to provenance.
-
-`.okc/plan.json` contains the canonical, source-locator-redacted
-`ApprovedPlan` envelope: its immutable `DraftPlan`, proposal
-validations/approvals, conflict-decision overlay, transcript, and exact derived
-`MaterializationPlan`. It is not a bare `DraftPlan`.
-
-Absolute or host-specific source locators are build inputs, not semantic
-artifact data. The serialized audit plan MUST replace them with the stable
-literal `[redacted-source-locator]`; manifests, provenance, diagnostics, and
-transcripts MUST NOT leak an absolute input root. Snapshot/source IDs and
-logical source paths remain so provenance is useful without revealing the host
-filesystem.
-
-## Path policy
-
-All output paths use `/` in manifests, Unicode normalization defined by ALG-NRM-001, no leading slash, no drive/UNC prefix, no `.` or `..` segment, no control/NUL characters, and platform-portable component rules. Path comparison detects both exact and configured case-fold collisions before materialization.
-
-Conflict suffixes are stable and derived from a short, collision-checked identity fragment, never traversal-prone user text. Sanitization produces a diagnostic. Provenance retains both the exact accepted UTF-8 source spelling and its NFC logical path; output paths use the NFC form.
-
-## Generated note frontmatter
-
-Generated Markdown begins with canonical YAML fields in this order:
-
-```yaml
----
-okc_generated: true
-okc_pack_id: <pack-id-or-null>
-okc_proposal_id: <proposal-id>
-okc_confidence: <optional-calibrated-number>
-okc_sources:
-  - <evidence-reference-id>
----
-```
-
-`okc_confidence` MUST be omitted if it is not calibrated for the declared task/cohort. License and author attribution required by any source MUST remain reachable from the manifest and provenance, and SHOULD appear in generated content when policy requires visible attribution.
-
-The `okc_sources` entries are ALG-PRV-001 `EvidenceId` values in the sealed
-proposal evidence order. The current writer emits those canonical identities
-and binds them to the approval materialization, provenance ledger, and exact
-rendered bytes. `okc_pack_id` remains `null` because pack identity/signing
-belongs to the future distribution profile.
+`knowledge/` contains one canonical synthesized note per approved taxonomy
+cluster. `legacy/` contains source-specific redirect stubs for current Schema 3
+navigation and provenance; it is not an older artifact reader. Current output
+is Markdown-only. Attachments, Canvas, Base, complete link rewriting, and a
+Pack writer MUST NOT be advertised until their gates pass.
 
 ## Manifest
 
-The schema-2 manifest includes `format_family`, schema/compiler/toolchain,
-artifact/plan/materialization IDs, policy and projection hashes, ordered source
-snapshot IDs, approved proposal IDs and hashes, provenance schema/graph hash,
-attribution summary, creation policy, distribution metadata, and
-`files[{path, media_type, byte_len, raw_sha256, content_hash}]`. Wall-clock time
-is excluded from reproducibility identity. Its inventory excludes
-`manifest.json` and `checksums.txt` and includes the stored provenance ledger.
+`CompiledVaultManifest` is strict Schema 3 JSON with:
 
-ADR-0010 freezes the non-circular inventory layers. The stored provenance
-graph covers content plus plan/conflict/diagnostic/transcript audit outputs.
-Provenance, manifest, and checksums themselves have virtual audit-envelope
-records synthesized from their final bytes and exact inventories; those
-records MUST NOT be serialized back into the provenance file.
+- `format_family = "okc"`;
+- `schema_version = 3`;
+- `product_version = "0.3.0"`;
+- exact integration-plan, corpus, and taxonomy identities;
+- the reserved `okc-tar-zstd-deterministic-v3` Pack profile string;
+- sorted `ManifestFile` entries containing safe relative path, byte length,
+  raw SHA-256, and domain-separated content hash.
 
-## Checksums
+The reserved Pack profile is part of existing bytes even though no current
+Pack writer is exposed. It MUST remain unchanged unless an accepted format ADR
+defines a migration.
 
-Each `checksums.txt` line is `<64 lowercase raw-SHA-256 hex><two ASCII
-spaces><validated normalized UTF-8 logical path>\n`, sorted by logical path.
-Paths are literal rather than escaped because V2 path policy forbids control
-characters, backslashes, and non-canonical forms. The file covers the manifest
-and every other artifact file except itself and detached signatures as defined
-by format version.
+The embedded approved plan must validate independently and exactly match the
+manifest identities. The file inventory, checksums, materialized bytes, and
+provenance are recomputed during verification; unknown/additional/missing
+content fails.
 
-## Atomic materialization
+## Canonical notes and redirects
 
-The compiler verifies sources and destination parent, rejects source/output
-overlap, creates a unique sibling staging directory with restrictive
-permissions, writes and synchronizes files, synchronizes the completed staging
-tree where supported, independently verifies it, and commits it to the
-requested absent destination with the ADR-0014 platform no-replace primitive.
-Existing output is rejected unless a separately specified, recoverable update
-workflow is introduced by ADR.
+Canonical notes are rendered in deterministic taxonomy/cluster order from
+approved synthesis sections. Evidence, related links, contradictions,
+dispositions, critic results, and approvals are not inferred during compile;
+they are validated from the sealed plan.
 
-Linux uses `renameat2(RENAME_NOREPLACE)` and macOS uses
-`renameatx_np(RENAME_EXCL)` through the safe `rustix` API. Windows uses the safe
-`atomicwrites::move_atomic` wrapper around `MoveFileExW` without replace. The
-compiler never falls back to a replacing rename. Existing files, empty or
-non-empty directories, live or dangling symlinks, supported reparse points,
-and publication-race winners remain untouched. Unsupported primitives or
-filesystems fail closed.
+Every source document maps to one safe redirect path under
+`legacy/<source-id>/`. Redirects point to the approved canonical note and bind
+source identity and blocks in provenance. Absolute paths, parent traversal,
+control characters, duplicate output paths, or namespace collisions fail.
 
-Before staging, the requested output and any Pack path supplied to
-`compile_with_options` must be disjoint from every immutable source locator
-after existing-ancestor resolution, lexical normalization, and portable
-NFC/full-case-fold comparison. A standalone Pack call cannot recover redacted
-original source locators and retains its Compiled-Vault-versus-Pack boundary.
-Descriptor-relative ancestor pinning is still a separate hardening boundary.
+Generated formatting is canonical UTF-8 with LF line endings. Locale, wall
+clock, source root, filesystem metadata, and map iteration cannot affect bytes.
 
-Caught pre-commit failures explicitly remove the exact known staging directory
-or, only under the debug retention option, synchronize an incomplete marker
-before retaining it. A disposition failure is reported together with its stage
-and original error. If parent synchronization fails after the directory
-commit, the complete Compiled Vault remains visible and compilation returns
-`PublishedButDurabilityUncertain`; it is not deleted as a false rollback and
-optional Pack publication does not start.
+## Audit files
 
-ADR-0013 defines pack-file publication separately. SDK and CLI independently
-verify the Compiled Vault, write a complete deterministic stream to a
-synchronized, restrictive sibling temporary file, verify the staged pack, and
-then atomically publish it without replacement. Existing regular files,
-directories, live or dangling symlinks, and publication-race winners are never
-overwritten. Pack destinations must end in `.okcpack` and be disjoint from
-the Compiled Vault in either containment direction. Caught pre-publication
-failures leave no okc-created file at the requested pack destination.
+- `integration-plan.json` is canonical pretty JSON for the complete approved
+  plan used by offline materialization.
+- `provenance.jsonl` contains exactly one canonical record for every
+  materialized note or redirect.
+- `manifest.json` binds format/product, plan/corpus/taxonomy, profile, and the
+  deterministic file inventory.
+- `checksums.txt` contains sorted raw SHA-256 lines for the finalized inventory.
 
-Compiled Vault publication and pack publication are not one combined
-filesystem transaction: a valid Compiled Vault remains if later pack creation
-fails. `OkcCompiler::compile_with_options` performs detectable pack preflight
-before compilation and then performs these two ordered commits. A runtime pack
-failure is wrapped as `PackPublicationAfterCompile` so callers can identify
-the retained valid directory. A future true all-or-nothing release requires a
-single-root versioned bundle format rather than rollback across unrelated
-paths.
+Source absolute paths, raw source copies, credentials, consent flags, and live
+provider access MUST NOT enter the artifact.
 
-If Unix parent-directory synchronization fails after the pack has been
-published, the complete pack remains and the SDK returns the distinct
-`PublishedButDurabilityUncertain` error. Windows V2 synchronizes the file and
-provides process-visible atomic no-replace publication but does not claim a
-safe-Rust parent-directory flush or physical power-loss durability.
+## Publication
 
-## OKCPack
+The requested output must not exist. Compile writes new files into a sibling
+temporary directory, verifies it, synchronizes it, and publishes with an
+atomic no-replace directory primitive. It never falls back to a replacing
+rename. A concurrent winner remains untouched. Pre-publication failure exposes
+no requested destination; exact known staging cleanup never targets an
+unresolved path.
 
-A `.okcpack` is a deterministic `tar.zst` of the Compiled Vault with versioned
-distribution metadata in the inner manifest. Archive members are lexically ordered;
-owner/group IDs, names, regular-file modes, timestamps, and tar header mode are
-normalized. Identical semantic build inputs MUST yield identical bytes under
-the declared Rust/zstd toolchain contract. The exact profile name is
-`okc-tar-zstd-deterministic-v2`.
+If publication succeeds but parent-directory synchronization fails, the
+verified output remains and `PublishedButDurabilityUncertain` reports the
+state. Re-running compile at the same destination returns `OutputExists`.
 
-User-created Packs are unsigned in V2. Until a future Pack-signing profile
-defines keys, algorithms, identity, revocation, and reproducible coverage,
-verification establishes
-internal checksum, sealed-audit, approval, provenance-graph, and independently
-reconstructed output consistency, not publisher authenticity. Once that
-profile exists, signature verification MUST
-occur before installation, and signatures will not replace content-hash
-verification, permission display, license review, or provenance inspection.
-This policy does not apply to application release binaries, which require the
-native signatures and notarization in ADR-0020.
+## Artifact service and retired schemas
 
-Verification of a `.okcpack` requires both a valid inner Compiled Vault and
-byte equality with a package recreated by the exact declared deterministic
-tar/zstd writer profile. Equivalent extracted members encoded with different
-compression parameters or archive headers are not canonical OKCPacks and
-are rejected. Only a canonical outer archive may receive the virtual
-`okc-tar-zstd-deterministic-v2` package provenance profile.
+The current service accepts a Schema 3 directory only. It rejects root, marker,
+or manifest symlinks; mixed markers; malformed or oversized manifests; unknown
+families/schemas; corrupt inventories; and unrecognized regular files.
 
-## Verification
+Recognizable `.vaultc`/`.vaultpack` Schema 1 and `.okc`/`.okcpack` Schema 2
+markers are not decoded. They return `ARTIFACT_SCHEMA_UNSUPPORTED` with
+supported schema 3 and detected schema/family details. Main provides no reader,
+writer, migration, or compatibility alias for them.
 
-The normative verifier checks archive safety, regular-file-only members, duplicate
-members, path policy, canonical manifests, full tree/checksum equality,
-recomputed artifact identity, sealed plan integrity, manifest-to-plan linkage,
-proposal/conflict approvals, exact standalone audit-file equality, expected
-provenance reconstruction, evidence closure, and generated frontmatter.
-Verification is independently callable and must not trust a prior successful
-compile status.
+## Future current-schema Pack
 
-The current verifier requires its exact schema and compiler version and checks
-the implemented internal audit relationships. Every source-derived Copy,
-Markdown rewrite, and Canvas rewrite is compared with its sealed output hash.
-For rewritten Canvas it reconstructs canonical bytes from the sealed source
-value and typed node rewrites. For rewritten Markdown it rederives the ordered
-recipe from sealed link resolution, reverses the recipe against output bytes to
-reconstruct and hash the original source candidate, and reparses the rewritten
-links. Generated notes are reconstructed byte-for-byte from the approved
-proposal and its required materialization commitment, including canonical body
-and output hashes, destination, operation ID, and ordered EvidenceId values.
-V2 rejects arbitrary evidence spans and accepts only file/body evidence or
-exact block evidence. It independently reconstructs the complete typed stored
-graph, validates RecordIds, edge/cardinality/acyclic/reachability invariants,
-retains declared frontmatter author/license values, synthesizes the
-non-circular audit envelope from final bytes, and enforces bounded explanation
-pages and cursors. It does not infer license compatibility or verify publisher
-authenticity.
+A future `.okcpack` is not implemented. Before exposure it requires an
+accepted current-format decision plus deterministic archive ordering,
+normalized headers, duplicate/path/link rejection, compressed and expanded
+bounds, no-replace publication, directory/Pack verification parity, byte
+goldens on supported hosts, and supply-chain documentation. User-created Packs
+would remain internally verifiable but unsigned unless a separate authenticity
+profile is accepted. Native application signing is a separate release concern.

@@ -1,6 +1,6 @@
 ---
 title: ADR-0005 — SQLite as the Bounded V1 Workspace
-status: normative-v1
+status: normative
 owners:
   - core-rust-engineer
 last_updated: 2026-08-16

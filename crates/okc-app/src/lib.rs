@@ -13,14 +13,12 @@ use sha2::{Digest as _, Sha256};
 pub mod artifact_service;
 mod integration_execution;
 pub mod integration_service;
+pub mod project_state;
 pub mod provider_service;
-pub mod v3;
 pub mod worker;
 pub mod workspace_bootstrap;
 
-pub use artifact_service::{
-    ArtifactExplanation, ArtifactFamily, ArtifactService, ArtifactVerification,
-};
+pub use artifact_service::ArtifactService;
 pub use integration_execution::IntegrationExecution;
 pub use integration_service::{IntegrationCheckpoint, IntegrationService};
 pub use provider_service::{CredentialStore, ProviderService};
@@ -51,6 +49,14 @@ pub enum AppError {
     Update(String),
     #[error("artifact error: {0}")]
     Artifact(String),
+    #[error(
+        "artifact schema {detected_schema} ({detected_format_family}) is unsupported; supported schema is {supported_schema}"
+    )]
+    ArtifactSchemaUnsupported {
+        supported_schema: u32,
+        detected_schema: u32,
+        detected_format_family: String,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, AppError>;
@@ -174,7 +180,7 @@ pub struct ProjectManifest {
     #[serde(default)]
     pub language: Option<String>,
     #[serde(default)]
-    pub ai_routes: v3::AiRouteConfig,
+    pub ai_routes: project_state::AiRouteConfig,
     pub sources: Vec<SourceBinding>,
 }
 
@@ -201,7 +207,7 @@ impl ProjectManifest {
             ));
         }
         if let Some(language) = &self.language {
-            v3::validate_bcp47(language)?;
+            project_state::validate_bcp47(language)?;
         }
         self.ai_routes.validate()?;
         if self.sources.len() > 10 {
@@ -249,7 +255,7 @@ impl ProjectStore {
             curator_id: curator_id.into(),
             policy_version: policy_version.into(),
             language: None,
-            ai_routes: v3::AiRouteConfig::default(),
+            ai_routes: project_state::AiRouteConfig::default(),
             sources: Vec::new(),
         };
         manifest.validate()?;
@@ -816,7 +822,7 @@ mod tests {
     fn project_layout_lock_objects_and_rebind_are_safe() {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let root = temporary.path().join("Knowledge.okc-project");
-        let mut project = ProjectStore::create(&root, "Knowledge", "curator", "policy-v2")
+        let mut project = ProjectStore::create(&root, "Knowledge", "curator", "policy-v3")
             .expect("create project");
         assert!(root.join("manifest.json").is_file());
         assert!(root.join("state.sqlite3").is_file());

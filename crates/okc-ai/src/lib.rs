@@ -1,4 +1,4 @@
-//! Provider-neutral V3 AI capabilities and vendor adapters.
+//! Provider-neutral Schema 3 AI capabilities and vendor adapters.
 //!
 //! This crate owns live provider I/O. `okc-core` deliberately does not depend
 //! on it; providers return untrusted structured data which the application and
@@ -37,12 +37,11 @@ pub enum ProviderKind {
     Gemini,
     Ollama,
     OpenAiCompatible,
-    Command,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DataBoundaryV3 {
+pub enum DataBoundary {
     Local,
     Remote,
 }
@@ -58,13 +57,13 @@ pub struct ProviderIdentity {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProviderCapabilitiesV3 {
+pub struct ProviderCapabilities {
     pub schema_version: u32,
     pub identity: ProviderIdentity,
     pub structured_generation: bool,
     pub embeddings: bool,
     pub strict_json_schema: bool,
-    pub data_boundary: DataBoundaryV3,
+    pub data_boundary: DataBoundary,
     pub max_input_bytes: u64,
     pub max_output_bytes: u64,
     pub max_batch_items: u32,
@@ -178,7 +177,7 @@ pub struct EmbeddingBatchResponse {
 }
 
 pub trait StructuredGenerator: Send + Sync {
-    fn capabilities(&self) -> ProviderCapabilitiesV3;
+    fn capabilities(&self) -> ProviderCapabilities;
 
     fn generate_structured(
         &self,
@@ -188,7 +187,7 @@ pub trait StructuredGenerator: Send + Sync {
 }
 
 pub trait Embedder: Send + Sync {
-    fn capabilities(&self) -> ProviderCapabilitiesV3;
+    fn capabilities(&self) -> ProviderCapabilities;
 
     fn embed(
         &self,
@@ -282,7 +281,7 @@ impl ProviderProfile {
                 ),
             ));
         }
-        validate_endpoint(&self.endpoint, self.kind)?;
+        validate_endpoint(&self.endpoint)?;
         if let Some(name) = &self.api_key_env
             && (name.is_empty()
                 || name.len() > 256
@@ -316,11 +315,11 @@ impl ProviderProfile {
         Ok(())
     }
 
-    pub fn data_boundary(&self) -> DataBoundaryV3 {
-        if is_loopback_endpoint(&self.endpoint) || self.kind == ProviderKind::Command {
-            DataBoundaryV3::Local
+    pub fn data_boundary(&self) -> DataBoundary {
+        if is_loopback_endpoint(&self.endpoint) {
+            DataBoundary::Local
         } else {
-            DataBoundaryV3::Remote
+            DataBoundary::Remote
         }
     }
 
@@ -680,8 +679,8 @@ impl ProviderClient {
         &self.profile
     }
 
-    fn capabilities_inner(&self) -> ProviderCapabilitiesV3 {
-        ProviderCapabilitiesV3 {
+    fn capabilities_inner(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
             schema_version: AI_SCHEMA_VERSION,
             identity: ProviderIdentity {
                 provider: provider_name(self.profile.kind).into(),
@@ -689,15 +688,9 @@ impl ProviderClient {
                 adapter_version: env!("CARGO_PKG_VERSION").into(),
                 response_model: None,
             },
-            structured_generation: self.profile.kind != ProviderKind::Command,
-            embeddings: !matches!(
-                self.profile.kind,
-                ProviderKind::Anthropic | ProviderKind::Command
-            ),
-            strict_json_schema: !matches!(
-                self.profile.kind,
-                ProviderKind::OpenAiCompatible | ProviderKind::Command
-            ),
+            structured_generation: true,
+            embeddings: self.profile.kind != ProviderKind::Anthropic,
+            strict_json_schema: self.profile.kind != ProviderKind::OpenAiCompatible,
             data_boundary: self.profile.data_boundary(),
             max_input_bytes: self.profile.max_input_bytes,
             max_output_bytes: self.profile.max_response_bytes,
@@ -800,7 +793,7 @@ fn redact_request_secrets(mut error: ProviderError, request: &HttpRequest) -> Pr
 }
 
 impl StructuredGenerator for ProviderClient {
-    fn capabilities(&self) -> ProviderCapabilitiesV3 {
+    fn capabilities(&self) -> ProviderCapabilities {
         self.capabilities_inner()
     }
 
@@ -810,12 +803,6 @@ impl StructuredGenerator for ProviderClient {
         cancellation: &CancellationToken,
     ) -> Result<StructuredGenerationResponse, ProviderError> {
         validate_generation_request(request)?;
-        if self.profile.kind == ProviderKind::Command {
-            return Err(ProviderError::new(
-                ProviderErrorKind::UnsupportedCapability,
-                "use the supervised command adapter for command profiles",
-            ));
-        }
         cancelled(cancellation)?;
         let resolved_key = if self.api_key_override.is_none() {
             self.profile.resolve_api_key()?
@@ -861,7 +848,7 @@ impl StructuredGenerator for ProviderClient {
 }
 
 impl Embedder for ProviderClient {
-    fn capabilities(&self) -> ProviderCapabilitiesV3 {
+    fn capabilities(&self) -> ProviderCapabilities {
         self.capabilities_inner()
     }
 
@@ -871,10 +858,7 @@ impl Embedder for ProviderClient {
         cancellation: &CancellationToken,
     ) -> Result<EmbeddingBatchResponse, ProviderError> {
         validate_embedding_request(request, &self.profile)?;
-        if matches!(
-            self.profile.kind,
-            ProviderKind::Anthropic | ProviderKind::Command
-        ) {
+        if self.profile.kind == ProviderKind::Anthropic {
             return Err(ProviderError::new(
                 ProviderErrorKind::UnsupportedCapability,
                 "provider profile does not declare native embeddings",
@@ -1047,12 +1031,6 @@ fn generation_wire_body(
             "max_tokens": request.max_output_tokens,
             "temperature": temperature
         }),
-        ProviderKind::Command => {
-            return Err(ProviderError::new(
-                ProviderErrorKind::UnsupportedCapability,
-                "command profiles do not use an HTTP wire body",
-            ));
-        }
     };
     Ok(remove_null_object_fields(body))
 }
@@ -1077,7 +1055,7 @@ fn embedding_wire_body(kind: ProviderKind, model: &str, request: &EmbeddingBatch
             "input": request.inputs,
             "dimensions": request.dimensions
         })),
-        ProviderKind::Anthropic | ProviderKind::Command => Value::Null,
+        ProviderKind::Anthropic => Value::Null,
     }
 }
 
@@ -1090,7 +1068,6 @@ fn generation_endpoint(profile: &ProviderProfile) -> String {
             ProviderKind::Gemini => "/v1beta/interactions",
             ProviderKind::Ollama => "/api/chat",
             ProviderKind::OpenAiCompatible => "/v1/chat/completions",
-            ProviderKind::Command => "",
         },
     )
 }
@@ -1100,7 +1077,7 @@ fn embedding_endpoint(profile: &ProviderProfile) -> String {
         ProviderKind::OpenAi | ProviderKind::OpenAiCompatible => "/v1/embeddings".into(),
         ProviderKind::Gemini => format!("/v1beta/models/{}:batchEmbedContents", profile.model),
         ProviderKind::Ollama => "/api/embed".into(),
-        ProviderKind::Anthropic | ProviderKind::Command => String::new(),
+        ProviderKind::Anthropic => String::new(),
     };
     endpoint_with_path(&profile.endpoint, &path)
 }
@@ -1226,12 +1203,6 @@ fn parse_generation_response(
                 .unwrap_or("unknown");
             (text, finish.to_owned(), parse_openai_usage(wire))
         }
-        ProviderKind::Command => {
-            return Err(ProviderError::new(
-                ProviderErrorKind::UnsupportedCapability,
-                "command response requires the command adapter",
-            ));
-        }
     };
     let output = serde_json::from_str(text)
         .map_err(|_| invalid_response("structured response text is not valid JSON"))?;
@@ -1313,7 +1284,7 @@ fn parse_embedding_response(
                 .collect::<Result<Vec<_>, ProviderError>>()?;
             (values, parse_ollama_usage(wire))
         }
-        ProviderKind::Anthropic | ProviderKind::Command => {
+        ProviderKind::Anthropic => {
             return Err(ProviderError::new(
                 ProviderErrorKind::UnsupportedCapability,
                 "provider does not support embeddings",
@@ -1498,20 +1469,10 @@ fn provider_name(kind: ProviderKind) -> &'static str {
         ProviderKind::Gemini => "gemini",
         ProviderKind::Ollama => "ollama",
         ProviderKind::OpenAiCompatible => "openai_compatible",
-        ProviderKind::Command => "command",
     }
 }
 
-fn validate_endpoint(endpoint: &str, kind: ProviderKind) -> Result<(), ProviderError> {
-    if kind == ProviderKind::Command {
-        if endpoint.trim().is_empty() || endpoint.chars().any(char::is_control) {
-            return Err(ProviderError::new(
-                ProviderErrorKind::InvalidRequest,
-                "command profile requires a safe executable path",
-            ));
-        }
-        return Ok(());
-    }
+fn validate_endpoint(endpoint: &str) -> Result<(), ProviderError> {
     validate_network_endpoint(endpoint)
 }
 
@@ -1628,7 +1589,7 @@ fn find_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
     }
 }
 
-/// Validate the portable JSON Schema subset accepted by all V3 adapters.
+/// Validate the portable JSON Schema subset accepted by all Schema 3 adapters.
 #[allow(clippy::items_after_statements, clippy::too_many_lines)]
 pub fn validate_portable_schema(schema: &Value) -> Result<(), ProviderError> {
     #[allow(clippy::too_many_lines)]
@@ -2130,11 +2091,11 @@ mod tests {
     fn only_loopback_http_is_local() {
         assert_eq!(
             profile(ProviderKind::Ollama).data_boundary(),
-            DataBoundaryV3::Local
+            DataBoundary::Local
         );
         let mut lan = profile(ProviderKind::Ollama);
         lan.endpoint = "http://192.168.1.4:11434".into();
-        assert_eq!(lan.data_boundary(), DataBoundaryV3::Remote);
+        assert_eq!(lan.data_boundary(), DataBoundary::Remote);
         assert_eq!(
             lan.validate().expect_err("LAN HTTP denied").kind,
             ProviderErrorKind::RemotePolicy

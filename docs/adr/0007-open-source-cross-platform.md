@@ -1,6 +1,6 @@
 ---
 title: ADR-0007 — Open Source and Cross-Platform V1
-status: normative-v1
+status: normative
 owners:
   - release-maintainer
 last_updated: 2026-08-16

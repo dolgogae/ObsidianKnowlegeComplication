@@ -1,6 +1,6 @@
 ---
 title: ADR-0017 — Typed Conflict Actions and Immutable Materialization
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

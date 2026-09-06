@@ -1,6 +1,6 @@
 ---
 title: ADR-0006 — Compiled Output Excludes Raw Source Copies
-status: normative-v1
+status: normative
 owners:
   - architect
   - qa-security-engineer

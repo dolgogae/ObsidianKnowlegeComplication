@@ -92,6 +92,7 @@ macro_rules! typed_id {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(pub(crate) ContentHash);
 
+        #[allow(dead_code)]
         impl $name {
             pub fn from_hash(hash: ContentHash) -> Self {
                 Self(hash)
@@ -165,9 +166,6 @@ typed_id!(CanvasId, "canvas");
 typed_id!(BaseArtifactId, "base");
 typed_id!(PlanId, "plan");
 typed_id!(OperationId, "op");
-typed_id!(MaterializationId, "materialization");
-typed_id!(EvidenceId, "evidence");
-typed_id!(RecordId, "record");
 
 impl SourceFileId {
     /// Compute ALG-SNP-001's file identity. Unlike the generic `from_parts`
@@ -183,7 +181,7 @@ impl SourceFileId {
 }
 
 impl SnapshotId {
-    /// Compute the V2 snapshot identity from an already path-sorted manifest.
+    /// Compute the snapshot identity used by corpus preparation from an already path-sorted manifest.
     ///
     /// The manifest member encoding is deliberately not generic JSON: the
     /// normative identity formula commits `lp(path) || SourceFileId` for each
@@ -202,73 +200,6 @@ impl SnapshotId {
             hasher.update(file_id.hash().as_bytes());
         }
         Self(ContentHash(hasher.finalize().into()))
-    }
-}
-
-impl EvidenceId {
-    /// Compute ALG-PRV-001's fixed-width, mode-tagged evidence identity.
-    /// Display prefixes and the generic length-prefixed encoder are
-    /// deliberately excluded from this identity formula.
-    pub fn from_evidence(evidence: &okc_protocol::EvidenceRefWire) -> Result<Self> {
-        let snapshot_id = evidence.snapshot_id.parse::<SnapshotId>()?;
-        let document_id = evidence.document_id.parse::<DocumentId>()?;
-        let block_id = evidence
-            .block_id
-            .as_deref()
-            .map(str::parse::<BlockId>)
-            .transpose()?;
-        let span = match (evidence.byte_start, evidence.byte_end) {
-            (None, None) => None,
-            (Some(start), Some(end)) => Some((start, end)),
-            _ => {
-                return Err(OkcError::MalformedInput {
-                    path: "evidence".into(),
-                    reason: "evidence span must contain both start and end".into(),
-                });
-            }
-        };
-        let content_hash = ContentHash::parse_hex(&evidence.content_hash)?;
-        Self::from_components(snapshot_id, document_id, block_id, span, content_hash)
-    }
-
-    fn from_components(
-        snapshot_id: SnapshotId,
-        document_id: DocumentId,
-        block_id: Option<BlockId>,
-        span: Option<(u64, u64)>,
-        content_hash: ContentHash,
-    ) -> Result<Self> {
-        let mode = match (block_id, span) {
-            (None, None) => 0_u8,
-            (Some(_), None) => 1_u8,
-            (Some(_), Some((start, end))) if start <= end => 2_u8,
-            (Some(_), Some(_)) => {
-                return Err(OkcError::MalformedInput {
-                    path: "evidence".into(),
-                    reason: "evidence span start must not exceed end".into(),
-                });
-            }
-            (None, Some(_)) => {
-                return Err(OkcError::MalformedInput {
-                    path: "evidence".into(),
-                    reason: "file-level evidence cannot carry a byte span".into(),
-                });
-            }
-        };
-        let mut hasher = Sha256::new();
-        hasher.update(b"okc:evidence:v2\0");
-        hasher.update(snapshot_id.hash().as_bytes());
-        hasher.update(document_id.hash().as_bytes());
-        hasher.update([mode]);
-        if let Some(block_id) = block_id {
-            hasher.update(block_id.hash().as_bytes());
-        }
-        if let Some((start, end)) = span {
-            hasher.update(start.to_be_bytes());
-            hasher.update(end.to_be_bytes());
-        }
-        hasher.update(content_hash.as_bytes());
-        Ok(Self(ContentHash(hasher.finalize().into())))
     }
 }
 

@@ -1,6 +1,6 @@
 ---
 title: Framework Architecture
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer
@@ -10,9 +10,6 @@ decision_refs:
   - ADR-0002
   - ADR-0004
   - ADR-0005
-  - ADR-0013
-  - ADR-0015
-  - ADR-0017
   - ADR-0019
   - ADR-0021
   - ADR-0022
@@ -20,6 +17,7 @@ decision_refs:
   - ADR-0024
   - ADR-0025
   - ADR-0026
+  - ADR-0027
 source_refs:
   - HIST-COMPILER-PLAN
 ---
@@ -29,152 +27,112 @@ source_refs:
 ## Dependency direction
 
 ```text
-             `okc` CLI/TUI       Python          Node.js
-                    |               |                |
-                    |          thin PyO3        thin napi-rs
-                    |               +-------+--------+
-                    |                       |
-                    |                 `okc-interop`
-                    |                       |
-                    +-----------+-----------+
-                                |
-                            `okc-app`
-                                |
-       +------------------------+------------------------+
-       | inspect -> IR -> integrate -> approve -> compile |
-       |             -> verify -> explain                 |
-       +------------------------+------------------------+
-                                |
-          filesystem / SQLite project+workspace / pack
-
-Obsidian plugin and MCP server remain future thin adapters over public inward
-boundaries; they do not own canonical state or compiler policy.
-
-Provider process/HTTP -> `okc-ai` -> recorded untrusted proposals
-External MCP engines -> adapters -> derived candidates only
+        okc CLI/TUI       Python       Node.js
+             |               |            |
+             |          thin PyO3    thin napi-rs
+             |               +-----+------+
+             |                     |
+             +------------- okc-interop
+                                   |
+                                okc-app <---- okc-ai
+                                   |
+                                okc-core
+                                   |
+                     filesystem / SQLite / providers
 ```
 
-Dependencies point inward. The compiler core MUST NOT import Obsidian, MCP, hosted LLM, web-framework, or vendor SDK concepts.
+Dependencies point inward. `okc-core` MUST NOT import CLI, terminal,
+language-runtime, native-keychain, updater, MCP, hosted-vendor SDK, or web
+framework concepts. MCP and Obsidian integrations remain future thin adapters.
 
 ## Rust workspace
 
-| Package | State | Responsibility |
-|---|---|---|
-| `okc-core` | implemented public library | V2 deterministic compiler plus provider-free V3 integration validation, offline canonical/stub materialization, and independent directory verification |
-| `okc-protocol` | implemented public library | frozen schema-2 augmentation plus strict schema-3 command-provider envelopes |
-| `okc-ai` | implemented application-side library | semantic structured-generation/embedding traits, portable schema validation, injected zeroized credentials, bounded synchronous HTTP, and initial vendor adapters |
-| `okc-app` | implemented application library | schema-3 projects, cwd/Vault discovery, provider/keychain services, immutable objects, append-only run/task/exchange/cluster/approval/plan journal, shared integration orchestration, sensitive preflight/routing, updater and worker control types |
-| `okc-interop` | implemented runtime-neutral library facade | API-v1 DTOs/errors, explicit-path client/project operations, bounded jobs, cancellation/publication state, per-project mutation exclusion, and shared legacy artifact read dispatch |
-| `okc` | implemented sole binary | thin Clap CLI and Ratatui/Crossterm TUI adapters over `okc-app`, human/JSON output, and supervised subprocess provider execution |
-| `okc-python` | implemented native adapter | PyO3 `abi3-py311` bridge for the `okc-compiler` distribution and `okc` typed module |
-| `okc-node` | implemented native adapter | napi-rs Node-API 9 addon behind typed ESM/CommonJS `okc-compiler` entry points |
-| `vaultc` | deprecated facade, no binary | one-minor Rust compatibility aliases over `okc-core` |
-| internal V1/V2 readers | private compatibility packages | frozen schema-1 and read-only schema-2 verify/explain boundaries and literal goldens only |
-| `okc-mcp` | future adapter | MCP tools that call public library operations |
-| `okc-memory` | future experimental | calibrated memory/retrieval models isolated from file compilation |
+All workspace packages have version `0.3.0`.
 
-Circular dependencies are forbidden. `okc-core` may depend on protocol data
-types but MUST NOT launch provider processes or make HTTP requests. Process
-supervision and HTTP belong to `okc-ai`, `okc-app`, or the `okc` binary.
+| Package | Responsibility |
+|---|---|
+| `okc-core` | `CorpusBuilder`, current integration DTOs and validators, provider-free directory compile/verify/explain |
+| `okc-ai` | provider profiles, portable request/response schemas, bounded transports, capability checks |
+| `okc-app` | Schema 3 projects, journal, source bindings, provider/credential services, disclosure, review, worker, artifact service, updater |
+| `okc-interop` | runtime-neutral API-v1 facade, interop-schema-2 DTOs/errors, explicit-path jobs and scheduling |
+| `okc` | thin Clap CLI and Ratatui/Crossterm TUI |
+| `okc-python` | PyO3 `abi3-py311` native adapter |
+| `okc-node` | napi-rs Node-API 9 native adapter |
 
-`okc-app` exposes updater and native-keyring integrations only through optional
-features. The `okc` binary enables them. `okc-interop` and both language
-adapters disable them and MUST NOT gain cwd discovery, prompts, signal handlers,
-global tracing configuration, or language-runtime types below their adapter
-crates. The napi adapter's crate-level unsafe allowance exists only for export
-macro expansion; handwritten interop and adapter code contains no unsafe block.
+There is no legacy compiler, protocol crate, deprecated facade, or command
+provider on main. A command provider may return only through a separately
+reviewed current-schema adapter.
 
-## Module boundaries
+## Core boundaries
 
-- `source`: validate typed directory/archive descriptors and source IDs.
-- `snapshot`: open sources safely, apply exclusions/limits, enumerate bytes, and seal snapshots.
-- `identity`: domain-separated hashes and stable IDs.
-- `canonical`: deterministic JSON and content-hash serialization.
-- `parse`: Markdown/Canvas/frontmatter decoding, source spans, and comparison-only normalization that never overwrites source bytes.
-- `ir`: versioned canonical records; schema migration is future work.
-- `dedup`: exact groups and near-duplicate candidates.
-- `plan`: output namespace, rewrites, conflicts, diagnostics, sealed operations, and integrity revalidation.
-- `provider`: provider-neutral traits plus capability/evidence/proposal validation.
-- `approval`: record explicit decisions and invalidation rules.
-- `materialization`: derive effective operations and `MaterializationId` from the immutable plan, typed action set, and approved proposal set.
-- `compile`: stage, materialize, checksum, and atomically publish.
-- `pack`: verified deterministic OKCPack creation, atomic no-replace file
-  publication, and safe extraction for verification.
-- `provenance`: emit and explain exact output-to-source derivations.
-- `verify`: independently verify manifest, paths, hashes, sealed audit linkage, approvals, and provenance closure.
-- `workspace`: bounded SQLite-backed intermediate state.
-- `integration`: schema-3 corpus/taxonomy/disposition/evidence/critic/approval
-  validation plus provider-free canonical-note and redirect-stub materialization.
-
-## State machine
+The public source-to-corpus boundary is:
 
 ```text
-Sources
-  -> InspectedSnapshotSet
-  -> CanonicalWorkspace
-  -> DraftPlan
-  -> [AugmentationTranscript + Proposals]
-  -> ValidatedProposals
-  -> DecisionOverlay + ApprovedPlan
-  -> MaterializationPlan
-  -> StagedOutput
-  -> CompiledVault
-  -> VerifiedArtifact
+SourceSpec[] -> CorpusBuilder::build -> PreparedCorpus
 ```
 
-Operations MUST reject inputs from the wrong state. Any change to source hashes, compiler semantic version, policy configuration, or proposal payload invalidates dependent approvals.
+`CorpusBuilder` privately reuses the stable source descriptor, snapshot,
+Markdown/frontmatter parser, canonical policy, deduplication/planning, resource
+limit, archive/path safety, and optional SQLite workspace modules. Intermediate
+inspection and draft-plan records are not public API. The default policy,
+inspection order, identity/hash domains, corpus sealing, and workspace schema
+are byte-compatibility constraints.
 
-The schema-3 state machine is:
+The public integration state machine is:
 
 ```text
-Immutable corpus -> sensitive preflight -> recorded embeddings/candidates
-  -> taxonomy proposal -> taxonomy approval
-  -> per-cluster synthesis -> critic -> cluster approval
-  -> ApprovedIntegrationPlan -> offline materialization -> verification
+PreparedCorpus
+  -> sensitive preflight
+  -> recorded embeddings/candidates
+  -> TaxonomyProposal -> taxonomy approval
+  -> SynthesisProposal -> CriticReport -> ClusterApproval
+  -> ApprovedIntegrationPlan
+  -> compile -> CompiledVaultManifest
+  -> verify / explain -> ProvenanceRecord
 ```
 
-Every transition appends a journal event or immutable object. A source, policy,
-route, prompt, schema, taxonomy, proposal, critic, or manual-section change
-creates a new dependent identity; it never rewrites earlier authority.
+Providers propose data but cannot approve, mutate source bytes, or publish.
+Every transition validates current hashes and appends journal state or an
+immutable object. A source, route, policy, prompt, schema, taxonomy, proposal,
+critic, or decision change creates a new identity and makes dependent
+authority stale.
 
-## Data ownership
-
-- Raw snapshots own original bytes.
-- Canonical IR owns normalized semantics and source spans.
-- A plan owns deterministic output paths, candidates, and base operations.
-- Decision and approval logs own authorization; a materialization owns the exact effective operations without mutating the plan.
-- A compiled artifact owns only materialized output plus its audit metadata.
-- Search indexes and MCP engines own disposable derivatives.
-
-## Persistence
+## Application state and ownership
 
 `okc-app` owns `Name.okc-project/manifest.json`, `state.sqlite3`, immutable
-`objects/`, `workspace/build.sqlite3`, and the single-writer `project.lock`.
-SQLite uses WAL, foreign keys, `FULL` synchronous mode, deterministic
-transactions, explicit migration through private `user_version = 4`, and private Unix
-permissions. The build workspace has its own core schema and MUST NOT be
-initialized with the application-state tables. A source rebind, route, policy,
-or language change appends an invalidation event and creates a new run identity;
-prior task, exchange, revision, and approval rows remain immutable history.
-Project and artifact JSON remain schema 3. State schema 4 appends source-set
-revisions and approved-integration-plan object pointers rather than rewriting
-historical runs.
+`objects/`, `workspace/build.sqlite3`, and `project.lock`. Project/artifact JSON
+uses Schema 3; the private append-only application journal remains schema 4;
+the retained build-workspace identifiers remain unchanged. SQLite uses WAL,
+foreign keys, `FULL` synchronous mode, explicit migration, and private Unix
+permissions.
 
-Project data is plaintext. Applications MUST warn for likely shared/network
+- Sources own immutable original bytes.
+- The sealed corpus owns canonical parsed content and stable identities.
+- Provider recordings own untrusted proposals, never authority.
+- Approval records own exact hash-bound authority.
+- An approved integration plan owns the complete offline materialization recipe.
+- A compiled artifact owns output plus audit metadata, not source copies.
+
+Project data is plaintext. Applications MUST warn about likely shared/network
 locations and MUST NOT imply encryption.
 
-Large blobs SHOULD be streamed from sources and MUST NOT be duplicated in
-memory. The `0.2.0` scanner currently accumulates bounded source bytes in memory
-before parsing and therefore does not yet meet this target at the 20 GB
-reference workload. Database writes SHOULD be batched in deterministic
-primary-key order.
+## Artifact boundary
 
-## Errors and diagnostics
+`ArtifactService` accepts a current Schema 3 directory and exposes only:
 
-Errors mean the operation cannot safely continue. Diagnostics are versioned records with code, severity, source/output identity, optional span, explanatory fields, and remediation. Human text is not a stable API; diagnostic codes are.
+```text
+verify(path) -> CompiledVaultManifest
+explain(path, output_path) -> ProvenanceRecord
+```
 
-Expected error families include unsafe path, unsupported archive, resource limit, malformed input, identity mismatch, plan stale, proposal invalid, approval stale, output exists, verification failed, and platform nondeterminism.
+Detection occurs before full decoding. Retired recognizable schemas receive a
+structured unsupported error. Mixed markers, symlinked roots/markers/manifests,
+malformed or oversized manifests, unknown families, corrupt bytes, and
+unrecognized files fail closed.
 
-## Extension rules
+## Extension and error rules
 
-Public extension points use traits and serializable schemas. Extensions MAY suggest candidates or proposals, but MUST NOT bypass planning, validation, approval, or safe materialization. Unknown enum variants and fields must be handled according to declared protocol compatibility rather than ignored silently.
+Public extensions use typed traits and serializable schemas. They MAY suggest
+candidates or proposals but MUST NOT bypass validation, review, approval,
+provenance, or safe publication. Human text is not a stable API; language
+clients branch on structured error code/category and typed result fields.

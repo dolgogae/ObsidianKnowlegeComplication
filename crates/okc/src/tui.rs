@@ -10,14 +10,14 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use okc_ai::{
-    AiRole, DEFAULT_MAX_RESPONSE_BYTES, DEFAULT_TIMEOUT_MS, DataBoundaryV3, ProviderKind,
+    AiRole, DEFAULT_MAX_RESPONSE_BYTES, DEFAULT_TIMEOUT_MS, DataBoundary, ProviderKind,
     ProviderProfile,
 };
 use okc_app::integration_service::{
     ClusterReviewDecision, IntegrationCheckpoint, PreflightSummary,
 };
+use okc_app::project_state::{ClusterTaskOutput, TaxonomyTaskOutput};
 use okc_app::provider_service::{CredentialStoreStatus, SecretInput, default_endpoint};
-use okc_app::v3::{ClusterTaskOutput, TaxonomyTaskOutput};
 use okc_app::worker::{CancelOutcome, Worker, WorkerEvent};
 use okc_app::workspace_bootstrap::VaultCandidateKind;
 use okc_app::{
@@ -728,7 +728,7 @@ fn reduce_screen_key(model: &mut Model, key: KeyEvent, effects: &mut Vec<Effect>
                     summary
                         .routes
                         .iter()
-                        .any(|route| route.boundary == okc_ai::DataBoundaryV3::Remote)
+                        .any(|route| route.boundary == okc_ai::DataBoundary::Remote)
                 });
                 if remote {
                     model.consent_confirm = true;
@@ -1018,7 +1018,6 @@ fn set_provider_kind(form: &mut AiForm, delta: i8) {
         ProviderKind::Anthropic => "ANTHROPIC_API_KEY",
         ProviderKind::Gemini => "GEMINI_API_KEY",
         ProviderKind::Ollama => "",
-        ProviderKind::Command => unreachable!("command providers are intentionally unavailable"),
     }
     .into();
 }
@@ -1140,7 +1139,7 @@ fn has_remote_route(model: &Model) -> bool {
             summary
                 .routes
                 .iter()
-                .any(|route| route.boundary == DataBoundaryV3::Remote)
+                .any(|route| route.boundary == DataBoundary::Remote)
         })
 }
 
@@ -1565,7 +1564,7 @@ fn refresh_project_state(model: &mut Model) {
                     config
                         .profiles
                         .get(store.manifest().ai_routes.profile_for(role))
-                        .is_some_and(|profile| profile.data_boundary() == DataBoundaryV3::Remote)
+                        .is_some_and(|profile| profile.data_boundary() == DataBoundary::Remote)
                 })
             })
         })
@@ -1656,7 +1655,7 @@ fn render(frame: &mut ratatui::Frame<'_>, model: &Model) {
         List::new(sidebar).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(" OKC 0.3 V3 ", Style::default().fg(accent))),
+                .title(Span::styled(" OKC 0.3 ", Style::default().fg(accent))),
         ),
         columns[0],
     );
@@ -1735,7 +1734,7 @@ fn screen_body(model: &Model) -> String {
             else { format!("Current folder\n{}\n\n{}\n\n↑/↓ select · Enter open", model.cwd.display(), model.projects.iter().enumerate().map(|(index, path)| format!("{} {}", if index == model.cursor { ">" } else { " " }, path.display())).collect::<Vec<_>>().join("\n")) }
         }
         Screen::AiConnection => format!(
-            "{}\n\n{} Provider: {:?}\n{} Profile: {}\n{} Endpoint: {}\n{} Model ID: {}\n{} Credential: {:?}\n{} Secret/ref: {}\n\n↑/↓ fields · ←/→ provider · Space credential mode · Enter test & save\nCommand provider: unavailable in schema 3{}",
+            "{}\n\n{} Provider: {:?}\n{} Profile: {}\n{} Endpoint: {}\n{} Model ID: {}\n{} Credential: {:?}\n{} Secret/ref: {}\n\n↑/↓ fields · ←/→ provider · Space credential mode · Enter test & save{}",
             if model.ai.embedding_setup { "Anthropic needs a separate embedding profile." } else { "A synthetic capability test must pass before this connection is usable." },
             field_marker(model.ai.field, AiField::Kind), model.ai.kind,
             field_marker(model.ai.field, AiField::Profile), model.ai.profile,
@@ -1923,7 +1922,7 @@ mod tests {
     }
 
     #[test]
-    fn reducer_has_v3_navigation_and_cancel_confirmation() {
+    fn reducer_has_navigation_and_cancel_confirmation() {
         let mut model = Model::default();
         model.projects.push(PathBuf::from("fixture.okc-project"));
         let (model, _) = reduce(model, key(KeyCode::Right));

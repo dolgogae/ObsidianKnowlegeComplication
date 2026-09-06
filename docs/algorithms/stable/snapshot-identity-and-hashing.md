@@ -1,6 +1,6 @@
 ---
 title: ALG-SNP-001 — Snapshot Identity and Hashing
-status: normative-v1
+status: normative
 owners:
   - core-rust-engineer
 last_updated: 2026-09-02
@@ -48,7 +48,7 @@ BlockId        = H("okc:block:v2\0" || lp(raw(DocumentId))
                     || lp(index_u64_be) || lp(BlockContentHash))
 ```
 
-`VaultContentId` is the V2 canonical-JSON hash under
+`VaultContentId` is the retained canonical-JSON hash under
 `"okc:vault-content:v2\0"` of the strictly path-sorted sequence of
 `(logical_path, SourceFileId)`. It deliberately excludes `SourceId`, owner
 display name, timestamps, permissions, and enumeration order. It therefore
@@ -136,7 +136,7 @@ These primitives MUST match standard SHA-256:
 | empty bytes | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 | ASCII `abc` | `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad` |
 
-Repository fixtures MUST freeze complete domain-separated IDs after the encoder is implemented. A schema encoder change requires a new domain version and migration ADR; it must never silently update V2 vectors.
+Repository fixtures MUST freeze complete domain-separated IDs after the encoder is implemented. A schema encoder change requires a new domain version and migration ADR; it must never silently update current vectors.
 
 ## Correctness and rollback
 

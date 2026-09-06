@@ -1,6 +1,6 @@
 ---
 title: Python · Node.js 라이브러리
-description: CLI 없이 OKC V3 프로젝트와 승인 워크플로를 실행하는 방법
+description: CLI 없이 현재 OKC 프로젝트와 승인 워크플로를 실행하는 방법
 outline: [2, 3]
 ---
 
@@ -44,8 +44,8 @@ Windows PowerShell에서는 `.venv-sdk\Scripts\Activate.ps1`로 Python 환경을
 
 ## 소스 체크아웃 검증
 
-개발 빌드 직후 공개 API, 전체 현재 V3 승인 흐름, frozen V1/V2 fixture와 타입
-계약을 함께 검사합니다.
+개발 빌드 직후 공개 API, 전체 현재 승인 흐름, 임시 retired-schema marker의
+명시적 unsupported 오류와 타입 계약을 함께 검사합니다.
 
 ```sh
 python -m pytest bindings/python/tests -q
@@ -73,12 +73,13 @@ install 절차는
   project에 저장되거나 다음 resume에 재사용되지 않습니다.
 - taxonomy와 각 cluster는 사람이 명시적으로 승인해야 합니다. binding은
   AI proposal이나 critic waiver를 자동 승인하지 않습니다.
-- V1/V2는 자동 판별 `verify`와 `explain`만 제공합니다. V1/V2 writer와 V3
-  Pack은 library API에 없습니다.
+- 인식 가능한 Schema 1/2 artifact는 읽지 않고
+  `ARTIFACT_SCHEMA_UNSUPPORTED`와 detected schema/family를 반환합니다.
+- Current Pack writer/reader는 library API에 없습니다.
 
 `client.api_info()` 또는 `client.apiInfo()`로 `apiVersion`, product version,
 동시 작업 제한을 확인할 수 있습니다. DTO와 진행 event의 현재 interop schema는
-`okc.INTEROP_SCHEMA_VERSION == 1` 또는 `INTEROP_SCHEMA_VERSION === 1`입니다.
+`okc.INTEROP_SCHEMA_VERSION == 2` 또는 `INTEROP_SCHEMA_VERSION === 2`입니다.
 
 ## Python
 
@@ -137,6 +138,9 @@ report = client.verify_artifact(Path(artifact["path"])).result()
 explanation = client.explain_artifact(
     Path(artifact["path"]), output_path="knowledge/topic.md"
 ).result()
+assert report["interop_schema_version"] == 2
+assert report["valid"] is True
+assert explanation["record"]["output_path"] == "knowledge/topic.md"
 ```
 
 `preflight`, taxonomy, synthesis, critic 결과를 실제로 읽고 필요한 rationale을
@@ -191,6 +195,12 @@ for (const cluster of (await project.clusters().result()).payload) {
 await project.integrate(consent).result()
 const artifact = await project.compile('/absolute/output/CompiledVault').result()
 const report = await client.verifyArtifact(artifact.path).result()
+const explanation = await client.explainArtifact(artifact.path, {
+  outputPath: 'knowledge/topic.md',
+}).result()
+console.assert(report.interopSchemaVersion === 2)
+console.assert(report.valid === true)
+console.assert(explanation.record.outputPath === 'knowledge/topic.md')
 ```
 
 CommonJS에서는 같은 package를 `const okc = require('okc-compiler')`로
@@ -241,12 +251,13 @@ project의 mutating job을 두 개 동시에 시작하면 뒤 작업을 몰래 �
 | `REMOTE_CONSENT_REQUIRED` | preflight 결과를 검토한 이번 호출에만 두 consent 값을 명시합니다. |
 | `APPROVAL_REQUIRED` / `APPROVAL_STALE` | 최신 taxonomy·cluster revision을 다시 검토하고 승인합니다. |
 | `OUTPUT_EXISTS` / `OUTPUT_OVERLAP` | 기존 대상을 보존하고 source와 겹치지 않는 새 절대 경로를 사용합니다. |
+| `ARTIFACT_SCHEMA_UNSUPPORTED` | 현재 Schema 3 디렉터리를 사용합니다. `details`의 supported/detected 값을 기록합니다. |
 | `VERIFICATION_FAILED` | artifact family, manifest, checksums와 provenance를 다시 검사합니다. |
 
 오류별 운영 절차는 [문제 해결](./troubleshooting.md)에도 정리되어 있습니다.
 
 ## 다음 단계
 
-CLI와 같은 승인 의미는 [V3 AI 통합](./v3-integration.md), provider와 민감
+CLI와 같은 승인 의미는 [AI 통합](./integration.md), provider와 민감
 정보 정책은 [AI Provider](./ai-provider.md), 아직 남은 release blocker는
 [현재 구현 상태](./current-state.md)를 확인하세요.

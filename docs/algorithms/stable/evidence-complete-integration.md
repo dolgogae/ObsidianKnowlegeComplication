@@ -1,6 +1,6 @@
 ---
 title: ALG-INT-001 — Evidence-Complete Integration
-status: normative-v1
+status: normative
 owners:
   - algorithms-ai-engineer
   - core-rust-engineer

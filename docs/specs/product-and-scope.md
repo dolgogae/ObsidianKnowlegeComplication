@@ -1,6 +1,6 @@
 ---
 title: Product and Scope Specification
-status: normative-v1
+status: normative
 owners:
   - architect
 last_updated: 2026-09-06
@@ -8,19 +8,13 @@ decision_refs:
   - ADR-0001
   - ADR-0002
   - ADR-0003
-  - ADR-0009
-  - ADR-0015
-  - ADR-0016
-  - ADR-0017
-  - ADR-0018
   - ADR-0019
-  - ADR-0020
-  - ADR-0021
   - ADR-0022
   - ADR-0023
   - ADR-0024
   - ADR-0025
   - ADR-0026
+  - ADR-0027
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
@@ -30,86 +24,132 @@ source_refs:
 
 ## Mission
 
-Compile heterogeneous Obsidian Vault snapshots into safe, deterministic, evidence-traceable knowledge artifacts. The framework provides library primitives and a CLI; agents and user interfaces orchestrate those primitives without owning merge policy.
+Compile heterogeneous Obsidian Vault snapshots into a new, safe,
+deterministic, evidence-traceable knowledge artifact. Libraries, the CLI, and
+the TUI orchestrate one shared policy; providers and external adapters never
+own canonical state or approval authority.
 
-## Users and jobs
+## Current users and surfaces
 
-| User | Job | V3 surface |
+| User | Job | Current surface |
 |---|---|---|
-| Rust developer | Embed inspection, planning, compilation, and verification | `okc-core` crate |
-| Python/Node.js developer | Automate schema-3 projects and approval workflows without a CLI subprocess | `okc-compiler` language packages |
-| Build/release engineer | Run reproducible local or CI compilation | `okc` CLI |
-| AI integration developer | Connect any local or hosted model without core changes | traits and NDJSON protocol |
-| Knowledge curator | Review conflicts, proposals, and provenance | `okc` TUI and versioned control files |
-| Coding agent | Inspect and compile through explicit tools | future MCP adapter |
-| Obsidian user | Install and inspect a pack safely | future generic plugin |
+| Rust developer | Build a sealed corpus or validate/materialize an approved integration | `okc-core` |
+| Python/Node.js developer | Automate an explicit-path project and approval workflow | `okc-compiler` packages |
+| Build/release engineer | Compile and independently verify a directory | `okc` CLI |
+| Knowledge curator | Review taxonomy, synthesis, critic findings, and provenance | shared CLI/TUI services |
+| AI integration developer | Configure a supported local or hosted provider | `okc-ai` and `okc-app` profiles |
+| Coding-agent/plugin developer | Add a least-authority adapter | future MCP/plugin packages |
 
 ## Functional requirements
 
-- **REQ-SNP-001:** The compiler MUST NOT modify input Vault files, metadata, permissions, or timestamps.
-- **REQ-SNP-002:** Every input file and snapshot MUST have a stable, versioned content identity.
-- **REQ-SRC-001:** Compilation MUST be MCP-origin-neutral: MCP names and implementation metadata MUST NOT affect IDs, policy, plans, or output.
-- **REQ-SRC-002:** Source order MUST NOT affect inspection, plan, output, or Pack bytes; duplicate whole-Vault registration and changed-snapshot source-ID reuse MUST fail closed.
-- **REQ-PAR-001:** V2 MUST parse Markdown, YAML frontmatter, wikilinks, embeds, headings, block references, tags, callouts, code, math, and ordinary Markdown links without destroying source spans.
-- **REQ-PAR-002:** V2 MUST parse and rewrite JSON Canvas file references while preserving unknown fields.
-- **REQ-PAR-003:** V2 MUST preserve `.base` files opaquely and emit a diagnostic that references are not semantically validated.
-- **REQ-DED-001:** Exact duplicates MUST be unified according to deterministic tie-break rules while retaining provenance from every source.
-- **REQ-DED-002:** Near duplicates MUST be reported as candidates and MUST NOT be semantically auto-merged in V2.
-- **REQ-CNF-001:** Path, case-fold, title, alias, frontmatter, and link-target conflicts MUST be represented and resolved deterministically or require approval.
-- **REQ-MAT-001:** A link ambiguity action MUST select an exact sealed candidate or explicitly preserve the original; approval, compilation, verification, and provenance MUST derive the same immutable materialization.
-- **REQ-PRV-001:** Every materialized file MUST have provenance; generated knowledge MUST name supporting evidence.
-- **REQ-AI-001:** AI integration MUST be provider-neutral and capability-driven.
-- **REQ-AI-002:** AI output MUST be treated as an untrusted proposal, schema-validated, evidence-validated, and explicitly approved before use.
-- **REQ-AI-003:** Provider requests and responses used by a build MUST be recordable and replayable.
-- **REQ-AI-004:** Every V3 build MUST use capability-routed structured generation and embeddings, with locally validated portable schemas, exact provider/model response identity, and provider-free offline compilation.
-- **REQ-CMP-001:** Compilation MUST stage to a sibling temporary directory and atomically publish a new output; existing output MUST be rejected by default.
-- **REQ-CMP-002:** A `.okcpack` built from identical inputs, configuration, approvals, transcript, and toolchain version MUST be byte-identical.
-- **REQ-CMP-003:** New artifacts MUST use OKC schema 3, `.okc/`, `.okcpack`, and V3 identity domains; V1/V2 are read-only through verify and explain.
-- **REQ-SEC-001:** Archives, symlinks, paths, Markdown, metadata, and provider output MUST be treated as hostile data.
-- **REQ-SEC-002:** V3 MUST scan content before disclosure, retain only category/location/content-hash findings, force sensitive semantic and affected-cluster work to local providers, and require one-run consent for every remote route.
-- **REQ-SEC-003:** Provider secrets MUST be resolved only from an explicitly named environment variable or an OS keychain account under the fixed OKC service ID; secret values and their lengths MUST NOT enter files, SQLite, recordings, diagnostics, `Debug`, or screen output, and keychain failure MUST NOT fall back to plaintext storage.
-- **REQ-INT-001:** Every Markdown document MUST occur in exactly one approved taxonomy cluster; singleton clusters are not exempt.
-- **REQ-INT-002:** Every source block and frontmatter value MUST have exactly one `integrated`, `preserved_verbatim`, or `omission_proposed` disposition.
-- **REQ-INT-003:** Every non-empty synthesized section MUST cite current source-block evidence, and contradictory claims MUST preserve each source/time/context rather than select a winner.
-- **REQ-INT-004:** A critic MUST compare each synthesis with its complete source inventory; critical/major findings block and minor findings require an exact curator waiver.
-- **REQ-INT-005:** Taxonomy, cluster, omission, waiver, and manual-amendment authority MUST be immutable hash-bound approval records; a dependent change makes prior authority stale.
-- **REQ-INT-006:** V3 materialization MUST emit canonical notes and source redirect stubs with closed source/proposal/critic/approval provenance.
-- **REQ-SDK-001:** SDK and CLI MUST expose inspect, plan, augment, validate, approve, compile, verify, and provenance explanation operations.
-- **REQ-SDK-002:** The Python and Node.js libraries MUST expose the current V3 project, provider, integration, human-approval, compile, verify, and explain workflow through one versioned Rust interop facade; MUST require explicit absolute paths and per-call remote disclosure consent; MUST resolve secrets only from named process environment variables at job start; and MUST provide bounded cancellable jobs, stable structured errors, type declarations, clean-install packages, and equivalent artifact bytes without importing CLI/TUI side effects.
-- **REQ-APP-001:** One `okc` executable MUST expose CLI and TUI surfaces backed by the same `okc-app` services and a private, resumable `.okc-project` format.
-- **REQ-APP-002:** Without `--project`, `okc` MUST deterministically discover the cwd workspace and safe Vault candidates, keep projects and output outside every source, and run core/provider/compile/verify work through a bounded single-writer worker so the TUI remains responsive and cancellation reaches every pre-publication stage.
-- **REQ-REL-001:** A stable release MUST pass QG-001 through QG-008 on all supported targets and include checksums, SBOM, attestation, and required macOS/Windows native signatures.
-- **REQ-MCP-001:** The future MCP server MUST remain a stateless, least-authority adapter over framework calls.
-- **REQ-OBS-001:** One generic future Obsidian plugin MUST review and install many data packs; pack-specific executable plugins are forbidden.
-- **REQ-PERF-001:** V2 retains its AI-free 100,000-note/20 GB regression gate. V3 additionally requires a 100,000-note semantic-candidate cost/latency/RSS report before stable release.
+- **REQ-SNP-001:** The compiler MUST NOT modify a source Vault's bytes,
+  permissions, or timestamps.
+- **REQ-SNP-002:** Every accepted source file, snapshot, document, block, and
+  output MUST retain a stable content identity in its existing domain.
+- **REQ-SRC-001:** MCP names and implementation metadata MUST NOT influence
+  source IDs, the corpus, approvals, or output.
+- **REQ-SRC-002:** Source order MUST NOT affect the sealed corpus or compiled
+  bytes. Duplicate source IDs and duplicate whole-Vault content MUST fail.
+- **REQ-PAR-001:** Markdown, YAML frontmatter, links, headings, block
+  references, tags, callouts, code, math, and ordinary links MUST be parsed
+  without destroying source spans.
+- **REQ-PAR-002:** JSON Canvas references and unknown fields MUST be parsed by
+  the retained safety pipeline; current materialization MUST NOT claim Canvas
+  output support until its rewrite gate passes.
+- **REQ-PAR-003:** Base files MUST be treated as opaque hostile input; current
+  materialization MUST NOT claim Base output support.
+- **REQ-DED-001:** Exact content identities MUST remain deterministic and retain
+  source provenance.
+- **REQ-DED-002:** Semantic or near-duplicate grouping MUST enter only as a
+  proposal and MUST NOT bypass synthesis, critic, or curator approval.
+- **REQ-CNF-001:** Contradictory claims MUST preserve their source, time, and
+  context and MUST NOT be decided by majority vote.
+- **REQ-MAT-001:** Materialization MUST derive only from one immutable,
+  validated `ApprovedIntegrationPlan`.
+- **REQ-PRV-001:** Every materialized canonical note and redirect stub MUST
+  have closed provenance to source evidence, proposal, critic, and approval.
+- **REQ-AI-001:** AI integration MUST be provider-neutral and
+  capability-driven.
+- **REQ-AI-002:** Provider output MUST be treated as hostile proposal data and
+  pass strict schema, bounds, identity, evidence, and closure validation.
+- **REQ-AI-003:** Provider requests and responses used by an integration MUST
+  be recorded for deterministic replay and offline compilation.
+- **REQ-AI-004:** Every build MUST use approved taxonomy and per-cluster
+  synthesis/critic records; final compile MUST make no live provider call.
+- **REQ-CMP-001:** Compilation MUST stage beside an absent destination,
+  validate the stage, and publish without replacement.
+- **REQ-CMP-002:** A future current-schema `.okcpack` writer MUST reproduce
+  identical bytes for identical approved inputs. No Pack writer is currently
+  exposed.
+- **REQ-CMP-003:** Current artifacts MUST use Schema 3. Recognizable Schema 1 or
+  Schema 2 inputs MUST return `ARTIFACT_SCHEMA_UNSUPPORTED` with
+  `supported_schema = 3` and detected details. No retired reader, writer,
+  migration, or alias is permitted on main.
+- **REQ-SEC-001:** Directories, archives, symlinks, paths, Markdown, metadata,
+  manifests, journals, and provider output MUST be treated as hostile data.
+- **REQ-SEC-002:** Content MUST be scanned before disclosure. Remote calls
+  require explicit per-call consent, and sensitive semantic work MUST be
+  locally routed.
+- **REQ-SEC-003:** Secrets MUST resolve only from a named process environment
+  variable or an opaque native keychain account. Values and lengths MUST NOT
+  enter stored state, recordings, diagnostics, debug output, or UI output.
+- **REQ-INT-001:** Every Markdown document MUST occur in exactly one approved
+  taxonomy cluster; singleton clusters are not exempt.
+- **REQ-INT-002:** Every source block and frontmatter value MUST have exactly
+  one `integrated`, `preserved_verbatim`, or `omission_proposed` disposition.
+- **REQ-INT-003:** Every non-empty synthesized section MUST cite current source
+  evidence; contradictory claims MUST retain all cited sides.
+- **REQ-INT-004:** A critic MUST compare synthesis with the complete cluster
+  inventory. Critical/major findings block; minor findings require an exact
+  waiver.
+- **REQ-INT-005:** Taxonomy, cluster, omission, finding-waiver, and plan
+  approvals MUST be immutable and hash-bound. A dependency change makes old
+  authority stale.
+- **REQ-INT-006:** Current materialization MUST emit canonical Markdown notes
+  and source redirect stubs with reproducible bytes and closed provenance.
+- **REQ-SDK-001:** Public Rust and CLI surfaces MUST expose only current corpus,
+  project, provider, integration, review, compile, directory verify, and
+  directory explain operations. Retired phase commands and Pack options MUST
+  remain absent.
+- **REQ-SDK-002:** Python and Node.js MUST use one Rust interop facade, explicit
+  absolute paths, per-call remote consent, bounded cancellable jobs, stable
+  structured errors, typed interop-schema-2 results, and equivalent artifact
+  bytes without CLI/TUI side effects.
+- **REQ-APP-001:** One `okc` executable MUST expose CLI and TUI adapters backed
+  by the same `okc-app` services and private resumable project format.
+- **REQ-APP-002:** Cwd discovery MUST be bounded and deterministic; projects and
+  output MUST remain outside every source; long work MUST use bounded workers
+  with cancellation before publication.
+- **REQ-REL-001:** A stable release MUST pass QG-001 through QG-008 on every
+  supported target and include checksums, SBOMs, attestations, and required
+  native signatures.
+- **REQ-MCP-001:** A future MCP server MUST remain a stateless,
+  least-authority adapter over public application calls.
+- **REQ-OBS-001:** A future generic Obsidian plugin MAY review and install many
+  packages; package-specific executable plugins are forbidden.
+- **REQ-PERF-001:** Before stable release, the 10-Vault, 100,000-note, 20 GB
+  workload and semantic candidate path MUST have time and peak-RSS evidence.
+- **REQ-MEM-001:** Experimental memory/retrieval models MUST remain isolated
+  from the default compiler path until promoted by ADR and evaluation gates.
 
 ## Inputs and outputs
 
-Accepted inputs are filesystem directories, ZIP archives, and deterministic `tar.zst` archives. Every source is paired with a stable project-unique `source_id` and optional owner display name. Changed identity requires an explicit project rebind that invalidates downstream state. Registering the same whole-Vault content twice is an error.
+`CorpusBuilder` accepts typed directory, ZIP, and `tar.zst`/`.tzst` sources with
+project-unique source IDs. The safety pipeline excludes `.obsidian/**` and
+`.git/**`, rejects traversal and unsafe archive members, does not follow source
+symlinks, applies bounded resource policy, and can persist private inspection
+state in SQLite.
 
-The primary V3 output is a new Compiled Vault with `.okc/` audit data,
-canonical `knowledge/` notes, and source `legacy/` redirect stubs. Optional
-distribution output is a deterministic unsigned user `.okcpack` after the V3
-pack writer is qualified. Release-binary signatures are separate from user-Pack
-authenticity. Reports may be emitted without materializing content.
-
-## Product evolution
-
-The framework is phase zero of a broader Knowledge Compilation Platform:
-
-1. Framework and CLI: deterministic inspection, planning, compilation, verification.
-2. Optional AI proposal protocol and provider packages.
-3. Thin MCP adapter and Obsidian review/install plugin.
-4. Vault benchmarking, claim reconciliation, and calibrated retrieval experiments.
-5. On-premise pack registry, search, compatibility recommendations, and marketplace governance.
-
-Later phases do not relax immutable input, evidence, approval, provenance, or
-publication invariants. ADR-0022 explicitly replaces the V2 AI-optional compile
-condition for schema 3 without reinterpreting V2 artifacts.
+The current output is a new Schema 3 directory containing canonical
+`knowledge/` notes, source-specific `legacy/` redirects, and `.okc/` manifest,
+approved-plan, provenance, and checksums. It is Markdown-only today. A Pack,
+attachments, Canvas, Base, and complete link rewriting remain future release
+work.
 
 ## Success criteria
 
-A cold-start developer can integrate two Vault fixtures, review the complete
-taxonomy and every cluster disposition, replay recorded provider work, compile
-the same bytes offline, trace every canonical section and stub to source
-evidence/critic/approval, and switch capable providers without changing core.
+A cold-start developer can integrate multiple immutable Vaults, inspect and
+approve complete taxonomy and cluster records, compile the same bytes without
+a provider, verify the directory independently, explain every output path, and
+switch capable providers without changing core policy. Existing Schema 3
+projects and fixture bytes continue to work without migration.

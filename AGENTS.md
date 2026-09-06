@@ -1,6 +1,6 @@
 ---
 title: Agent Operating Contract
-status: normative-v1
+status: normative
 owners:
   - release-maintainer
 last_updated: 2026-08-16
@@ -32,7 +32,7 @@ Do not silently choose between conflicting normative documents. Stop implementat
 1. Read this file, [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md), and [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md).
 2. Select the closest role through [`docs/INDEX.md`](docs/INDEX.md), then read that role's mandatory reading list.
 3. Identify the requirement IDs, algorithm IDs, ADRs, and invariants affected by the task.
-4. Confirm whether the algorithm is `normative-v1`, `normative-future`, `experimental`, or `research-only`. Experimental logic must not enter the default compiler path.
+4. Confirm whether the algorithm is `normative`, `normative-future`, `experimental`, or `research-only`. Experimental logic must not enter the default compiler path.
 5. Inspect the working tree and preserve unrelated user changes.
 
 ## While coding

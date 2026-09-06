@@ -1,6 +1,6 @@
 ---
 title: Documentation Index
-status: normative-v1
+status: normative
 owners:
   - release-maintainer
 last_updated: 2026-09-06
@@ -13,6 +13,7 @@ decision_refs:
   - ADR-0024
   - ADR-0025
   - ADR-0026
+  - ADR-0027
 source_refs:
   - HIST-CURRENT-PLAN
 ---
@@ -22,23 +23,23 @@ source_refs:
 ## Start here
 
 1. [`../AGENTS.md`](../AGENTS.md) — operating contract for every coding agent.
-2. [`../PROJECT_CONTEXT.md`](../PROJECT_CONTEXT.md) — product identity, V3 boundary, and frozen V1/V2 compatibility.
+2. [`../PROJECT_CONTEXT.md`](../PROJECT_CONTEXT.md) — product identity and current Schema 3 boundary.
 3. [`CURRENT_STATE.md`](CURRENT_STATE.md) — what exists now.
 4. [`TRACEABILITY.md`](TRACEABILITY.md) — requirement, algorithm, implementation, and test map.
 5. [`GLOSSARY.md`](GLOSSARY.md) — shared vocabulary.
 
 ## User guides
 
-- [`V3 AI integration`](../guide/v3-integration.md) — configure providers,
+- [`AI integration`](../guide/integration.md) — configure providers,
   approve taxonomy and clusters, then compile, verify, and explain offline.
-- [`5-minute Quickstart`](../guide/index.md) — build the development binary and
-  exercise the frozen V2 compile/Pack regression path on the sample Vault.
-- [`CLI`](../guide/cli.md) — schema-3 development and frozen V2 regression
-  commands, global-option scope, and automation exit codes.
+- [`Quickstart`](../guide/index.md) — build the development binary and create a
+  current project from a source Vault.
+- [`CLI`](../guide/cli.md) — current commands, global-option scope, and
+  automation exit codes.
 - [`TUI`](../guide/tui.md) — cwd discovery, provider/keychain setup, Vault
   selection, review/regeneration, worker cancellation, compile, and verify.
 - [`Python · Node.js`](../guide/python-node.md) — explicit-path library setup,
-  provider consent, complete V3 approval flow, jobs, and structured errors.
+  provider consent, complete approval flow, jobs, typed results, and errors.
 - [`Conflict review`](../guide/conflicts.md) and
   [`AI Provider`](../guide/ai-provider.md) — explicit human-decision and
   untrusted-proposal workflows.
@@ -75,15 +76,17 @@ source_refs:
 ## Algorithms
 
 The status matrix and promotion rules are in [`algorithms/README.md`](algorithms/README.md).
-`ALG-SEM-001` and `ALG-INT-001` define the V3 semantic path; older stable
-algorithms continue to define safe snapshot/parsing/materialization primitives.
+`ALG-SEM-001` and `ALG-INT-001` define the current semantic path; the other
+stable algorithms define safe snapshot/parsing/materialization primitives.
 Experimental algorithms cannot be enabled by default until their calibration
 gates are met and an ADR promotes them.
 
 ## Decisions and history
 
 - Accepted decisions: [`adr/`](adr/)
-- V3 boundary: [`ADR-0022`](adr/0022-v3-ai-required-format-and-legacy-boundary.md),
+- Current boundary: [`ADR-0027`](adr/0027-current-schema-single-source.md),
+  with the retained Schema 3 decisions in
+  [`ADR-0022`](adr/0022-v3-ai-required-format-and-legacy-boundary.md),
   [`ADR-0023`](adr/0023-provider-profiles-disclosure-and-recording.md),
   [`ADR-0024`](adr/0024-evidence-complete-integration-and-critic-gate.md), and
   [`ADR-0025`](adr/0025-cwd-workspace-worker-and-keychain-boundary.md), plus

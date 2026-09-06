@@ -1,6 +1,6 @@
 ---
 title: ADR-0003 — Immutable Inputs and New Output
-status: normative-v1
+status: normative
 owners:
   - architect
   - qa-security-engineer

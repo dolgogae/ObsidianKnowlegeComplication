@@ -1,13 +1,14 @@
 ---
 title: ADR-0018 — V1 Read-Only Compatibility and Migration
-status: normative-v1
+status: normative
 owners:
   - architect
   - release-maintainer
-last_updated: 2026-09-02
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0015
   - ADR-0018
+  - ADR-0027
 source_refs:
   - HIST-CURRENT-PLAN
 ---
@@ -16,7 +17,9 @@ source_refs:
 
 ## Status
 
-Accepted on 2026-09-02.
+Accepted on 2026-09-02. Superseded by ADR-0027 on 2026-09-06; the historical
+decision below is preserved, but current packages provide no V1 reader or
+migration surface.
 
 ## Context
 

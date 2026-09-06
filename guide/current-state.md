@@ -1,67 +1,60 @@
 ---
 title: 현재 구현 상태
-description: OKC 0.3.0 V3 개발 빌드에서 지금 사용할 수 있는 범위
+description: OKC 0.3.0 현재 Schema 3 개발 빌드에서 사용할 수 있는 범위
 ---
 
 # 현재 무엇을 사용할 수 있나요?
 
-이 가이드는 `okc 0.3.0` 개발 트리를 기준으로 합니다. 로컬 macOS arm64
-테스트는 통과했지만 공개 안정 릴리스는 아닙니다.
+이 가이드는 `okc 0.3.0` 개발 트리를 기준으로 합니다. Main에는 현재 Schema 3
+구현만 있고, 로컬 macOS arm64 검증은 진행됐지만 공개 안정 릴리스는 아닙니다.
 
-## 지금 가능한 V3 개발 흐름
+## 지금 가능한 흐름
 
-- schema-3 project 생성/V2 source-binding upgrade, provider profile과 AI route
-- sensitive preflight, embedding/candidate/organizer/synthesis/critic task resume
-- taxonomy 및 cluster CLI 검토/승인, provider-free V3 directory compile
-- V3 directory verify와 canonical/stub provenance explain
-- `cd 원하는-폴더 && okc` TUI에서 provider/Vault/preflight/taxonomy/cluster/
-  compile/verify 실행, worker 취소와 재개
-- CLI/TUI의 OS keychain 또는 환경변수 참조, language binding의
-  환경변수 참조 전용 provider credential
-- Python 3.11+ `okc` module과 Node.js 22.13+ `okc-compiler` package에서 같은
-  project/source/integration/approval/compile/verify/explain workflow
-- 최대 64개 event의 cancellable Job, same-project `PROJECT_BUSY`, stable
-  structured error, Python type stub과 TypeScript declaration
-- macOS arm64 `cp311-abi3` wheel과 `Cargo.lock` 포함 sdist, root/platform npm
-  tarball의 local clean install, SHA-256와 CycloneDX SBOM 검증
-- V3 Markdown block/frontmatter disposition, evidence, contradiction, critic,
-  omission/waiver, approval, recording closure 검증
+- current project 생성, directory/archive source 등록, provider profile과 role
+  route 구성
+- 민감정보 preflight, embedding/candidate/organizer/synthesis/critic task와
+  append-only resume
+- taxonomy와 cluster CLI/TUI 검토, regeneration, omission/minor waiver, 승인
+- 완전한 approved plan에서 provider-free Markdown directory compile
+- Schema 3 directory verify와 한 canonical/stub path의 provenance explain
+- cwd-first TUI, bounded worker, publication 이전 취소, OS keychain 또는
+  환경변수 참조
+- Python 3.11+와 Node.js 22.13+의 같은 project/integration/approval/compile
+  workflow
+- interop schema 2의 typed verification/explanation result, 최대 64개 progress
+  event, same-project `PROJECT_BUSY`, structured error와 type declaration
+- macOS arm64 wheel/sdist/npm tarball의 로컬 build/install/type smoke와
+  cross-language artifact inventory golden
 
-## frozen V2 회귀 경로에서 가능한 것
+`legacy/` output directory는 current source redirect stub입니다. 이전 artifact를
+읽는 compatibility directory가 아닙니다.
 
-- inspect, plan, augment, validate, replay, approve, compile, verify, explain
-- 디렉터리, ZIP, `tar.zst`, `.tzst` source와 Markdown, Canvas, attachment,
-  opaque Base 처리
-- exact duplicate, near-duplicate candidate, Markdown/Canvas link conflict
-- deterministic Compiled Vault와 `.okcpack`, typed provenance 검증·설명
+## 이전 schema 입력
 
-이 writer 명령은 현재 회귀 테스트를 위해 개발 바이너리에 남아 있습니다.
-ADR-0022가 정한 안정 V3 공개 경계에서는 V1/V2가 `verify`와 `explain`만
-제공해야 하므로, writer surface 제거 자체도 release blocker입니다.
+Schema 1/2 compiler, reader, writer, project upgrade, migration, alias와 committed
+fixture는 main에 없습니다. 인식 가능한 이전 marker와 Pack suffix에는
+`ARTIFACT_SCHEMA_UNSUPPORTED`, `supported_schema = 3`, detected schema/family를
+돌려줍니다. Mixed marker, symlink, malformed/oversized manifest와 unknown/corrupt
+artifact는 fail-closed verification error입니다.
 
-## 공통 UI 기반
-
-- TUI의 10개 V3 화면, cwd project/Vault 탐색과 새 project 생성, taxonomy
-  merge/split/document 이동, cluster 3-pane 검토와 feedback 재생성
-- bounded worker, publication barrier 이전 취소, 키보드 탐색, 한국어 라벨,
-  ASCII·고대비 모드와 terminal restoration
+이전 source는 ADR-0027의 annotated archive tag에 보존되어 있지만 release나
+current package가 아닙니다.
 
 ## 아직 제한되는 것
 
-- 100,000 notes/20 GB reference performance gate
-- complete fuzz/property 및 PTY end-to-end coverage
-- 네 개 지원 target의 두 차례 동일-commit remote CI 증거
-- macOS/Windows native signing과 notarization
-- Python/Node 네 target remote package matrix와 PyPI/npm publication
-- V1 project reconstruction
-- V3 deterministic block chunk/HNSW/candidate union과 100k semantic benchmark
-- manual section amendment, sensitive exception UI
-- V3 attachment/Canvas/Base/link rewrite와 deterministic OKCPack
-- schema-3 command provider supervisor
-- 개발 CLI의 V2 writer surface 제거와 공개 legacy read-only 경계 완성
+- deterministic block chunk/HNSW/full candidate union과 100k semantic benchmark
+- hierarchical synthesis와 manual section amendment
+- persisted sensitive exception, command-provider supervisor, broader provider
+  conformance
+- attachment/Canvas/Base carry-through, complete link rewrite, current OKCPack
+- 100,000 notes/20 GB streaming/RSS gate
+- complete fuzz/property, hostile TOCTOU, crash injection, PTY E2E
+- 네 native target의 두 차례 same-commit remote CI와 package matrix
+- macOS/Windows native signing/notarization, protected publication
 
-현재 Markdown-only V3 directory 흐름은 [TUI](./tui.md) 또는
-[CLI](./cli.md), [Python · Node.js](./python-node.md)에서 사용할 수 있습니다.
-전체 규범 상태는 저장소의
+현재 Markdown directory 흐름은 [Quickstart](./index.md),
+[AI 통합](./integration.md), [CLI](./cli.md), [TUI](./tui.md),
+[Python · Node.js](./python-node.md)에서 확인할 수 있습니다. Exact verification
+evidence와 blocker는 저장소의
 [`docs/CURRENT_STATE.md`](https://github.com/dolgogae/okc/blob/main/docs/CURRENT_STATE.md)가
 권위 있는 기준입니다.

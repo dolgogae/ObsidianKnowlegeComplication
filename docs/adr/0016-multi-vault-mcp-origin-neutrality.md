@@ -1,6 +1,6 @@
 ---
 title: ADR-0016 — Multi-Vault MCP-Origin-Neutral Compilation
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

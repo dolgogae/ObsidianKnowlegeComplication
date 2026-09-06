@@ -274,7 +274,7 @@ fn ordered_pair(left: DocumentId, right: DocumentId) -> (DocumentId, DocumentId)
 #[cfg(test)]
 mod tests {
     #[test]
-    fn threshold_boundary_matches_v2_vectors() {
+    fn threshold_boundary_matches_reference_vectors() {
         let threshold = 0.85;
         assert!(108.0 / 128.0 < threshold);
         assert!(109.0 / 128.0 >= threshold);

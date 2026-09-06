@@ -8,21 +8,22 @@ use okc_ai::{
     ProviderClient, ProviderConfig, ProviderProfile, StructuredGenerationRequest,
     StructuredGenerator as _,
 };
-use okc_core::canonical::to_canonical_json;
-use okc_core::identity::{BlockId, ContentHash, DocumentId};
 use okc_core::integration::{
     ApprovedClusterRevision, ContradictionClaim, ContradictionSet, CriticFinding, CriticReport,
     DispositionKind, DispositionTarget, DispositionTargetKind, RelatedLink, SectionEvidence,
     SourceDisposition, SynthesisProposal, SynthesisSection, TaxonomyCluster, TaxonomyProposal,
 };
-use okc_core::{CompilerPolicy, OkcCompiler};
+use okc_core::{
+    BlockId, BlockTextMap, ContentHash, CorpusBuilder, DocumentId, PreparedCorpus,
+    to_canonical_json,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::integration_service::{
-    BlockTextMap, IntegrationCheckpoint, IntegrationService, build_corpus, raw_hash, source_spec,
+    IntegrationCheckpoint, IntegrationService, raw_hash, source_spec,
 };
-use crate::v3::{
+use crate::project_state::{
     ApprovedTaxonomy, ClusterTaskOutput, RunRecord, SENSITIVE_SCANNER_VERSION, SensitiveFinding,
     TaskCacheKey, TaskStage, TaskState, TaskStatus, TaxonomyTaskOutput, authorize_disclosure,
     scan_sensitive_block,
@@ -121,21 +122,20 @@ impl IntegrationService {
                 "the project has no source bindings".into(),
             ));
         }
-        let compiler = OkcCompiler::builder()
-            .policy(CompilerPolicy::default())
-            .workspace(project.root().join("workspace/build.sqlite3"))
-            .build()?;
+        let builder =
+            CorpusBuilder::new().workspace(project.root().join("workspace/build.sqlite3"));
         let sources = project
             .manifest()
             .sources
             .iter()
             .map(source_spec)
             .collect::<Result<Vec<_>>>()?;
-        let inspection = compiler.inspect(sources)?;
+        let PreparedCorpus {
+            corpus,
+            block_texts: block_text,
+            ..
+        } = builder.build(sources)?;
         ensure_not_cancelled(control)?;
-        let draft = compiler.plan(&inspection)?;
-        ensure_not_cancelled(control)?;
-        let (corpus, block_text) = build_corpus(&draft)?;
         observe(
             control,
             OperationPhase::Processing,

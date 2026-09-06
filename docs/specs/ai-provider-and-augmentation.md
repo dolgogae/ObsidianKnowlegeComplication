@@ -1,358 +1,131 @@
 ---
-title: AI Provider and Augmentation Contract
-status: normative-v1
+title: AI Provider and Proposal Contract
+status: normative
 owners:
   - algorithms-ai-engineer
-  - qa-security-engineer
-last_updated: 2026-09-05
+  - core-rust-engineer
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0004
-  - ADR-0009
-  - ADR-0011
-  - ADR-0017
   - ADR-0022
   - ADR-0023
   - ADR-0024
   - ADR-0025
+  - ADR-0026
+  - ADR-0027
 source_refs:
+  - HIST-KNOWLEDGE-PLATFORM
   - HIST-COMPILER-PLAN
 ---
 
-# AI Provider and Augmentation Contract
+# AI Provider and Proposal Contract
 
-## Principle
+## Ownership
 
-AI remains replaceable and outside the trusted compiler core. In schema 3 it is
-required to create the integration proposal and critic record; it is not
-required to replay a complete recording, compile an approved integration plan,
-verify an artifact, or explain provenance. No provider can mutate a Vault or
-approve its own proposal. The older optional-AI contract below applies only to
-the frozen schema-2 compatibility path.
+`okc-ai` owns live provider I/O and portable Schema 3 request/response types.
+`okc-app` owns profiles, routing, disclosure authorization, recordings,
+resumption, and review orchestration. `okc-core` owns corpus, proposal/evidence
+validation, approval closure, and provider-free compilation. A provider never
+receives filesystem or publication authority.
 
-## Schema-3 semantic capabilities
+There is no general augmentation protocol crate or command-provider
+implementation on main. The `command` profile value is reserved and MUST fail
+capability testing until a supervised current-schema adapter is specified and
+implemented.
 
-`okc-ai` defines two vendor-neutral blocking traits:
+## Capabilities and roles
 
-```rust,ignore
-trait StructuredGenerator {
-    fn capabilities(&self) -> ProviderCapabilitiesV3;
-    fn generate_structured(
-        &self,
-        request: &StructuredGenerationRequest,
-        cancellation: &CancellationToken,
-    ) -> Result<StructuredGenerationResponse, ProviderError>;
-}
+The public generation-neutral types are `ProviderCapabilities`,
+`DataBoundary`, `StructuredGenerator`, and `Embedder`. Capabilities bind exact
+provider/model/adapter identity, response model, structured-generation and
+embedding support, strict JSON Schema support, local/remote boundary, and
+input/output/batch limits.
 
-trait Embedder {
-    fn capabilities(&self) -> ProviderCapabilitiesV3;
-    fn embed(
-        &self,
-        request: &EmbeddingBatchRequest,
-        cancellation: &CancellationToken,
-    ) -> Result<EmbeddingBatchResponse, ProviderError>;
-}
-```
+The current roles are:
 
-Capabilities and responses bind provider, configured model, adapter version,
-actual response model when supplied, resource limits, data boundary, usage,
-request hash, and response hash. Rust-owned structured-output schemas are
-restricted to a portable JSON Schema subset. The same schema is validated
-before transmission and again locally against the returned JSON. Unknown
-fields, missing required properties, invalid enum values, reordered or
-wrong-sized embedding batches, dimension drift, non-finite values, and zero
-norms fail closed.
+- `embedding`: bounded semantic vector proposals;
+- `organizer`: exactly-one taxonomy assignment and canonical paths;
+- `synthesis`: complete sections, evidence, dispositions, links, and
+  contradictions for one cluster;
+- `critic`: independent comparison of synthesis against the entire cluster
+  inventory.
 
-The synchronous HTTP adapter uses OS trust roots, forbids redirects, bounds
-global time and response bytes, permits plaintext HTTP only on loopback, and
-treats LAN endpoints as remote. It retries only 408, 409, 429, 5xx, and
-pre-response transport failures, at most twice, while respecting bounded
-`Retry-After`. Authentication, authorization, rate limiting, timeout, context
-limit, refusal, malformed response, and cancellation are normalized without
-including credentials in diagnostics.
+Projects seal a default profile plus optional role overrides. A remote cache
+miss requires `allow_remote_provider` and
+`remote_disclosure_confirmed` for that invocation. Consent is not stored or
+reused. Content with effective sensitive findings and affected semantic work
+MUST use a local route.
 
-OpenAI Responses/Embeddings, Anthropic Messages structured output, Gemini
-Interactions/embedding, Ollama chat/embed, and generic OpenAI-compatible HTTP
-shapes are implemented. The schema-3 command envelope is defined in
-`okc-protocol`; supervised execution for that new envelope remains a release
-blocker, so a `command` profile currently fails capability testing rather than
-falling back to a shell.
+## Portable requests and recordings
 
-Provider profiles live in user-global TOML and contain only endpoint, explicit
-model, limits/options, and either an `api_key_env` variable name or an
-`os_keychain` account reference under the fixed OKC service ID. Projects store only
-the `default`, `embedding`, `organizer`, `synthesis`, and `critic` profile
-names. Secret values MUST NOT enter project state, recordings, errors, or
-artifacts. Keychain locked/unavailable errors permit an environment reference
-or cancellation, never plaintext file fallback. `provider test` uses fixed
-synthetic data rather than Vault content.
+Every structured request binds Schema 3, role, stable task ID, system
+instruction, input, schema name, output schema, token bound, and temperature.
+Every response binds exact request/response hashes, provider identity, finish
+reason, output, and usage receipt. Embedding responses additionally bind vector
+count and dimensions and reject non-finite values.
 
-## Schema-3 disclosure and recording
+The application validates the portable JSON Schema subset locally before any
+call and validates returned JSON independently of provider claims. It records
+canonical request and response bytes plus content hashes in immutable project
+objects. Resume may reuse a response only when the complete cache key matches
+the source/corpus, route, provider/model, role, prompt, schema, and revision.
 
-Before any provider call, the versioned deterministic scanner records only
-category, document/block location, byte range, and content hash. A finding
-forces embedding and organizer to one local model space and forces every
-affected synthesis/critic cluster to a local route. A missing local route
-stops before disclosure. The current CLI does not yet expose persisted
-false-positive exceptions; that is a release blocker.
+Provider recordings are evidence of what was proposed, not approval. Final
+compile accepts a sealed `ApprovedIntegrationPlan` and performs no provider,
+network, environment-secret, keychain, or process access.
 
-Non-interactive remote execution requires both `--allow-remote-provider` and
-`--yes`. Each complete exchange is canonicalized into the project's immutable
-object store and bound into the task journal. A task key includes stage,
-prompt, schema, source, provider profile, model, adapter, and options hashes.
-Only a complete response is reusable; failed tasks resume at that task. The
-current pipeline performs one embedding input per Markdown document and an
-exact bounded cosine candidate pass. Deterministic block chunking, batching,
-HNSW, and union with every V2 candidate reason required by `ALG-SEM-001` remain
-unfinished and therefore the 100k-note gate is not passed.
+## Untrusted-output validation
 
-## Frozen schema-2 contract
+Provider responses MUST be rejected for any of the following:
 
-## Rust capability interfaces
+- unknown or duplicate fields, invalid JSON, wrong schema/revision/task or
+  request hash;
+- an identity different from the selected provider/model response;
+- missing, extra, duplicate, foreign, or stale document/block/metadata IDs;
+- evidence outside the current cluster or with a mismatched content hash;
+- incomplete taxonomy/disposition/source inventory;
+- invalid or traversal-bearing canonical paths;
+- non-finite or wrong-dimension embeddings;
+- an unsupported/uncited section, malformed contradiction, or out-of-bound
+  response;
+- any attempt to provide curator approval or alter source/project state.
 
-The implemented `okc_core::provider` traits are:
+Organizer, synthesis, and critic output is resealed locally. Critical/major
+critic findings block. Minor findings and omissions require individually keyed
+curator rationales. Regeneration binds feedback to the previous proposal and
+critic hashes and creates a new revision, invalidating earlier authority.
 
-```rust,ignore
-trait TextGenerator {
-    fn capabilities(&self) -> ProviderCapabilities;
-    fn generate(
-        &self,
-        request: &TextGenerationRequest,
-        cancellation: &CancellationToken,
-    ) -> okc_core::Result<TextGenerationResponse>;
-}
+## Provider profiles and credentials
 
-trait EmbeddingProvider {
-    fn capabilities(&self) -> ProviderCapabilities;
-    fn embed(
-        &self,
-        request: &EmbeddingRequest,
-        cancellation: &CancellationToken,
-    ) -> okc_core::Result<EmbeddingResponse>;
-}
+Profiles support OpenAI, Anthropic, Gemini, Ollama, and OpenAI-compatible
+adapters. They specify endpoint, model, limits, and options. The CLI may hold an
+environment-variable reference or an opaque OS-keychain account. Python and
+Node.js may hold only an environment-variable name. Raw secrets and
+credential-like option keys are forbidden.
 
-trait RerankProvider {
-    fn capabilities(&self) -> ProviderCapabilities;
-    fn rerank(
-        &self,
-        request: &RerankRequest,
-        cancellation: &CancellationToken,
-    ) -> okc_core::Result<RerankResponse>;
-}
+Secrets resolve immediately before the call, live in zeroizing/redacted types,
+and MUST NOT appear in JSON/TOML, SQLite, request recordings, provenance,
+errors, debug output, terminal output, or event queues. Keychain failure never
+falls back to plaintext.
 
-trait KnowledgeAugmentor {
-    fn capabilities(&self) -> ProviderCapabilities;
-    fn propose(
-        &self,
-        request: &AugmentationRequest,
-        cancellation: &CancellationToken,
-    ) -> okc_core::Result<Vec<KnowledgeProposal>>;
-}
-```
+## Transport safety
 
-`KnowledgeAugmentor` is re-exported from the crate root; the other traits and
-request/response types are available under `okc_core::provider`. Wire types live
-in the independent `okc-protocol` crate.
+HTTP transports use direct validated endpoints, bounded request/response
+sizes, deadlines, cancellation, and a maximum of two retry attempts for
+explicitly retryable failures. Credentials in URLs are forbidden. Redirect,
+proxy, DNS, TLS, and error normalization policy MUST not disclose secrets or
+reinterpret a failed response as valid output.
 
-ADR-0011 adds a provider-neutral façade rather than a vendor client:
+Provider errors are normalized into authentication, authorization,
+rate-limit, timeout, context-limit, refusal, invalid request/response,
+response-too-large, transport, cancellation, unsupported-capability, and
+remote-policy classes. Language adapters map them to stable structured errors;
+callers do not parse human text.
 
-```rust,ignore
-let request = compiler.build_augmentation_request(&plan, &selection)?;
-let recording = compiler.augment(
-    &plan,
-    &selection,
-    &augmentor,
-    &cancellation,
-    RemoteProviderConsent::Denied,
-)?;
-let replayed = compiler.replay_augmentation(&plan, &recording)?;
-assert_eq!(
-    recording.to_canonical_jsonl()?,
-    replayed.to_canonical_jsonl()?,
-);
-```
+## Determinism and experimental isolation
 
-`DocumentSelection` is either a non-empty unique explicit `DocumentId` list or
-`All`. `RecordedAugmentation` owns the versioned header, exact transcript, and
-deterministic validation records. A lower-level transport first calls
-`authorize_augmentation_exchange` after capability negotiation but before
-source projection disclosure. The returned opaque, non-serializable
-authorization is then consumed by `record_augmentation_exchange` with the
-response. This gives non-Rust and non-trait transports the same consent,
-validation, and recording boundary without taking ownership of policy.
-
-V2 `ProviderCapabilities` contains provider identity, supported protocol
-versions and operations, maximum input/output bytes, structured-output,
-streaming and deterministic-control declarations, and a `local` or labeled
-`remote` data boundary. Context-token limits and supported content-class lists
-are not part of schema version 2.
-
-## Universal subprocess protocol
-
-Non-Rust providers use protocol version 2 NDJSON over standard input/output.
-Each envelope has exactly `protocol_version`, `request_id`, `message_type`, and
-`payload`. Standard output is protocol-only; provider logs go to standard
-error. The CLI exchange is exactly:
-
-1. `capabilities-1` / `capabilities_request`;
-2. `capabilities-1` / `capabilities_response`;
-3. `augmentation-1` / `augmentation_request`;
-4. `augmentation-1` / `augmentation_response`.
-
-The provider must negotiate protocol V2, `knowledge_augmentation`, and
-structured output. The CLI verifies declared input/output limits and proposal
-provider identity. It invokes the core pre-disclosure authorization after the
-capability response and before sending `augmentation_request`. Extra protocol
-messages, a malformed line, duplicate or unknown fields at any JSON depth,
-refusal, crash, non-success exit, or failure to close after the response is an
-error.
-
-`CommandProvider` launches an explicitly configured executable directly, never
-through a shell. It uses a sanitized environment, optional working directory,
-bounded stderr capture, and limits for deadline, line length, total output, and
-message count. CLI defaults are 120 seconds, 16 MiB per line, 16 MiB total, and
-8 messages. Hard maxima are 3,600 seconds, 32 MiB per line, 64 MiB total, and
-64 messages. The line limit cannot exceed the total limit.
-
-Provider input is written on a supervised thread so a child that stops reading
-cannot bypass deadline or cancellation. The CLI polls at bounded intervals and
-on deadline or SIGINT kills/reaps the provider process tree on supported Unix
-platforms. It does not publish a partial augmentation file.
-
-## Projection and privacy boundary
-
-An augmentation request binds the sealed `plan_id`, the complete canonical
-workspace `projection_hash`, allowed proposal kinds, selected document
-projections, and output limits. Every live SDK or CLI call requires an explicit
-document selection; it never defaults to sending the whole plan.
-
-Each `DocumentProjection` carries the owning sealed `snapshot_id`, a document
-object reference and content hash, logical path, title, and selected blocks.
-Each projected block carries its block ID, content hash, and text. This is
-sufficient for a stateless provider to construct either spanless file/body
-evidence or block evidence without access to a private plan file.
-
-The current projection granularity sends every parsed block of each selected
-document. Block-level disclosure selection is future work, so policy and UI
-must not claim a finer minimum-disclosure guarantee. Remote providers are
-default-denied and require both `allow_remote_providers = true` in the sealed
-policy and explicit runtime `RemoteProviderConsent::Granted`. CLI
-`--allow-remote-provider` is one UI for that runtime consent. Consent authorizes
-only that live disclosure and is not serialized as a reusable permission.
-
-The in-process façade checks cancellation before capability negotiation,
-before projection disclosure, after the provider returns, and before returning
-a recording. `KnowledgeAugmentor::capabilities()` is local, bounded,
-side-effect-free metadata and MUST NOT perform network or blocking negotiation.
-`propose` implementations must cooperate with `CancellationToken`; the core
-cannot forcibly stop arbitrary provider code. Transports with live capability
-negotiation use their own deadline/cancellation and MUST obtain the opaque core
-authorization before sending source text. The subprocess adapter retains its
-stronger deadline and process-tree termination behavior.
-
-## Proposal model
-
-A V2 proposal contains:
-
-- schema version, unique proposal ID, originating plan ID, and projection hash;
-- provider/model/version identity;
-- one structured proposal kind and payload;
-- zero or more snapshot/document/block/span/content-hash evidence references;
-- optional uncertainty in `[0, 1]` and optional rationale.
-
-The two V2 kinds are:
-
-- `create_generated_note`: title, Markdown body, and optional safe `.md` path;
-- `explain_conflict`: existing conflict ID and explanation text.
-
-Generated notes require at least one evidence reference. A conflict explanation
-is advisory data; it is not a conflict decision and cannot change the sealed
-plan. Proposal-local transcript reference fields and bulk approval commitments
-are not part of schema version 2.
-
-## Validation and approval
-
-Deterministic proposal validation covers:
-
-- proposal count/schema, unique bounded ID, plan ID, and projection hash;
-- provider identity and uncertainty range;
-- generated title/body bounds, `.md` extension, and safe generated path;
-- referenced conflict existence;
-- evidence identity parsing and snapshot/document ownership;
-- file/body evidence only when `block_id`, `byte_start`, and `byte_end` are all
-  absent and the hash matches the source file or normalized body;
-- block evidence only when the block ID/content hash match and the span is
-  either fully absent or exactly equals that block's sealed byte span;
-- non-empty evidence for generated notes.
-
-Provider text is DATA. It cannot invoke tools, initiate HTTP, execute commands,
-delete files, change policy, or grant approval. Link-target semantics,
-frontmatter-policy analysis, and instruction-content classification are not
-implemented proposal validators in V2 and must not be advertised as such.
-
-An `ApprovalDecision` binds `plan_id`, `proposal_id`, canonical
-`proposal_content_hash`, approval boolean, approver, and policy version. Any
-bound value change makes it stale. Only approved valid proposals are retained
-in `ApprovedPlan`; rejected decisions are not materialized.
-
-Conflict authorization is a separate ADR-0017 overlay bound to plan and
-conflict content hashes. The curator may preserve the original or select one
-sealed Markdown/Canvas target. A provider cannot choose, waive, or approve a
-conflict action; an explanation remains advisory data.
-
-When an approved proposal creates a note, approval derives a required
-materialization commitment from the sealed plan and exact proposal content.
-It binds destination, canonical emitted-body hash, complete rendered-output
-hash, proposal-order EvidenceId values, and operation ID. Providers cannot
-supply or override this compiler-owned commitment.
-
-## Transcript and offline compilation
-
-The canonical augmentation JSONL contains one header, exactly four canonical
-transcript records, and one proposal-ID-sorted validation record per proposal.
-A transcript record stores
-sequence, request ID, direction, message type, canonical payload hash, and
-payload. There is no timing-metadata field in V2.
-
-For the stored augmentation request, block text is replaced by
-`"[redacted]"`, while `canonical_payload_hash` commits to the original sent
-projection. Approval and replay rehydrate the request from the sealed plan,
-rebuild the public projection for exactly the recorded documents, and validate
-the commitment, all-block projection, document-to-snapshot identity,
-request/response sequence, negotiated limits, provider identity, and proposals.
-Empty transcript is valid only when validations are also empty. A canonical
-four-record exchange with zero proposals is valid; any non-empty validation
-set without the exchange fails closed.
-
-Every JSONL line is compact recursively key-sorted JSON followed by LF, and the
-file ends in LF. Blank/CRLF/unterminated/non-canonical lines, unknown or
-duplicate fields, record reordering, and over-limit input are rejected. V2
-hard limits are 64 MiB per line, 1 GiB per file, and the sealed maximum proposal
-count plus five fixed records. The decoder validates typed nested payloads and
-header/provider/plan/projection self-consistency before exposing a recording;
-replay adds sealed-plan hydration and fresh validation. A live recorder MUST
-also prove that the canonical encoding fits those bounds before returning.
-The Compiled Vault stores the approved transcript audit file, and the
-independent verifier requires exact semantic equality with `ApprovedPlan`.
-
-Compilation of an `ApprovedPlan` never contacts a provider. Offline
-`replay_augmentation` likewise never contacts a provider, network, MCP server,
-or output destination; no live remote consent is required, although the sealed
-plan must have permitted the recorded remote capability. Given identical
-snapshots, policy, compiler version, approved proposal contents, conflict
-decisions, and transcript, the deterministic materialization path is reusable
-offline. Canonical record-to-replay JSONL bytes, approval bytes, Compiled Vault,
-and OKCPack outputs MUST be equal in the required replay E2E.
-
-## Failure behavior
-
-Provider failure, timeout, cancellation, malformed output, unsupported
-capability, policy refusal, invalid proposal, or stale approval leaves the
-sealed deterministic plan usable without AI. It never creates a partial
-approved change or output artifact.
-
-## Adapter boundary
-
-The compiler core ships no OpenAI-only or other vendor-only dependency.
-Reference vendor adapters may be separate packages and examples. The universal
-command adapter is the cross-language compatibility floor; MCP servers remain
-thin adapters over the same validation and approval boundaries.
+Live generation is nondeterministic; recording makes its exact output an
+immutable build input. Local validation, approval, compilation, verification,
+and explanation are deterministic. Experimental retrieval or memory models
+may annotate research results but cannot change default candidates, taxonomy,
+approval, or output without promotion under the algorithm registry.

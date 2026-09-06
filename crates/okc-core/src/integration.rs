@@ -1,4 +1,4 @@
-//! V3 evidence-complete semantic integration and offline materialization.
+//! Schema 3 evidence-complete semantic integration and offline materialization.
 //!
 //! Provider clients do not belong here. This module accepts already-recorded
 //! proposals as hostile data, validates the complete approval closure, and
@@ -20,12 +20,12 @@ use crate::identity::{BlockId, ContentHash, DocumentId};
 use crate::source::SourceId;
 
 pub const INTEGRATION_SCHEMA_VERSION: u32 = 3;
-pub const V3_PRODUCT_VERSION: &str = "0.3.0";
-pub const V3_PACK_PROFILE: &str = "okc-tar-zstd-deterministic-v3";
+pub const PRODUCT_VERSION: &str = "0.3.0";
+pub const PACK_PROFILE: &str = "okc-tar-zstd-deterministic-v3";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SourceBlockV3 {
+pub struct SourceBlock {
     pub block_id: BlockId,
     pub content_hash: ContentHash,
     pub text: String,
@@ -33,7 +33,7 @@ pub struct SourceBlockV3 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MetadataValueV3 {
+pub struct MetadataValue {
     pub metadata_id: String,
     pub key: String,
     pub value_index: u32,
@@ -41,7 +41,7 @@ pub struct MetadataValueV3 {
     pub value: Value,
 }
 
-impl MetadataValueV3 {
+impl MetadataValue {
     pub fn new(
         document_id: DocumentId,
         key: impl Into<String>,
@@ -85,8 +85,8 @@ pub struct IntegrationDocument {
     pub document_id: DocumentId,
     pub original_path: String,
     pub document_hash: ContentHash,
-    pub blocks: Vec<SourceBlockV3>,
-    pub metadata: Vec<MetadataValueV3>,
+    pub blocks: Vec<SourceBlock>,
+    pub metadata: Vec<MetadataValue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,7 +202,7 @@ pub struct DispositionTarget {
 }
 
 impl DispositionTarget {
-    pub fn block(document_id: DocumentId, block: &SourceBlockV3) -> Self {
+    pub fn block(document_id: DocumentId, block: &SourceBlock) -> Self {
         Self {
             kind: DispositionTargetKind::Block,
             document_id,
@@ -211,7 +211,7 @@ impl DispositionTarget {
         }
     }
 
-    pub fn metadata(document_id: DocumentId, metadata: &MetadataValueV3) -> Self {
+    pub fn metadata(document_id: DocumentId, metadata: &MetadataValue) -> Self {
         Self {
             kind: DispositionTargetKind::Metadata,
             document_id,
@@ -568,7 +568,7 @@ impl ApprovedIntegrationPlan {
         )?;
         if self.provider_recording_hashes.is_empty() {
             return Err(OkcError::ApprovalStale(
-                "V3 integration requires sealed provider recordings".into(),
+                "Schema 3 integration requires sealed provider recordings".into(),
             ));
         }
         let recordings = self
@@ -658,7 +658,7 @@ fn validate_corpus(corpus: &IntegrationCorpus) -> Result<()> {
     }
     if corpus.documents.is_empty() {
         return Err(OkcError::ProposalInvalid(
-            "V3 integration corpus contains no Markdown documents".into(),
+            "Schema 3 integration corpus contains no Markdown documents".into(),
         ));
     }
     let expected = canonical_hash("okc:integration-corpus:v3\0", &corpus.documents)?;
@@ -720,7 +720,7 @@ fn validate_corpus(corpus: &IntegrationCorpus) -> Result<()> {
                 ));
             }
             previous_metadata = Some(&metadata.metadata_id);
-            if MetadataValueV3::new(
+            if MetadataValue::new(
                 document.document_id,
                 metadata.key.clone(),
                 metadata.value_index,
@@ -1203,7 +1203,7 @@ fn validate_relative_path(path: &str, require_file: bool) -> Result<()> {
     {
         return Err(OkcError::UnsafePath {
             path: path.into(),
-            reason: "V3 logical paths must be bounded portable relative UTF-8 paths".into(),
+            reason: "Schema 3 logical paths must be bounded portable relative UTF-8 paths".into(),
         });
     }
     let parsed = Path::new(path);
@@ -1215,7 +1215,7 @@ fn validate_relative_path(path: &str, require_file: bool) -> Result<()> {
     {
         return Err(OkcError::UnsafePath {
             path: path.into(),
-            reason: "V3 logical path contains a non-portable component".into(),
+            reason: "Schema 3 logical path contains a non-portable component".into(),
         });
     }
     Ok(())
@@ -1223,7 +1223,7 @@ fn validate_relative_path(path: &str, require_file: bool) -> Result<()> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct V3ManifestFile {
+pub struct ManifestFile {
     pub path: String,
     pub byte_len: u64,
     pub raw_sha256: String,
@@ -1232,7 +1232,7 @@ pub struct V3ManifestFile {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct V3Manifest {
+pub struct CompiledVaultManifest {
     pub format_family: String,
     pub schema_version: u32,
     pub product_version: String,
@@ -1240,11 +1240,11 @@ pub struct V3Manifest {
     pub corpus_hash: ContentHash,
     pub taxonomy_hash: ContentHash,
     pub pack_profile: String,
-    pub files: Vec<V3ManifestFile>,
+    pub files: Vec<ManifestFile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct V3CompiledArtifact {
+pub struct CompiledArtifact {
     pub path: PathBuf,
     pub integration_plan_id: String,
     pub files: usize,
@@ -1252,7 +1252,7 @@ pub struct V3CompiledArtifact {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct V3ProvenanceRecord {
+pub struct ProvenanceRecord {
     pub schema_version: u32,
     pub record_id: String,
     pub kind: String,
@@ -1267,12 +1267,12 @@ pub struct V3ProvenanceRecord {
     pub source_document: Option<DocumentId>,
 }
 
-/// Materialize a fully approved V3 plan. This function has no provider input
+/// Materialize a fully approved Schema 3 plan. This function has no provider input
 /// and performs no network access.
-pub fn compile_approved_integration(
+pub fn compile(
     plan: &ApprovedIntegrationPlan,
     destination: impl AsRef<Path>,
-) -> Result<V3CompiledArtifact> {
+) -> Result<CompiledArtifact> {
     plan.validate()?;
     let destination = destination.as_ref();
     if fs::symlink_metadata(destination).is_ok() {
@@ -1284,7 +1284,7 @@ pub fn compile_approved_integration(
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(|error| OkcError::io(parent, error))?;
     let stage = tempfile::Builder::new()
-        .prefix(".okc-v3-stage-")
+        .prefix(".okc-stage-")
         .tempdir_in(parent)
         .map_err(|error| OkcError::io(parent, error))?;
     let files = materialized_files(plan)?;
@@ -1295,30 +1295,33 @@ pub fn compile_approved_integration(
     write_new_file(stage.path(), ".okc/integration-plan.json", &plan_bytes)?;
     let provenance = provenance_jsonl(plan, &files)?;
     write_new_file(stage.path(), ".okc/provenance.jsonl", &provenance)?;
-    let mut inventory = inventory_v3(stage.path(), &[".okc/manifest.json", ".okc/checksums.txt"])?;
-    let manifest = V3Manifest {
+    let mut inventory_files =
+        inventory(stage.path(), &[".okc/manifest.json", ".okc/checksums.txt"])?;
+    let manifest = CompiledVaultManifest {
         format_family: "okc".into(),
         schema_version: INTEGRATION_SCHEMA_VERSION,
-        product_version: V3_PRODUCT_VERSION.into(),
+        product_version: PRODUCT_VERSION.into(),
         integration_plan_id: plan.integration_plan_id.clone(),
         corpus_hash: plan.corpus.corpus_hash,
         taxonomy_hash: plan.taxonomy.taxonomy_hash,
-        pack_profile: V3_PACK_PROFILE.into(),
-        files: inventory.clone(),
+        pack_profile: PACK_PROFILE.into(),
+        files: inventory_files.clone(),
     };
     write_new_file(
         stage.path(),
         ".okc/manifest.json",
         &to_canonical_json_pretty(&manifest)?,
     )?;
-    inventory = inventory_v3(stage.path(), &[".okc/checksums.txt"])?;
-    let checksums = inventory.iter().fold(String::new(), |mut output, file| {
-        writeln!(output, "{}  {}", file.raw_sha256, file.path)
-            .expect("writing to a String cannot fail");
-        output
-    });
+    inventory_files = inventory(stage.path(), &[".okc/checksums.txt"])?;
+    let checksums = inventory_files
+        .iter()
+        .fold(String::new(), |mut output, file| {
+            writeln!(output, "{}  {}", file.raw_sha256, file.path)
+                .expect("writing to a String cannot fail");
+            output
+        });
     write_new_file(stage.path(), ".okc/checksums.txt", checksums.as_bytes())?;
-    verify_v3_directory(stage.path())?;
+    verify(stage.path())?;
     sync_directory(stage.path()).map_err(|error| OkcError::io(stage.path(), error))?;
     let staging = stage.keep();
     match publish_directory_noreplace(&staging, destination) {
@@ -1337,22 +1340,22 @@ pub fn compile_approved_integration(
         path: destination.to_path_buf(),
         source,
     })?;
-    Ok(V3CompiledArtifact {
+    Ok(CompiledArtifact {
         path: destination.to_path_buf(),
         integration_plan_id: plan.integration_plan_id.clone(),
-        files: inventory.len() + 1,
+        files: inventory_files.len() + 1,
     })
 }
 
-pub fn verify_v3_directory(root: impl AsRef<Path>) -> Result<V3Manifest> {
+pub fn verify(root: impl AsRef<Path>) -> Result<CompiledVaultManifest> {
     let root = root.as_ref();
-    let manifest: V3Manifest = serde_json::from_slice(
+    let manifest: CompiledVaultManifest = serde_json::from_slice(
         &fs::read(root.join(".okc/manifest.json"))
             .map_err(|error| OkcError::io(root.join(".okc/manifest.json"), error))?,
     )?;
     if manifest.format_family != "okc" || manifest.schema_version != INTEGRATION_SCHEMA_VERSION {
         return Err(OkcError::VerificationFailed(
-            "artifact is not an OKC V3 Compiled Vault".into(),
+            "artifact is not an OKC Schema 3 Compiled Vault".into(),
         ));
     }
     let plan: ApprovedIntegrationPlan = serde_json::from_slice(
@@ -1363,19 +1366,19 @@ pub fn verify_v3_directory(root: impl AsRef<Path>) -> Result<V3Manifest> {
     if manifest.integration_plan_id != plan.integration_plan_id
         || manifest.corpus_hash != plan.corpus.corpus_hash
         || manifest.taxonomy_hash != plan.taxonomy.taxonomy_hash
-        || manifest.pack_profile != V3_PACK_PROFILE
+        || manifest.pack_profile != PACK_PROFILE
     {
         return Err(OkcError::VerificationFailed(
-            "V3 manifest does not match its approved integration plan".into(),
+            "Schema 3 manifest does not match its approved integration plan".into(),
         ));
     }
-    let expected_files = inventory_v3(root, &[".okc/manifest.json", ".okc/checksums.txt"])?;
+    let expected_files = inventory(root, &[".okc/manifest.json", ".okc/checksums.txt"])?;
     if manifest.files != expected_files {
         return Err(OkcError::VerificationFailed(
-            "V3 manifest inventory does not match artifact files".into(),
+            "Schema 3 manifest inventory does not match artifact files".into(),
         ));
     }
-    let checksum_inventory = inventory_v3(root, &[".okc/checksums.txt"])?;
+    let checksum_inventory = inventory(root, &[".okc/checksums.txt"])?;
     let expected_checksums = checksum_inventory
         .iter()
         .fold(String::new(), |mut output, file| {
@@ -1387,7 +1390,7 @@ pub fn verify_v3_directory(root: impl AsRef<Path>) -> Result<V3Manifest> {
         .map_err(|error| OkcError::io(root.join(".okc/checksums.txt"), error))?;
     if observed_checksums != expected_checksums.as_bytes() {
         return Err(OkcError::VerificationFailed(
-            "V3 checksums are incomplete or stale".into(),
+            "Schema 3 checksums are incomplete or stale".into(),
         ));
     }
     let expected_materialized = materialized_files(&plan)?;
@@ -1396,7 +1399,7 @@ pub fn verify_v3_directory(root: impl AsRef<Path>) -> Result<V3Manifest> {
             fs::read(root.join(&path)).map_err(|error| OkcError::io(root.join(&path), error))?;
         if observed != bytes {
             return Err(OkcError::VerificationFailed(format!(
-                "V3 materialized file `{path}` is not reproducible from the plan"
+                "Schema 3 materialized file `{path}` is not reproducible from the plan"
             )));
         }
     }
@@ -1406,37 +1409,36 @@ pub fn verify_v3_directory(root: impl AsRef<Path>) -> Result<V3Manifest> {
         != expected_provenance
     {
         return Err(OkcError::VerificationFailed(
-            "V3 provenance is not closed over the approved integration".into(),
+            "Schema 3 provenance is not closed over the approved integration".into(),
         ));
     }
     Ok(manifest)
 }
 
-/// Verify a V3 directory and return the provenance record for one materialized
+/// Verify a Schema 3 directory and return the provenance record for one materialized
 /// path. Explanation is deliberately provider-free and rejects absent or
 /// duplicate records.
-pub fn explain_v3_directory(
-    root: impl AsRef<Path>,
-    output_path: &str,
-) -> Result<V3ProvenanceRecord> {
+pub fn explain(root: impl AsRef<Path>, output_path: &str) -> Result<ProvenanceRecord> {
     let root = root.as_ref();
-    verify_v3_directory(root)?;
+    verify(root)?;
     validate_relative_path(output_path, true)?;
     let bytes = fs::read(root.join(".okc/provenance.jsonl"))
         .map_err(|error| OkcError::io(root.join(".okc/provenance.jsonl"), error))?;
     let mut matching = bytes
         .split(|byte| *byte == b'\n')
         .filter(|line| !line.is_empty())
-        .map(serde_json::from_slice::<V3ProvenanceRecord>)
+        .map(serde_json::from_slice::<ProvenanceRecord>)
         .collect::<std::result::Result<Vec<_>, _>>()?
         .into_iter()
         .filter(|record| record.output_path == output_path);
     let record = matching.next().ok_or_else(|| {
-        OkcError::VerificationFailed(format!("V3 artifact has no provenance for `{output_path}`"))
+        OkcError::VerificationFailed(format!(
+            "Schema 3 artifact has no provenance for `{output_path}`"
+        ))
     })?;
     if matching.next().is_some() {
         return Err(OkcError::VerificationFailed(format!(
-            "V3 artifact has duplicate provenance for `{output_path}`"
+            "Schema 3 artifact has duplicate provenance for `{output_path}`"
         )));
     }
     Ok(record)
@@ -1478,7 +1480,7 @@ fn materialized_files(plan: &ApprovedIntegrationPlan) -> Result<Vec<(String, Vec
     if files.windows(2).any(|pair| pair[0].0 == pair[1].0) {
         return Err(OkcError::UnsafePath {
             path: "materialized output".into(),
-            reason: "V3 output paths collide".into(),
+            reason: "Schema 3 output paths collide".into(),
         });
     }
     Ok(files)
@@ -1647,7 +1649,7 @@ fn yaml_scalar(value: &str) -> String {
 }
 
 #[derive(Serialize)]
-struct V3ProvenanceIdentity<'a> {
+struct ProvenanceIdentity<'a> {
     output_path: &'a str,
     output_hash: ContentHash,
     integration_plan_id: &'a str,
@@ -1744,14 +1746,14 @@ fn provenance_jsonl(
                 )
             } else {
                 return Err(OkcError::Internal(
-                    "unclassified V3 materialized output".into(),
+                    "unclassified Schema 3 materialized output".into(),
                 ));
             };
         let record_id = format!(
             "record_{}",
             canonical_hash(
                 "okc:provenance:v3\0",
-                &V3ProvenanceIdentity {
+                &ProvenanceIdentity {
                     output_path: path,
                     output_hash,
                     integration_plan_id: &plan.integration_plan_id,
@@ -1760,7 +1762,7 @@ fn provenance_jsonl(
             )?
             .hex()
         );
-        let record = V3ProvenanceRecord {
+        let record = ProvenanceRecord {
             schema_version: INTEGRATION_SCHEMA_VERSION,
             record_id,
             kind: kind.into(),
@@ -1780,12 +1782,12 @@ fn provenance_jsonl(
     Ok(encoded)
 }
 
-fn inventory_v3(root: &Path, excluded: &[&str]) -> Result<Vec<V3ManifestFile>> {
+fn inventory(root: &Path, excluded: &[&str]) -> Result<Vec<ManifestFile>> {
     fn walk(
         root: &Path,
         directory: &Path,
         excluded: &[&str],
-        files: &mut Vec<V3ManifestFile>,
+        files: &mut Vec<ManifestFile>,
     ) -> Result<()> {
         let mut entries = fs::read_dir(directory)
             .map_err(|error| OkcError::io(directory, error))?
@@ -1798,7 +1800,7 @@ fn inventory_v3(root: &Path, excluded: &[&str]) -> Result<Vec<V3ManifestFile>> {
                 .map_err(|error| OkcError::io(entry.path(), error))?;
             if metadata.is_symlink() || (!metadata.is_file() && !metadata.is_dir()) {
                 return Err(OkcError::VerificationFailed(
-                    "V3 artifacts may contain only regular files and directories".into(),
+                    "Schema 3 artifacts may contain only regular files and directories".into(),
                 ));
             }
             if metadata.is_dir() {
@@ -1824,7 +1826,7 @@ fn inventory_v3(root: &Path, excluded: &[&str]) -> Result<Vec<V3ManifestFile>> {
             validate_relative_path(&path, true)?;
             let bytes =
                 fs::read(entry.path()).map_err(|error| OkcError::io(entry.path(), error))?;
-            files.push(V3ManifestFile {
+            files.push(ManifestFile {
                 path,
                 byte_len: bytes.len() as u64,
                 raw_sha256: format!("{:x}", Sha256::digest(&bytes)),
@@ -1922,17 +1924,17 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     fn fixture() -> Fixture {
         let document_id = DocumentId::from_hash(hash("document"));
-        let block_a = SourceBlockV3 {
+        let block_a = SourceBlock {
             block_id: BlockId::from_hash(hash("block-a")),
             content_hash: ContentHash::from_domain_bytes("okc:block-content:v3\0", b"Block A"),
             text: "Block A".into(),
         };
-        let block_b = SourceBlockV3 {
+        let block_b = SourceBlock {
             block_id: BlockId::from_hash(hash("block-b")),
             content_hash: ContentHash::from_domain_bytes("okc:block-content:v3\0", b"Block B"),
             text: "Block B".into(),
         };
-        let metadata = MetadataValueV3::new(document_id, "tags", 0, &Value::String("rust".into()))
+        let metadata = MetadataValue::new(document_id, "tags", 0, &Value::String("rust".into()))
             .expect("metadata");
         let corpus = IntegrationCorpus::seal(
             hash("policy"),
@@ -2091,7 +2093,7 @@ mod tests {
 
     #[test]
     fn complete_singleton_cluster_passes_all_gates() {
-        fixture().plan.validate().expect("valid V3 plan");
+        fixture().plan.validate().expect("valid Schema 3 plan");
     }
 
     #[test]
@@ -2192,7 +2194,7 @@ mod tests {
         .expect("preserved plan");
         let temporary = tempfile::tempdir().expect("temporary");
         let output = temporary.path().join("Compiled");
-        compile_approved_integration(&plan, &output).expect("compile");
+        compile(&plan, &output).expect("compile");
         let note =
             fs::read_to_string(output.join("knowledge/rust/ownership.md")).expect("canonical note");
         assert!(note.contains("## Preserved source material"));
@@ -2252,21 +2254,20 @@ mod tests {
         let second_root = tempfile::tempdir().expect("second root");
         let first = first_root.path().join("First");
         let second = second_root.path().join("Second");
-        compile_approved_integration(&plan, &first).expect("first compile");
-        compile_approved_integration(&plan, &second).expect("second compile");
-        verify_v3_directory(&first).expect("verify first");
-        verify_v3_directory(&second).expect("verify second");
-        let left = inventory_v3(&first, &[]).expect("first inventory");
-        let right = inventory_v3(&second, &[]).expect("second inventory");
+        compile(&plan, &first).expect("first compile");
+        compile(&plan, &second).expect("second compile");
+        verify(&first).expect("verify first");
+        verify(&second).expect("verify second");
+        let left = inventory(&first, &[]).expect("first inventory");
+        let right = inventory(&second, &[]).expect("second inventory");
         assert_eq!(left, right);
         assert!(first.join("knowledge/rust/ownership.md").is_file());
         assert!(first.join("legacy/alpha/Notes/Topic.md").is_file());
-        let canonical = explain_v3_directory(&first, "knowledge/rust/ownership.md")
-            .expect("canonical provenance");
+        let canonical =
+            explain(&first, "knowledge/rust/ownership.md").expect("canonical provenance");
         assert_eq!(canonical.kind, "canonical_note");
         assert_eq!(canonical.evidence.len(), 2);
-        let redirect = explain_v3_directory(&first, "legacy/alpha/Notes/Topic.md")
-            .expect("redirect provenance");
+        let redirect = explain(&first, "legacy/alpha/Notes/Topic.md").expect("redirect provenance");
         assert_eq!(redirect.kind, "legacy_redirect");
         assert_eq!(
             redirect.source_document,
@@ -2275,16 +2276,46 @@ mod tests {
         assert_eq!(redirect.cluster_id.as_deref(), Some("cluster-rust"));
         assert_eq!(redirect.evidence.len(), 2);
         assert!(redirect.approval_hash.is_some());
-        assert!(explain_v3_directory(&first, "missing.md").is_err());
+        assert!(explain(&first, "missing.md").is_err());
     }
 
     #[test]
-    fn v3_compile_rejects_plan_without_recordings_or_approval() {
+    fn verification_rejects_tampering_and_materialized_symlinks() {
+        let plan = fixture().plan;
+        let root = tempfile::tempdir().expect("root");
+        let tampered = root.path().join("Tampered");
+        compile(&plan, &tampered).expect("compile tamper fixture");
+        fs::write(
+            tampered.join("knowledge/rust/ownership.md"),
+            b"untrusted replacement",
+        )
+        .expect("tamper materialized note");
+        assert!(verify(&tampered).is_err());
+        assert!(explain(&tampered, "knowledge/rust/ownership.md").is_err());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let linked = root.path().join("Linked");
+            compile(&plan, &linked).expect("compile symlink fixture");
+            let note = linked.join("knowledge/rust/ownership.md");
+            fs::remove_file(&note).expect("remove materialized note");
+            let outside = root.path().join("outside.md");
+            fs::write(&outside, b"outside").expect("outside note");
+            symlink(&outside, &note).expect("replace note with symlink");
+            assert!(verify(&linked).is_err());
+            assert!(explain(&linked, "knowledge/rust/ownership.md").is_err());
+        }
+    }
+
+    #[test]
+    fn compile_rejects_plan_without_recordings_or_approval() {
         let mut plan = fixture().plan;
         plan.provider_recording_hashes.clear();
         let root = tempfile::tempdir().expect("root");
         let output = root.path().join("Compiled");
-        assert!(compile_approved_integration(&plan, &output).is_err());
+        assert!(compile(&plan, &output).is_err());
         assert!(!output.exists());
     }
 }

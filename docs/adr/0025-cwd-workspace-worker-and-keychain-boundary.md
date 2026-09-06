@@ -1,6 +1,6 @@
 ---
 title: ADR-0025 — CWD Workspace, Worker, and Keychain Boundary
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

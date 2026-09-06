@@ -1,0 +1,117 @@
+{
+  "clusters": [
+    {
+      "approval": {
+        "approved": true,
+        "cluster_id": "sdk-fixture",
+        "critic_hash": "45f81e63a7f6212c744d3a3ca243bce3423c27b94d672c437d9a97280cf223dd",
+        "curator_id": "sdk-test",
+        "minor_waivers": [],
+        "omission_approvals": [],
+        "policy_version": "policy-v3",
+        "proposal_hash": "62a74c5dae8a69c986d9f59b935d45736d79e3486b32fd07bb47176b3729b8cc",
+        "revision_hash": "6da8334621b8a6edfbeb8b51785544bd2d98a831dd044c973fe1a74a5697f5f4",
+        "taxonomy_hash": "e8519f1a3da7037806f66d8d44a6bcca9f99538703d905f1837b6cabc7cf80b2"
+      },
+      "critic": {
+        "cluster_id": "sdk-fixture",
+        "critic_hash": "45f81e63a7f6212c744d3a3ca243bce3423c27b94d672c437d9a97280cf223dd",
+        "critic_recording_hash": "d2e200043c1e30c382419ea907991b0537aa60d0a6492978acbe3ebb5bd89b59",
+        "findings": [],
+        "proposal_hash": "62a74c5dae8a69c986d9f59b935d45736d79e3486b32fd07bb47176b3729b8cc",
+        "schema_version": 3
+      },
+      "proposal": {
+        "cluster_id": "sdk-fixture",
+        "contradictions": [],
+        "dispositions": [
+          {
+            "disposition": "preserved_verbatim",
+            "rationale": null,
+            "target": {
+              "content_hash": "4206d193c10c656a58e6ea590e0eb64ac5264a3eeb89cc4de5449c2fa36ebd52",
+              "document_id": "doc_1f936339e6a79781eca354c30c09f1ea5d9d6fbf1fadff77f682a56d76b10c69",
+              "kind": "block",
+              "target_id": "block_81981e422a3f5ea24190bdb377c819c57fb89ebb941679d4594ac94d9a210277"
+            }
+          },
+          {
+            "disposition": "preserved_verbatim",
+            "rationale": null,
+            "target": {
+              "content_hash": "af3548066f4e18cdf3048e66719969546b58c66f9c6b3b36ea2d63a91ca9306d",
+              "document_id": "doc_1f936339e6a79781eca354c30c09f1ea5d9d6fbf1fadff77f682a56d76b10c69",
+              "kind": "block",
+              "target_id": "block_c56f0ef8bef798e55b1075884ed70b76c718750d310d10f8a5823f2dec0f5502"
+            }
+          }
+        ],
+        "proposal_hash": "62a74c5dae8a69c986d9f59b935d45736d79e3486b32fd07bb47176b3729b8cc",
+        "related_links": [],
+        "revision": 1,
+        "schema_version": 3,
+        "sections": [],
+        "synthesis_recording_hash": "30060be99e0bff11386bb8f0ef6b1c6c8c27e183aa5273f44e34e0b79cea1865",
+        "taxonomy_hash": "e8519f1a3da7037806f66d8d44a6bcca9f99538703d905f1837b6cabc7cf80b2"
+      }
+    }
+  ],
+  "corpus": {
+    "corpus_hash": "2a6eb62784e8c37c5709f56265720993cf166d4133dea32263b5fdc3bd670212",
+    "documents": [
+      {
+        "blocks": [
+          {
+            "block_id": "block_81981e422a3f5ea24190bdb377c819c57fb89ebb941679d4594ac94d9a210277",
+            "content_hash": "4206d193c10c656a58e6ea590e0eb64ac5264a3eeb89cc4de5449c2fa36ebd52",
+            "text": "Evidence retained verbatim.\n"
+          },
+          {
+            "block_id": "block_c56f0ef8bef798e55b1075884ed70b76c718750d310d10f8a5823f2dec0f5502",
+            "content_hash": "af3548066f4e18cdf3048e66719969546b58c66f9c6b3b36ea2d63a91ca9306d",
+            "text": "# SDK fixture\n"
+          }
+        ],
+        "document_hash": "53c353202e1c72c2badf9ccd45c02135bc51585f0ccc707e044f537aceae3538",
+        "document_id": "doc_1f936339e6a79781eca354c30c09f1ea5d9d6fbf1fadff77f682a56d76b10c69",
+        "metadata": [],
+        "original_path": "Fixture.md",
+        "source_id": "fixture"
+      }
+    ],
+    "policy_hash": "b90bd2c227b6645dd1c496ef167d6637b63ab32cb1e27f5f72702b10fc53febc",
+    "schema_version": 3
+  },
+  "format_family": "okc",
+  "integration_plan_id": "integration_a8760cad36b32eb09f3cbae37b477af0a7ab44c88b06d46a46a52703162eca12",
+  "provider_recording_hashes": [
+    "30060be99e0bff11386bb8f0ef6b1c6c8c27e183aa5273f44e34e0b79cea1865",
+    "d2e200043c1e30c382419ea907991b0537aa60d0a6492978acbe3ebb5bd89b59",
+    "e32e37f73e099dcd0bec1e0becea0f87e444fc3630d8297b0f86fe09df059c8b",
+    "e7b2bb142e19c311e3289bbb6bac2aca5932107e1a06af43f53178e3b03c5e33"
+  ],
+  "schema_version": 3,
+  "taxonomy": {
+    "clusters": [
+      {
+        "canonical_path": "sdk/fixture.md",
+        "cluster_id": "sdk-fixture",
+        "document_ids": [
+          "doc_1f936339e6a79781eca354c30c09f1ea5d9d6fbf1fadff77f682a56d76b10c69"
+        ],
+        "title": "SDK fixture"
+      }
+    ],
+    "corpus_hash": "2a6eb62784e8c37c5709f56265720993cf166d4133dea32263b5fdc3bd670212",
+    "organizer_recording_hash": "e32e37f73e099dcd0bec1e0becea0f87e444fc3630d8297b0f86fe09df059c8b",
+    "schema_version": 3,
+    "taxonomy_hash": "e8519f1a3da7037806f66d8d44a6bcca9f99538703d905f1837b6cabc7cf80b2"
+  },
+  "taxonomy_approval": {
+    "approved": true,
+    "curator_id": "sdk-test",
+    "policy_version": "policy-v3",
+    "rationale": "fixture taxonomy reviewed",
+    "target_hash": "e8519f1a3da7037806f66d8d44a6bcca9f99538703d905f1837b6cabc7cf80b2"
+  }
+}

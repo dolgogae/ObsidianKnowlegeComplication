@@ -1,6 +1,6 @@
 ---
 title: Security and Trust Boundaries
-status: normative-v1
+status: normative
 owners:
   - qa-security-engineer
 last_updated: 2026-09-06
@@ -8,19 +8,15 @@ decision_refs:
   - ADR-0003
   - ADR-0004
   - ADR-0006
-  - ADR-0009
-  - ADR-0010
   - ADR-0012
-  - ADR-0013
   - ADR-0014
-  - ADR-0017
   - ADR-0019
-  - ADR-0020
   - ADR-0022
   - ADR-0023
   - ADR-0024
   - ADR-0025
   - ADR-0026
+  - ADR-0027
 source_refs:
   - HIST-KNOWLEDGE-PLATFORM
   - HIST-ONPREM-STACK
@@ -30,163 +26,105 @@ source_refs:
 
 ## Threat model
 
-Input Vaults, archives, filenames, Markdown, YAML/JSON, Canvas, Bases, attachments, links, AI output, MCP output, packs, and registry metadata are untrusted. Local operators, configured signing keys, and the compiler binary are not assumed infallible; verification and audit records constrain damage.
+Vaults, archives, filenames, Markdown, YAML/JSON, Canvas/Base data,
+attachments, links, provider output, manifests, project journals, and future
+package/registry metadata are hostile. Primary threats are traversal, symlink
+escape, archive bombs, parser denial of service, malformed Unicode, secret
+leakage, prompt injection, executable content, output overwrite, provenance
+forgery, stale authority, dependency compromise, and source exfiltration.
 
-Primary threats include path traversal, symlink escapes, archive bombs, parser denial of service, malformed Unicode, secret/PII leakage, prompt injection, executable/plugin upload, output overwrite, provenance forgery, stale approval reuse, dependency compromise, malicious pack publishing, and corporate Vault exfiltration.
+## Files and archives
 
-## Mandatory controls
+- Reject absolute, drive-prefixed, NUL, parent-traversing, reserved,
+  non-portable, overlong, duplicate, case-fold-unsafe, and NFC-colliding paths.
+- Never follow source symlinks. Reject special files and unsafe output links.
+- Decode paths strictly; lossy CP437/replacement decoding is forbidden.
+- Exclude `.obsidian/plugins/**`, `.git/**`, executables, sockets/devices, and
+  named secret classes.
+- Bound compressed and expanded bytes, member count/size, path depth/length,
+  and expansion ratio before and during archive processing.
+- Recheck file type, containment, size, and hash when bytes are reopened.
+- Prefer descriptor-relative no-follow traversal where portable APIs permit;
+  the remaining cross-platform TOCTOU gap is a release blocker.
 
-### Files and archives
+## Content and providers
 
-- Reject unsafe path syntax and every collision that cannot be resolved by the sealed deterministic layout rule. Detect exact, case-fold, and Unicode-normalization collisions before materialization; never use last-writer-wins.
-- Do not follow source symlinks by default; reject links escaping a declared root.
-- Enforce file count, size, expanded size, nesting, and compression-ratio limits before/during extraction.
-- Decode no path lossily. V2 validates ZIP central-directory filename bytes as
-  strict UTF-8 before library CP437/replacement decoding, parses archive names
-  without host separator semantics, and rejects unsupported raw encodings.
-- Exclude `.obsidian/plugins/**`, `.git/**`, executables, sockets, devices, and named secret classes.
-- Use no-follow/open-relative primitives where platform APIs permit; recheck destination containment.
+- Treat source text as data, never authority to invoke tools, HTTP, shell,
+  deletion, approval, or policy changes.
+- Validate provider output against current schemas, bounds, IDs/hashes,
+  evidence closure, and safe paths before storing it as a proposal.
+- Require independent critic output and explicit hash-bound human approval.
+- Escape ANSI, OSC, C0/C1, DEL, and bidi controls before terminal rendering;
+  never emit OSC8, OSC52, or terminal-title controls from hostile data.
+- Scan every Markdown block before disclosure and store category, location,
+  range, and content hash only—not matched secret text.
+- Route embeddings/organizer locally when any effective sensitive finding
+  exists and route synthesis/critic locally for affected clusters.
+- Treat loopback HTTP endpoints as local. LAN or hosted endpoints are remote
+  and require TLS verification, bounded I/O/deadline, no credential-bearing
+  URL, and explicit consent for that call.
+- No command-provider kind or implementation is exposed by the current product.
 
-### Content and AI
+## Credentials and language runtimes
 
-- Treat retrieved text as DATA, never authority to invoke MCP, HTTP, shell, deletion, approval, or policy changes.
-- Minimize provider disclosures and make local/remote processing explicit.
-- Validate provider output against versioned schemas, bound IDs/hashes, path rules, evidence closure, and size limits.
-- Require explicit approval and invalidate it when bound inputs change.
-- Keep conflict decisions in a plan/content-hash-bound overlay; never mutate a sealed plan to make an approval appear current.
-- Permit output-changing manual actions only for link ambiguity and only when
-  the typed target is an exact sealed candidate; never accept replacement text.
-- Escape ANSI, OSC, C0/C1, DEL, and bidi controls before TUI rendering. Do not
-  emit OSC8, OSC52, or terminal-title controls.
-- Redact secrets and source text from default logs and traces.
-- Before schema-3 disclosure, scan every Markdown block with a versioned
-  sensitive-data scanner. Store category, location, range, and content hash,
-  never the matched secret text.
-- If any effective finding exists, require local embedding and organizer
-  routes. Require local synthesis and critic routes for each affected cluster.
-- Treat only loopback endpoints and direct command adapters as local. LAN hosts
-  are remote; remote HTTP requires TLS, OS certificate validation, no redirect,
-  bounded response/deadline, and one-run consent.
-- Store only API-key environment variable names or OS-keychain account
-  references under the fixed OKC service ID. Never serialize resolved key
-  values or lengths, or include authorization header values in `Debug`, screen,
-  recording, or provider errors. A locked or unavailable keychain MUST NOT
-  trigger plaintext file fallback.
-- Python and Node.js provider profiles accept only `api_key_env`; native
-  keychain references remain a CLI/TUI feature. Rust MUST resolve the named
-  process variable independently for each provider job. The language adapters
-  MUST reject raw-key fields, credential-like option keys, and schema-3 command
-  providers, and MUST NOT copy a resolved secret into a runtime exception or
-  progress event.
-- Language-library callers MUST provide absolute project, source, artifact, and
-  output paths. The adapters MUST NOT infer authority from cwd, install signal
-  handlers or a global tracing subscriber, print source/provider data, invoke
-  an updater, or open a native keychain.
-- A remote provider cache miss from a language binding MUST require explicit
-  `allow_remote_provider` and `remote_disclosure_confirmed` values for that
-  single call. Project state MUST NOT persist either value as future consent.
+The CLI/TUI stores only an environment-variable name or opaque OS-keychain
+account under the fixed service ID. Python and Node.js accept environment names
+only. Raw secret fields and credential-like option keys are rejected.
 
-### Materialization and distribution
+Resolved values live only in redacted/zeroizing types and MUST NOT enter files,
+SQLite, provider recordings, provenance, errors, debug output, screen output,
+or progress events. Keychain errors never fall back to plaintext.
 
-- Write only into a validated sibling staging directory and publish atomically.
-- Reject existing destinations by default.
-- Reject a Compiled Vault or integrated Pack equal to, containing, or nested
-  within an immutable source before creating its parent or staging entry.
-- Publish Compiled Vault directories with the supported platform's atomic
-  no-replace primitive. Preserve every file, directory, symlink/reparse point,
-  and race winner; never fall back to a replacing rename.
-- For OKCPack files, verify the source and staged pack, publish with an
-  atomic no-replace primitive, never follow an existing leaf symlink, and
-  report post-commit durability failure separately from pre-commit absence.
+Language callers provide absolute project, source, output, and artifact paths.
+Adapters do not infer cwd authority, prompt, print, install signals/tracing,
+run updates, or open a native keychain. Remote cache misses require explicit
+`allow_remote_provider` and `remote_disclosure_confirmed` on each call; neither
+is persisted.
 
-### Future installation clients
+## Projects, artifacts, and publication
 
-- Verify every pack member and checksum before installation.
-- Display permissions, licenses, source attribution, and signature status.
-- Never execute pack contents.
+- Project manifests accept current Schema 3 only and journals use explicit
+  private migrations. Paths and mutable operations remain single-writer locked.
+- Artifact detection precedes decoding and is bounded to a 1 MiB manifest
+  header read.
+- Root, `.okc` marker, and manifest symlinks are rejected. Mixed markers,
+  malformed/oversized JSON, unknown families/schemas, corrupt inventories, and
+  unsafe explanation paths fail closed.
+- Recognizable Schema 1/2 markers receive only the structured unsupported
+  result; their content is not interpreted.
+- Compile writes only within a validated sibling stage and publishes an absent
+  directory atomically without replacement. A race winner is preserved.
+- Source/output overlap is forbidden. Publication never executes output
+  content and does not imply publisher authenticity.
 
-## Client and service scanning
+## Resource and concurrency controls
 
-The schema-3 CLI implements deterministic detection for private keys, common
-API/cloud credentials, connection strings, email addresses, and phone numbers.
-Persisted hash-bound false-positive exceptions, malware scanning, and broader
-signature coverage are still required. A future upload client SHOULD repeat
-these checks before transfer; server-side or local-worker scanning remains
-necessary because client declarations are untrusted.
+Ingestion and provider limits are hard errors. The worker pool and language job
+queues are bounded. At most 64 progress events are retained per interop job;
+terminal state/result is stored separately. Same-project in-process mutation
+is excluded by canonical path, with the on-disk lock remaining
+inter-process authority. Cancellation is honored before the publication
+barrier and reported as too late afterward.
 
-## Isolated processing profile
+## Future installation clients
 
-For a future on-premise service, each untrusted processing job should run non-root, with source mounted read-only, no host paths, no privilege escalation, default-deny outbound network, CPU/memory/time/PID limits, seccomp/AppArmor or equivalent, ephemeral workspace, and explicitly scoped result storage. Docker Compose deployment must preserve these properties; Kubernetes is not assumed.
+Any future package client must validate all members and checksums before
+installation, display permissions/license/attribution/signature state, enforce
+archive bounds again, and never execute package contents. User artifact
+integrity is distinct from native application signing.
 
-## Governance
+## Current limitations
 
-Publishers must attest ownership and distribution rights. Source author/license/provenance survives compilation. Takedown, deletion, pack revocation, and the status of already-derived artifacts require recorded policies; they are not solved by technical hashing alone.
+- Accepted source entries are buffered under bounds; the 20 GB streaming gate
+  is not met.
+- Portable descriptor-relative/no-follow traversal and Windows reparse-point
+  evidence remain incomplete.
+- Fuzz/property campaigns, malware scanning, broader sensitive-data corpora,
+  process-crash injection, and supported-filesystem race matrices remain.
+- Provider-backed PTY cancellation and all-host native signing/notarization
+  evidence remain.
+- Current materialization is Markdown-only; attachment/Canvas/Base and Pack
+  paths are not exposed.
 
-## Incident posture
-
-Verification failures are fail-closed. Logs identify diagnostic codes and content identities without leaking content. Signing keys, provider tokens, and service credentials never enter OKCPack contents or reproducibility manifests.
-
-## Current `0.2.0` hardening boundary
-
-The implemented scanner rejects/excludes unsafe logical paths, symlinks,
-special files, named secret files, executable extensions, duplicate archive
-members, strict raw ZIP/tar/PAX names, per-file/total/every-member limits,
-source container bounds, and ZIP or complete-stream `tar.zst` expansion-ratio
-breaches.
-OKCPack extraction rejects non-regular outer files and members, bounds the
-outer compressed size, prechecks declared expansion, and rechecks streamed
-expanded bytes against the ratio and aggregate limits before publication. It
-rechecks source type, size, and content hash before use. The CLI bounds
-control files and provider I/O and validates serialized plans/approvals before
-publication. Canvas parsing rejects duplicate JSON object keys, duplicate node
-IDs, malformed known node fields, and references that would escape the
-allocated Compiled Vault root. All source-derived output operations carry a
-sealed output commitment. Markdown rewrites additionally bind the exact source
-spans, replacement recipe, expected output hash, reverse-reconstructed source
-hash, and semantic reparse; missing required plan fields fail closed.
-Approved generated notes similarly carry a compiler-derived materialization
-commitment for their exact body/output bytes, destination, operation ID, and
-EvidenceId list. The verifier reconstructs the complete note and requires
-exact agreement among the approval, frontmatter, provenance ledger, and
-checksummed output even when surrounding artifact metadata is resealed.
-The typed provenance decoder rejects unknown/duplicate/non-canonical fields,
-invalid identities, graph closure violations, oversized records or ledgers,
-and semantic graph substitutions even when all surrounding unsigned envelope
-hashes are recomputed. Explanation pages bind their subject and cursor and
-enforce their byte limit over the complete serialized response.
-SDK and CLI now use one Pack publisher that validates portable path aliases,
-rejects either containment direction, verifies the source and staged archive,
-and commits a synchronized sibling file without replacement. Its deterministic
-fault seam distinguishes an absent pre-commit failure from a complete retained
-publication whose parent-directory durability is uncertain. ADR-0014 applies
-the same exclusive-commit principle to Compiled Vault directories, requires
-source/output disjointness before staging, and requires explicit staging
-disposition errors rather than ignored cleanup failures.
-
-This is not yet the full release threat model:
-
-- source files are not opened through a portable handle-relative/no-follow API,
-  so filesystem race hardening remains incomplete;
-- accepted source entries are still buffered before sealing, and nested
-  archives are opaque assets, so extraction nesting depth is zero rather than
-  recursive;
-- final-leaf no-replace directory publication is specified for Linux, macOS,
-  and Windows, but its full supported-platform/filesystem CI evidence and
-  descriptor-relative ancestor-race hardening remain incomplete;
-- pack-file publication is locally verified on macOS, but Windows reparse
-  points and the full supported-filesystem concurrency matrix are not yet;
-- there is no completed fuzz/property campaign, malware scanner, PII/secret
-  content scanner, protected dependency audit, or executed native
-  signing/notarization evidence; cargo-dist is configured to generate SBOM and
-  attestations, but configuration is not release evidence;
-- current provider cancellation/process-tree E2E evidence is Unix-only.
-
-These limitations MUST remain visible in release status until their controls
-and platform tests exist. They do not authorize weakening any mandatory
-control above.
-
-The provenance graph retains recognized author/license declarations from
-Markdown frontmatter without inferring their meaning. The manifest carries
-media types, byte lengths, raw/content hashes, attribution summary, creation
-policy, and distribution metadata. It deliberately records user Packs as
-unsigned and is not a native application-signature verifier.
+These gaps stay visible in `CURRENT_STATE.md` and cannot justify weakening any
+mandatory control above.

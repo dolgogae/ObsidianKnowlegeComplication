@@ -3,10 +3,11 @@ title: MCP Adapter Specification
 status: normative-future
 owners:
   - mcp-adapter-engineer
-last_updated: 2026-08-16
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0002
   - ADR-0004
+  - ADR-0027
 source_refs:
   - HIST-MCP-RESEARCH
 ---
@@ -19,20 +20,21 @@ The MCP adapter lets coding agents use the Vault Compiler Framework. It is not t
 
 ## Proposed tools
 
-- `inspect_vaults`: read-only snapshot and diagnostics.
-- `plan_integration`: create a reviewable plan.
-- `list_conflicts`: filter and page typed conflicts.
-- `list_ai_proposals`: show validation/evidence state.
-- `compile_approved_plan`: compile only a plan whose required decisions are approved.
-- `validate_compiled_vault`: independently verify output or pack.
-- `explain_provenance`: explain an output path or claim.
+- `open_project` / `integration_status`: read current project state.
+- `preflight_integration`: return a bounded disclosure/source summary.
+- `list_taxonomy` / `list_clusters`: show proposals, evidence, critic, and approval state.
+- `record_review`: append only explicit, hash-bound curator decisions.
+- `compile_approved_plan`: compile only a complete current plan to an explicit absent directory.
+- `verify_compiled_vault`: independently verify a Schema 3 directory.
+- `explain_provenance`: explain one safe output path.
 
-Tools return stable resource IDs and bounded summaries. Large plans, transcripts, or provenance graphs are exposed as resources/files, not unbounded tool responses.
+Tools return stable resource IDs and bounded summaries. Large plans, recordings,
+or evidence are exposed as resources/files, not unbounded tool responses.
 
 ## Safety
 
 - Default tools are read-only except the explicitly named compile operation.
-- Compilation requires an approved plan and an explicit destination inside configured roots.
+- Compilation requires a complete approved plan and an explicit absent directory inside configured roots.
 - The adapter cannot transform retrieved Markdown into a tool call. Content is untrusted data.
 - No generic shell, arbitrary HTTP, delete, or unrestricted file-write tool is exposed.
 - Sessions have resource, timeout, and output limits; logs redact source text by default.

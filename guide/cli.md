@@ -1,187 +1,179 @@
 ---
 title: CLI 사용법
-description: 실제 Vault를 검사하고 계획하고 컴파일하는 OKC CLI 가이드
+description: 현재 Schema 3 프로젝트를 검토하고 컴파일하는 OKC CLI 가이드
 ---
 
-# CLI로 내 Vault 컴파일하기
+# CLI로 Vault 통합하기
 
-새 schema-3 Vault는 project/provider/integration review 흐름을 사용합니다.
-전체 예제는 [V3 AI 통합](./v3-integration.md)에 있습니다. 아래의
-`inspect → plan → approve` 예제는 frozen V2 회귀·호환 경로를 설명합니다.
-
-OKC의 현재 실사용 인터페이스는 CLI입니다. 원본을 바로 합치지 않고
-`inspect → plan → approve → compile → verify` 단계를 파일로 남기므로,
-어떤 결정이 결과에 들어갔는지 나중에도 확인할 수 있습니다.
-
-::: tip 처음이라면
-먼저 [5분 Quickstart](./index.md)를 완료하세요. 저장소의 충돌 없는 fixture로
-전체 흐름을 한 번 통과한 다음 실제 Vault로 바꾸는 편이 쉽습니다.
-:::
-
-## 입력 지정하기
-
-입력은 `ID=PATH` 형식을 권장합니다.
-
-```sh
-personal=/vaults/Personal
-team=/vaults/TeamVault.zip
-archive=/vaults/Archive.tar.zst
-```
-
-실제 명령에는 다음처럼 넣습니다.
-
-```sh
-okc inspect \
-  personal=/vaults/Personal \
-  team=/vaults/TeamVault.zip
-```
-
-지원 입력은 디렉터리, `.zip`, `.tar.zst`, `.tzst`입니다. ID에는 ASCII
-영숫자, `-`, `_`, `.`만 사용할 수 있으며 한 source set에서 중복될 수
-없습니다. 경로만 주면 마지막 파일명에서 ID를 만들지만 반복 빌드에는
-명시적인 안정 ID가 더 안전합니다.
-
-## 실제 작업 순서
-
-### 1. Inspect
-
-입력을 안전하게 열어 snapshot과 canonical IR을 만듭니다. 이 단계는 원본을
-수정하거나 Compiled Vault를 만들지 않습니다.
-
-```sh
-okc inspect \
-  personal=/vaults/Personal \
-  team=/vaults/TeamVault.zip \
-  --workspace okc-run/build.sqlite
-```
-
-전체 구조화 결과가 필요하면 `--format json`을 사용합니다. JSON inspection은
-source text와 로컬 경로를 포함할 수 있으므로 공개 로그에 남기지 마세요.
-
-### 2. Plan
-
-```sh
-okc plan \
-  personal=/vaults/Personal \
-  team=/vaults/TeamVault.zip \
-  --workspace okc-run/build.sqlite \
-  --out okc-run/plan.json
-```
-
-`plan.json`에는 출력 경로, deduplication, link rewrite, diagnostics, conflicts,
-resource estimate가 들어갑니다. 필수 결정이 있으면 파일을 정상적으로 쓴
-뒤 종료 코드 `4`를 반환합니다. 이 경우 [충돌 검토](./conflicts.md)로
-이어갑니다.
-
-### 3. Approve
-
-```sh
-okc approve okc-run/plan.json \
-  --decisions okc-run/decisions.json \
-  --out okc-run/approved-plan.json
-```
-
-AI를 사용하지 않으면 `--proposals`를 생략합니다. 필수 conflict decision,
-plan ID 또는 content hash가 빠지거나 오래되었으면 승인되지 않습니다.
-
-### 4. Compile과 Pack
-
-```sh
-okc compile okc-run/approved-plan.json \
-  --output "$PWD/CompiledVault" \
-  --pack "$PWD/CompiledVault.okcpack"
-```
-
-Pack이 필요 없으면 `--pack`을 생략합니다. 출력과 Pack은 모두 존재하지
-않는 경로여야 하며 source와 같거나 source 안팎으로 겹칠 수 없습니다.
-Compiled Vault 게시와 Pack 게시는 순서가 있는 두 작업이므로, Pack만
-실패했을 때 이미 검증된 Vault가 남을 수 있습니다.
-
-상대/절대 출력 경로는 모두 지원됩니다. 예제는 source/output 위치를
-분명하게 보이기 위해 절대 경로를 사용합니다.
-
-### 5. Verify와 Explain
-
-```sh
-okc verify ./CompiledVault
-okc verify ./CompiledVault.okcpack --format json
-
-okc explain ./CompiledVault knowledge/Topic.md
-okc explain ./CompiledVault.okcpack --package --format json
-```
-
-`explain`의 파일 경로는 Compiled Vault 내부의 `/` 구분 상대 경로입니다.
-페이지가 크면 응답의 `next_cursor`를 같은 artifact와 subject에 전달합니다.
-
-```sh
-okc explain ./CompiledVault knowledge/Topic.md \
-  --limit 256 \
-  --cursor 'cursor_...'
-```
+OKC CLI는 project → provider → integration → review → compile → verify/
+explain 흐름을 사용합니다. 원본 Vault는 수정하지 않으며 결과는 source 밖의
+새 디렉터리에만 게시합니다. 처음이라면 [Quickstart](./index.md)와
+[AI 통합](./integration.md)을 먼저 읽으세요.
 
 ## 명령 한눈에 보기
 
-| 명령 | 하는 일 | 중요한 동작 |
+| 명령 | 하는 일 | 중요한 경계 |
 |---|---|---|
-| `project create|upgrade|source|ai-route` | V3 프로젝트 구성 | upgrade는 V2 원본을 수정하지 않음 |
-| `provider add|list|show|test|remove` | 전역 profile 관리 | key 값 대신 env 이름만 저장 |
-| `integrate` | V3 AI task 실행·재개 | remote 비대화형 실행은 두 consent flag 필요 |
-| `review taxonomy ...` | taxonomy 편집·승인 | 전체 taxonomy hash를 다시 seal |
-| `review cluster ...` | synthesis/critic 승인 | major/critical finding 승인 불가 |
-| `integration status` | run/task 상태 확인 | `--format json` 지원 |
-| `inspect SOURCE...` | source snapshot과 IR 검사 | JSON 출력 가능, Vault 출력 없음 |
-| `plan SOURCE... --out FILE` | Draft Plan 생성 | 필수 충돌 시 파일을 쓰고 코드 4 |
-| `augment PLAN ... --out FILE` | 외부 provider에 제안 요청 | 문서 선택 필수 |
-| `validate PLAN --augmentation FILE` | recording 재검증 | 파일과 네트워크를 사용하지 않음 |
-| `replay PLAN --augmentation FILE --out FILE` | recording 재검증·재출력 | provider를 호출하지 않음 |
-| `approve PLAN --decisions FILE --out FILE` | 결정과 plan 결합 | AI 기록은 `--proposals`로 추가 |
-| `compile APPROVED_PLAN --output PATH` | 새 Vault 게시 | 선택적 `--pack`; 기존 대상 보존 |
-| `verify PATH_OR_PACK` | artifact 독립 검증 | V3/V2/frozen V1 자동 판별 |
-| `explain PATH_OR_PACK ...` | provenance 조회 | 내부 path 또는 `--package` 선택 |
-| `doctor` | 환경과 프로젝트 진단 | 버전, TTY, target 출력 |
-| `update [stable\|latest\|VERSION]` | receipt 기반 업데이트 | cargo/manual 빌드 덮어쓰기 거부 |
-| `tui` | 터미널 UI 실행 | 현재 탐색 셸 상태 |
+| `project create` | 새 Schema 3 project 생성 | 기존 경로를 덮어쓰지 않음 |
+| `project source add` | directory/archive source 추가 | source ID와 immutable bytes 결합 |
+| `project ai-route set` | 기본 또는 role별 profile 지정 | 변경 시 dependent approval stale |
+| `provider add/list/show/test/remove` | 전역 provider profile 관리 | secret 값이 아닌 참조만 저장 |
+| `integrate` | preflight와 provider task 실행·재개 | remote call은 두 consent flag 필요 |
+| `integration status` | run/task 상태 조회 | human 또는 JSON |
+| `review taxonomy ...` | taxonomy 조회·export·수정 승인 | 전체 exactly-once coverage reseal |
+| `review cluster ...` | synthesis/critic 조회·승인·재생성 | major/critical 승인 불가 |
+| `compile` | approved plan을 새 디렉터리에 materialize | provider-free, no-clobber |
+| `verify DIRECTORY` | Schema 3 디렉터리 독립 검증 | retired schema는 unsupported |
+| `explain DIRECTORY OUTPUT_PATH` | 한 output의 provenance 반환 | 먼저 전체 verify 수행 |
+| `tui` | 같은 service의 터미널 UI | no-argument TTY 기본값 |
+| `doctor` | 버전, target, TTY, project 진단 | 읽기 전용 |
+| `update` | receipt 기반 업데이트 | 확인 필요, source build 거부 |
 
-전체 옵션은 실행 중인 바이너리의 도움말이 가장 정확합니다.
+실행 중인 바이너리의 help가 가장 정확합니다.
 
 ```sh
 okc --help
-okc plan --help
-okc augment --help
+okc project --help
+okc compile --help
+okc explain --help
 ```
 
-## 전역 옵션
+전역 옵션은 `--project PATH` 하나입니다. Policy와 build workspace는 현재
+프로젝트/코어 계약이 관리하며 CLI 전역 옵션으로 바꾸지 않습니다.
 
-| 옵션 | 현재 사용하는 명령 | 의미 |
-|---|---|---|
-| `--project PATH` | V3 integrate/review/compile, `tui`, `doctor` | schema-3 `.okc-project` 선택 |
-| `--policy FILE` | `inspect`, `plan`, 선택적 `compile` | compile 시 밀봉된 정책과 일치해야 함 |
-| `--workspace FILE` | `inspect`, `plan` | SQLite 작업 공간; 기본 `.okc-work/build.sqlite` |
+## 프로젝트와 source
 
-Clap은 전역 옵션을 다른 하위 명령에서도 파싱하지만, 현재 실제 적용 범위는
-표와 같습니다. Plan 이후 작업은 control file에 밀봉된 정책을 사용합니다.
+```sh
+okc project create /work/Team.okc-project \
+  --name Team --curator alice --language ko-KR
+
+okc --project /work/Team.okc-project \
+  project source add personal /vaults/Personal --owner Alice
+okc --project /work/Team.okc-project \
+  project source add team /vaults/Team.zip
+```
+
+지원 source는 디렉터리, `.zip`, `.tar.zst`, `.tzst`입니다. ID는 ASCII
+영숫자, `-`, `_`, `.`만 사용하며 한 source set에서 고유해야 합니다. 동일한
+전체 Vault content를 다른 ID로 중복 등록하면 실패합니다. Source를 바꾸면
+새 run identity가 생기고 이전 approval은 stale이 됩니다.
+
+CLI/TUI는 bounded cwd discovery도 지원합니다. 프로젝트가 하나뿐인 작업
+폴더에서는 `--project`를 생략할 수 있지만, 비대화형 환경에서 0개 또는 여러
+개가 보이면 명시적인 경로를 요구합니다.
+
+## Provider와 integration
+
+```sh
+okc provider add local \
+  --kind ollama \
+  --endpoint http://127.0.0.1:11434 \
+  --model MODEL
+okc provider test local
+okc --project /work/Team.okc-project project ai-route set local
+
+okc --project /work/Team.okc-project integrate
+okc --project /work/Team.okc-project integration status --format json
+```
+
+Remote cache miss는 source 공개 전에 두 플래그를 요구합니다.
+
+```sh
+okc --project /work/Team.okc-project integrate \
+  --allow-remote-provider --yes
+```
+
+이 동의는 한 호출에만 적용되고 project에 저장되지 않습니다. Sensitive
+finding이 있는 semantic/cluster work는 local route를 사용해야 합니다.
+
+## Taxonomy와 cluster review
+
+```sh
+okc --project /work/Team.okc-project review taxonomy show
+okc --project /work/Team.okc-project review taxonomy approve \
+  --rationale "모든 문서 배치를 확인함"
+
+okc --project /work/Team.okc-project integrate
+okc --project /work/Team.okc-project review cluster list
+okc --project /work/Team.okc-project review cluster show CLUSTER_ID
+okc --project /work/Team.okc-project review cluster approve CLUSTER_ID
+```
+
+Taxonomy 편집은 전체 cluster 배열을 export하고 다시 import합니다.
+
+```sh
+okc --project /work/Team.okc-project \
+  review taxonomy export --out taxonomy.json
+okc --project /work/Team.okc-project \
+  review taxonomy approve --edited-clusters taxonomy.json \
+  --rationale "팀 정보 구조에 맞춤"
+```
+
+`review cluster show`에 omission 또는 minor finding이 있으면 각각 exact key와
+rationale을 지정합니다. Major/critical finding은 waiver할 수 없고 feedback으로
+새 revision을 생성해야 합니다.
+
+```sh
+okc --project /work/Team.okc-project \
+  review cluster regenerate CLUSTER_ID \
+  --feedback "근거 누락을 고쳐 다시 작성"
+
+okc --project /work/Team.okc-project review cluster approve CLUSTER_ID \
+  --omission-rationale 'DOCUMENT_ID:TARGET_ID=검토한 제외 사유' \
+  --minor-waiver 'FINDING_ID=검토한 waiver 사유'
+```
+
+## Compile, verify, explain
+
+선택된 프로젝트의 최신 approved plan을 사용합니다.
+
+```sh
+okc --project /work/Team.okc-project \
+  compile --output /work/CompiledVault --format json
+okc verify /work/CompiledVault --format json
+okc explain /work/CompiledVault knowledge/topic.md --format json
+```
+
+또는 완전한 approved plan object를 명시합니다.
+
+```sh
+okc compile \
+  --integration-plan /work/approved-integration-plan.json \
+  --output /work/CompiledVault
+```
+
+Output은 존재하지 않는 디렉터리여야 합니다. Compile은 provider를 호출하지
+않고 sibling stage를 검증한 다음 no-replace로 게시합니다. Explain의
+`OUTPUT_PATH`는 `/` 구분 안전 상대 경로이며, 한 번에 한 typed provenance
+record를 반환합니다. Pack 파일은 입력이나 출력으로 지원하지 않습니다.
+
+## 제공하지 않는 이전 명령 형태
+
+현재 help와 parser에는 inspect, plan, augment, replay, validate, top-level
+approve, project upgrade, `--policy`, `--workspace`, positional approved plan,
+`--pack`, Pack verify/explain, package query, pagination, cursor가 없습니다.
+이전 schema의 marker나 suffix를 현재 명령에 전달해도 읽지 않으며 명시적인
+unsupported-schema 오류를 반환합니다.
 
 ## 자동화와 종료 코드
 
-human 문구는 안정된 API가 아닙니다. 자동화에서는 `--format json`, JSONL
-recording, stderr 진단과 다음 종료 코드를 사용하세요.
+Human 문구는 안정 API가 아닙니다. 가능한 곳에서 `--format json`과 language
+binding의 structured error를 사용하세요.
 
 | 코드 | 의미 |
 |---:|---|
 | `0` | 성공 |
-| `2` | 인자 또는 정책 사용 오류 |
-| `3` | unsafe, missing, unreadable, malformed, unsupported source |
-| `4` | 계획 충돌 또는 conflict decision 오류 |
-| `5` | provider, augmentation, proposal, proposal approval 오류 |
-| `6` | approved plan, 출력, compile, Pack publication 오류 |
-| `7` | artifact verification 또는 provenance 오류 |
+| `2` | 인자/옵션 사용 오류 |
+| `3` | source, path, project 입력 오류 |
+| `4` | missing/stale decision 또는 approval |
+| `5` | provider/disclosure 오류 |
+| `6` | output/publication 오류 |
+| `7` | verification/explanation 또는 retired schema |
 | `70` | 내부 invariant 오류 |
-
-`plan`의 코드 `4`는 검토가 필요한 정상 분기일 수 있습니다. `set -e`나
-`&&`만으로 묶은 스크립트에서는 코드 `0`과 `4`를 구분해 처리하세요.
 
 ## 다음 가이드
 
-- [필수 충돌 검토하기](./conflicts.md)
-- [AI Provider 연결하기](./ai-provider.md)
+- [AI 통합](./integration.md)
+- [검토와 충돌](./conflicts.md)
+- [AI Provider](./ai-provider.md)
 - [문제 해결](./troubleshooting.md)

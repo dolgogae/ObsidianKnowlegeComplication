@@ -1,17 +1,12 @@
 [workspace]
 members = [
     "crates/okc-core",
-    "crates/okc-protocol",
     "crates/okc-app",
     "crates/okc-ai",
     "crates/okc-interop",
     "bindings/python",
     "bindings/node",
     "crates/okc",
-    "crates/okc-legacy-v1",
-    "crates/okc-legacy-v2",
-    "crates/okc-legacy-protocol",
-    "crates/vaultc",
 ]
 resolver = "2"
 

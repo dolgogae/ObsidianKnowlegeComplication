@@ -1,6 +1,6 @@
 ---
 title: ADR-0010 — Typed Provenance Graph and Non-Circular Audit Envelope
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

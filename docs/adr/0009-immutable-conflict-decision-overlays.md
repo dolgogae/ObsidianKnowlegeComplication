@@ -1,6 +1,6 @@
 ---
 title: ADR-0009 — Immutable Conflict Decision Overlays
-status: normative-v1
+status: normative
 owners:
   - architect
   - core-rust-engineer

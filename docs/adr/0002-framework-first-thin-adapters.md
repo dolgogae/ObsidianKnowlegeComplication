@@ -1,6 +1,6 @@
 ---
 title: ADR-0002 — Framework First and Thin Adapters
-status: normative-v1
+status: normative
 owners:
   - architect
 last_updated: 2026-08-16

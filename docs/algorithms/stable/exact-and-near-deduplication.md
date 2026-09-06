@@ -1,6 +1,6 @@
 ---
 title: ALG-DED-001/002 — Exact and Near Deduplication
-status: normative-v1
+status: normative
 owners:
   - core-rust-engineer
   - algorithms-ai-engineer
@@ -41,7 +41,7 @@ m_j(d) = min { h_j(s) : s in S_5(d) }, j = 1..k
 sim_hat(a,b) = (1/k) sum_{j=1}^k 1[m_j(a) = m_j(b)]
 ```
 
-LSH bands generate candidates; the estimated similarity is checked against `tau_near = 0.85`. Recommended V2 candidate defaults are `k=128`, `b=32` bands, `r=4` rows (`k=b*r`). Exact configuration is recorded in the plan.
+LSH bands generate candidates; the estimated similarity is checked against `tau_near = 0.85`. Retained candidate defaults are `k=128`, `b=32` bands, `r=4` rows (`k=b*r`). Exact configuration is sealed with current semantic inputs.
 
 ## Symbols
 

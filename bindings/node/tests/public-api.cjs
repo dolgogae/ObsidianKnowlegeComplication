@@ -10,9 +10,8 @@ const test = require('node:test')
 
 const okc = require('../index.cjs')
 
-const V3_FIXTURE_ARTIFACT_SHA256 =
+const FIXTURE_ARTIFACT_SHA256 =
   '452ca0671e806a93b4f36f218cf9e62da899f6404c74705c2cf0ca14e413c7e5'
-const BINDING_FIXTURES = path.resolve(__dirname, '..', '..', 'fixtures')
 
 function artifactDigest(root) {
   const files = []
@@ -141,7 +140,7 @@ async function invalidProvider(t) {
 
 test('CommonJS exposes API info and structured path errors', async () => {
   const client = new okc.OkcClient()
-  assert.equal(client.apiInfo().interopSchemaVersion, 1)
+  assert.equal(client.apiInfo().interopSchemaVersion, 2)
   await assert.rejects(client.openProject('relative.okc-project').result(), error => {
     assert.ok(error instanceof okc.OkcError)
     assert.equal(error.code, 'PATH_NOT_ABSOLUTE')
@@ -249,25 +248,49 @@ test('remote cache miss requires per-call consent', async t => {
   )
 })
 
-for (const [directory, family] of [['v1-basic', 'v1'], ['v2-basic', 'v2']]) {
-  test(`${family.toUpperCase()} artifact is auto-detected, verified, and explained`, async () => {
-    const artifact = path.join(BINDING_FIXTURES, directory)
+for (const [kind, schema] of [
+  ['schema-one-marker', 1],
+  ['schema-one-pack', 1],
+  ['schema-two-marker', 2],
+  ['schema-two-pack', 2],
+]) {
+  test(`${kind} has a typed unsupported error`, async t => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'okc-node-unsupported-'))
+    t.after(() => fs.rmSync(temporary, { recursive: true, force: true }))
+    let artifact = path.join(temporary, kind)
+    if (kind === 'schema-one-marker') {
+      fs.mkdirSync(path.join(artifact, '.vaultc'), { recursive: true })
+      fs.writeFileSync(path.join(artifact, '.vaultc', 'manifest.json'), '{}')
+    } else if (kind === 'schema-two-marker') {
+      fs.mkdirSync(path.join(artifact, '.okc'), { recursive: true })
+      fs.writeFileSync(
+        path.join(artifact, '.okc', 'manifest.json'),
+        '{"format_family":"okc","schema_version":2}'
+      )
+    } else {
+      artifact += kind === 'schema-one-pack' ? '.vaultpack' : '.okcpack'
+      fs.writeFileSync(artifact, 'retired pack marker')
+    }
     const client = new okc.OkcClient()
-    const verification = await client.verifyArtifact(artifact).result()
-    assert.equal(verification.interopSchemaVersion, 1)
-    assert.equal(verification.family, family)
-    assert.equal(verification.valid, true)
-    const explanation = await client.explainArtifact(artifact, {
-      outputPath: 'knowledge/Topic.md',
-    }).result()
-    assert.equal(explanation.interopSchemaVersion, 1)
-    assert.equal(explanation.family, family)
+    for (const job of [
+      client.verifyArtifact(artifact),
+      client.explainArtifact(artifact, { outputPath: 'knowledge/Topic.md' }),
+    ]) {
+      await assert.rejects(job.result(), error => {
+        assert.ok(error instanceof okc.OkcError)
+        assert.equal(error.code, 'ARTIFACT_SCHEMA_UNSUPPORTED')
+        assert.equal(error.category, 'verification')
+        assert.equal(error.details.supportedSchema, 3)
+        assert.equal(error.details.detectedSchema, schema)
+        return true
+      })
+    }
   })
 }
 
-test('complete V3 approval, compile, verify, and explain workflow', async t => {
+test('complete approval, compile, verify, and explain workflow', async t => {
   const endpoint = await fixtureProvider(t)
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'okc-node-v3-'))
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'okc-node-current-'))
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }))
   const source = path.join(temporary, 'source')
   fs.mkdirSync(source)
@@ -283,7 +306,7 @@ test('complete V3 approval, compile, verify, and explain workflow', async t => {
     model: 'fixture-model',
   })
   const client = new okc.OkcClient({ providerProfiles: [profile] })
-  const project = await client.createProject(path.join(temporary, 'node-v3.okc-project'), {
+  const project = await client.createProject(path.join(temporary, 'node.okc-project'), {
     name: 'SDK parity',
     curatorId: 'sdk-test',
     language: 'en',
@@ -293,10 +316,10 @@ test('complete V3 approval, compile, verify, and explain workflow', async t => {
 
   const consent = { allowRemoteProvider: false, remoteDisclosureConfirmed: false }
   const first = await project.integrate(consent).result()
-  assert.equal(first.interopSchemaVersion, 1)
+  assert.equal(first.interopSchemaVersion, 2)
   assert.equal(first.checkpoint, 'needs_taxonomy')
   const taxonomy = await project.taxonomy().result()
-  assert.equal(taxonomy.interopSchemaVersion, 1)
+  assert.equal(taxonomy.interopSchemaVersion, 2)
   const clusterId = taxonomy.taxonomy.clusters[0].clusterId
   await project.approveTaxonomy({ rationale: 'fixture taxonomy reviewed' }).result()
 
@@ -309,14 +332,18 @@ test('complete V3 approval, compile, verify, and explain workflow', async t => {
   assert.equal(final.checkpoint, 'ready_to_compile')
   const output = path.join(temporary, 'node-output')
   await project.compile(output).result()
-  assert.equal(artifactDigest(output), V3_FIXTURE_ARTIFACT_SHA256)
+  assert.equal(artifactDigest(output), FIXTURE_ARTIFACT_SHA256)
   const verification = await client.verifyArtifact(output).result()
-  assert.equal(verification.family, 'v3')
+  assert.equal(verification.interopSchemaVersion, 2)
   assert.equal(verification.valid, true)
+  assert.equal(verification.artifactPath, output)
+  assert.equal(verification.manifest.schemaVersion, 3)
   const explanation = await client.explainArtifact(output, {
     outputPath: 'knowledge/sdk/fixture.md',
   }).result()
-  assert.equal(explanation.family, 'v3')
+  assert.equal(explanation.interopSchemaVersion, 2)
+  assert.equal(explanation.artifactPath, output)
+  assert.equal(explanation.record.outputPath, 'knowledge/sdk/fixture.md')
   await assert.rejects(project.compile(output).result(), error => {
     assert.equal(error.code, 'OUTPUT_EXISTS')
     return true

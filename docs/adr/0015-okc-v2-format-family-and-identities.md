@@ -1,6 +1,6 @@
 ---
 title: ADR-0015 — OKC V2 Format Family and Identities
-status: normative-v1
+status: normative
 owners:
   - architect
   - release-maintainer

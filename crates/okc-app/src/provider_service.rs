@@ -270,11 +270,6 @@ impl ProviderService {
             ));
         }
         validate_profile_name(name)?;
-        if profile.kind == ProviderKind::Command {
-            return Err(AppError::InvalidProject(
-                "schema-3 command provider profiles are not implemented".into(),
-            ));
-        }
         if secret.is_some() && profile.os_keychain.is_none() {
             profile.os_keychain = Some(name.to_owned());
         }
@@ -452,7 +447,7 @@ pub fn default_endpoint(kind: ProviderKind) -> Option<&'static str> {
         ProviderKind::Anthropic => Some("https://api.anthropic.com/v1"),
         ProviderKind::Gemini => Some("https://generativelanguage.googleapis.com/v1beta"),
         ProviderKind::Ollama => Some("http://127.0.0.1:11434"),
-        ProviderKind::OpenAiCompatible | ProviderKind::Command => None,
+        ProviderKind::OpenAiCompatible => None,
     }
 }
 

@@ -1,175 +1,117 @@
 ---
 title: Vault Compilation Pipeline
-status: normative-v1
+status: normative
 owners:
   - core-rust-engineer
-last_updated: 2026-09-03
+last_updated: 2026-09-06
 decision_refs:
   - ADR-0003
   - ADR-0005
   - ADR-0008
-  - ADR-0009
   - ADR-0012
   - ADR-0014
   - ADR-0016
-  - ADR-0017
   - ADR-0022
   - ADR-0023
   - ADR-0024
+  - ADR-0027
 source_refs:
   - HIST-COMPILER-PLAN
 ---
 
 # Vault Compilation Pipeline
 
-## Schema-3 integration stages
+## Current ordered stages
 
-1. Run the existing safe snapshot, parse, exact-duplicate, and link analysis.
-2. Seal every Markdown block and frontmatter value into an integration corpus.
-3. Run sensitive-data preflight before any provider disclosure and authorize
-   each role/cluster against its local or remote boundary.
-4. Generate and validate ordered embeddings, then record the complete semantic
-   candidate set.
-5. Ask the organizer for exactly-one document clustering and safe canonical
-   paths; locally validate and obtain one whole-taxonomy human approval.
-6. For every cluster, including singletons, obtain typed synthesis sections,
-   evidence, dispositions, related links, and contradiction sets.
-7. Run a separate critic comparison. `critical` or `major` findings block the
-   revision; only `minor` findings may receive curator/rationale-bound waivers.
-8. Obtain one exact cluster approval, including every omission approval.
-9. Seal taxonomy, proposals, critic reports, approvals, and provider recording
-   hashes into `ApprovedIntegrationPlan`.
-10. Compile offline into canonical notes and source-path redirect stubs, write
-    audit metadata, publish atomically, and independently verify reproduction.
+1. Validate typed source descriptors and resource limits.
+2. Enumerate directories or archives in deterministic logical-path order,
+   excluding forbidden/private paths and refusing unsafe members.
+3. Hash immutable bytes, seal snapshots, parse Markdown/frontmatter and safety
+   metadata, and reject duplicate whole-Vault content.
+4. Run the private deterministic analysis path and seal an
+   `IntegrationCorpus` through `CorpusBuilder::build`.
+5. Scan content before disclosure and authorize each role/cluster against its
+   local or remote boundary.
+6. Record and validate embeddings/candidates; obtain a complete taxonomy
+   proposal and explicit taxonomy approval.
+7. For every cluster, including a singleton, obtain synthesis sections,
+   evidence, dispositions, related links, and contradictions.
+8. Run a separate critic. Critical/major findings block; minor findings need
+   exact curator waivers.
+9. Obtain cluster approvals, including every omission decision, and seal all
+   source, taxonomy, proposal, critic, approval, and recording hashes into one
+   `ApprovedIntegrationPlan`.
+10. Compile without a provider into a sibling staging directory, emit
+    canonical Markdown and redirect stubs plus audit files, independently
+    verify the stage, and publish the absent destination without replacement.
+11. Verify or explain a published directory by reproducing plan-derived bytes
+    and exact provenance.
 
-`okc integrate` journals preflight, embedding, local candidates, organizer,
-synthesis, and critic tasks and resumes complete task responses. `review
-taxonomy` and `review cluster` expose the implemented approval boundary. The
-current development slice does not yet implement block-size chunk batching,
-HNSW/candidate-union parity, manual amendments,
-Canvas/attachment/Base carry-through, or V3 Pack publication. These missing
-stages MUST NOT be represented as a stable or complete V3 compiler.
+Stages resume only when every input and semantic configuration identity
+matches. Project services append task state and immutable objects; they never
+rewrite prior approval authority.
 
-## Frozen schema-2 ordered stages
+## Source safety
 
-1. **Open safely:** resolve input kind, establish resource limits, reject unsafe archives and paths.
-2. **Enumerate:** traverse with deterministic logical-path ordering and exclusions.
-3. **Snapshot:** stream hashes, build manifest, and seal snapshot identity.
-4. **Parse:** decode Markdown/frontmatter/Canvas and inventory opaque assets and Bases.
-5. **Normalize:** compute comparison forms without replacing source bytes.
-6. **Resolve:** build source-local and cross-source link candidates.
-7. **Analyze:** group exact duplicates, generate near-duplicate candidates, detect conflicts.
-8. **Plan:** allocate source-derived output paths, deterministic copy/rewrite operations, diagnostics, conflicts, and required decisions. Approved generated outputs enter only through the later approval overlay.
-9. **Augment optionally:** ask providers for evidence-bound proposals and capture a transcript.
-10. **Validate and approve:** reject invalid/stale proposals; validate typed actions against sealed candidates.
-11. **Derive materialization:** compose source-span-ordered actions and approved proposals into one immutable effective operation set.
-12. **Compile:** reverify source hashes, stage output, materialize effective operations, write audit metadata and checksums.
-13. **Publish:** atomically commit the complete sibling staging directory with
-    a supported no-replace primitive; never substitute a check followed by a
-    replacing rename.
-14. **Verify:** independently rederive materialization and validate paths, hashes, manifests, provenance closure, and resolvable rewrites.
+The scanner excludes `.obsidian/**`, `.git/**`, configured executable and
+secret classes, and every symlink. It rejects absolute roots, drive prefixes,
+NUL, parent traversal, non-portable/reserved names, duplicate NFC logical
+paths, unsupported source kinds, and lossy archive names.
 
-Stages are resumable only when their input identity and semantic configuration hash match.
+Archive bounds cover compressed and expanded bytes, file count, per-file size,
+path length/depth, and expansion ratio. ZIP and `tar.zst` members are validated
+before parser use. Nested archives remain opaque. Accepted entries are still
+buffered under bounds, so streaming accepted-file storage remains required for
+the full 20 GB gate.
 
-## Source policies
+The default policy serialization, inspection order, source identity, parser
+behavior, corpus sealing, and optional build-workspace SQLite writes are part
+of current Schema 3 reproducibility. Their retained historical version
+literals MUST NOT be cosmetically rewritten when that would alter bytes.
 
-V2 excludes `.obsidian/**`, `.git/**`, known executable file classes, named secret files, and any external symlink traversal. Symlinks are not followed by default. A logical path containing an absolute root, drive prefix, NUL, or `..` traversal is rejected.
+## Semantic validation
 
-Every accepted source entry retains its exact portable UTF-8 spelling before
-NFC and its NFC logical path under ADR-0012. Duplicate logical paths within one
-source after NFC normalization are rejected. Across sources, exact, case-fold,
-and Unicode-normalization collisions are typed from the original request
-spellings and resolved only through the sealed deterministic layout rule;
-silent last-writer-wins is forbidden. Source rereads must match both sealed
-path forms as well as the content identity.
+- Taxonomy coverage is exactly once over every corpus document.
+- Disposition coverage is exactly once over every block and metadata value.
+- Evidence belongs to the current cluster and content hash.
+- Integrated content has output evidence; preserved content remains visible;
+  omission requires exact approval.
+- Contradictions contain independently evidenced sides.
+- Critic input covers the complete source inventory and current proposal.
+- Approval targets and policy/curator bindings are exact and current.
+- Every provider recording named by the plan is present and hash-matched.
 
-Archive extraction is virtual/streamed when possible. Limits MUST cover compressed bytes, expanded bytes, file count, per-file size, path length, nesting, and compression ratio. The planner does not need to execute or import uploaded plugin JavaScript.
+Provider output is never inserted directly into output and never supplies
+approval. Missing, duplicate, stale, malformed, foreign, or over-limit records
+refuse plan sealing or publication.
 
-The current scanner retains every accepted entry's bytes in memory before
-sealing/parsing and treats nested archives as opaque assets. ZIP and `tar.zst`
-containers are bounded before parser construction, all effective members count
-toward limits, and the complete `tar.zst` decoder stream is expansion-bounded.
-Streaming accepted-file storage and recursive archive policy remain
-implementation gaps, not alternate V2 behavior.
+## Materialization and failure semantics
 
-## Analysis policy
+The current materializer writes:
 
-- Exact duplicates follow ALG-DED-001.
-- Near duplicates follow ALG-DED-002 and only create review candidates.
-- Link, path, title, alias, and frontmatter collisions become typed conflicts.
-- Attachments use the domain-separated
-  `ContentHash = SHA-256("okc:content:v2\0" || bytes)` and are deduplicated
-  independently of note identity. Artifact checksum entries use raw SHA-256.
-- `.base` files are copied to `views/` and receive an `OPAQUE_BASE_UNVALIDATED` diagnostic.
+- `knowledge/<canonical-path>.md`;
+- `legacy/<source-id>/<original-path>.md` redirect stubs;
+- `.okc/integration-plan.json`;
+- `.okc/provenance.jsonl`;
+- `.okc/manifest.json`;
+- `.okc/checksums.txt`.
 
-## Draft plan structure
+The `legacy/` name is a current output contract, not a compatibility reader.
+Attachment, Canvas, Base, full link rewriting, and OKCPack publication are not
+implemented and MUST NOT appear as successful output capabilities.
 
-A normative `DraftPlan` contains:
-
-- plan/schema/compiler versions;
-- complete ordered snapshot IDs and configuration hash;
-- output operations with stable operation IDs;
-- input-to-output path map and link rewrite map;
-- exact duplicate groups and canonical member selection;
-- near-duplicate candidates;
-- conflicts, stable conflict content hashes, and required-decision states;
-- expected output hashes where computable;
-- diagnostics and resource estimates.
-
-Provider proposals are not inserted into `DraftPlan`. Validation records,
-approved proposals, the provider transcript, and conflict-decision overlays are
-carried by `ApprovedPlan`. Typed actions plus approved proposals derive a
-`MaterializationPlan` with action/proposal set hashes, effective operations,
-and `MaterializationId`. Plans are immutable values: any plan payload change
-yields a new `plan_id`. Proposal approvals bind to the plan and proposal
-content hash; conflict decisions bind to the plan, conflict ID, conflict
-content hash, curator, policy, and an ADR-0017 typed action.
-
-The current `0.2.0` `DraftPlan` seals schema/compiler version, plan/projection/
-inspection identities, policy, snapshots, canonical workspace, Document,
-Asset, Canvas, and Base output maps, operations, duplicate reports, conflicts,
-resource estimates, and diagnostics. Canvas and Markdown rewrite operations seal their ordered
-rewrites and expected output hashes. Markdown planning reopens each affected
-source once, validates sealed source slices, applies the recipe, reparses the
-result, and discards the bytes after hashing. The artifact verifier reverses
-the recipe against output bytes to reconstruct a source candidate and compare
-its sealed source hash without embedding raw source copies. Approved generated proposals carry a required tagged
-materialization that seals destination, canonical emitted-body hash, complete
-rendered-output hash, ordered EvidenceId values, and operation ID. Compilation
-and verification independently rebuild that value; pre-materialization
-approval files without it fail closed.
-
-## Failure semantics
-
-No partial output may become the requested destination. On failure, the
-staging directory may be retained only under an explicit debug option and MUST
-be clearly marked incomplete. The default behavior explicitly removes the
-exact known staging directory after safe validation; it never recursively
-deletes an unresolved path. Failure to mark or remove the exact stage MUST
-report the staging path, original failure, requested disposition, and
-disposition failure rather than being silently ignored.
-
-The final directory namespace commit follows ADR-0014. Every existing leaf and
-race winner is preserved as `OutputExists`; an unsupported no-replace
-primitive fails closed without a replacing fallback. Before staging, the
-output and optional integrated Pack are required to be disjoint from every
-immutable source path under resolved-ancestor, lexical, NFC, and full-case-fold
-comparison. A
-post-publication parent-sync failure retains the verified directory and reports
-`PublishedButDurabilityUncertain`; optional Pack publication does not begin.
-
-Warnings may permit compilation if policy allows. Errors prevent approval or
-publication. Hard ingestion and safety resource limits are errors.
-ALG-DED-002's bounded per-document candidate cap may truncate only
-near-duplicate candidate generation and MUST emit an explicit diagnostic; it
-is not an ingestion or compilation fallback.
+The destination must be absent. Staging uses a known sibling path, writes new
+files only, verifies before publication, and uses an atomic no-replace
+primitive. A race winner is preserved. Pre-publication failure exposes no
+requested destination. A parent synchronization failure after publication
+retains the verified directory and reports
+`PublishedButDurabilityUncertain`.
 
 ## Determinism
 
-All traversal, candidate, diagnostic, manifest, JSON line, and archive member
-orderings are explicit. Locale, wall clock, random process seed, hostname,
-absolute input path, filesystem inode, and thread scheduling MUST NOT affect
-semantic identities or emitted Compiled Vault/OKCPack bytes. Runtime source
-locators may appear only in non-semantic build control state and MUST be
-redacted from artifacts. Parallel processing may be used only with
-deterministic collection and reduction.
+Traversal, documents, blocks, metadata, candidates, diagnostics, manifest
+files, JSON records, checksums, and materialized paths use explicit order.
+Locale, wall clock, random process seed, hostname, source absolute root,
+filesystem inode, input order, and thread scheduling MUST NOT affect semantic
+IDs or output bytes. Parallel work is permitted only with deterministic
+collection and reduction.

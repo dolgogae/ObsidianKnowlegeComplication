@@ -124,6 +124,11 @@ install tracing or signal handlers, invoke updates, or access native keychains.
 They use the same project manifest, journal, immutable objects, and on-disk
 lock as CLI/TUI.
 
+Project and compile results can contain canonical absolute paths, including
+Windows extended-length (`\\?\`) paths. Their spelling need not match the
+caller-supplied path. Callers comparing locations SHOULD use filesystem path
+identity; returned compile paths MUST be usable directly for verify/explain.
+
 `OkcClient` accepts an immutable provider-profile set and 1–64 workers (four by
 default), plus at most 64 queued jobs per client. Further submissions fail with
 retryable `RESOURCE_LIMIT` without blocking the caller. Language profiles may name `api_key_env` but cannot carry raw secrets

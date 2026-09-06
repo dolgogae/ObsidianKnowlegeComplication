@@ -715,3 +715,96 @@ Append-only. Normative details live in specifications and accepted ADRs.
   identity/artifact golden, accepted invariant, commit/tag, publication or
   stable-release status changed. Future materializers/Pack, scale, full
   cancellation/fuzz/ancestor-race protection, native matrices and signing remain.
+
+## 2026-09-06 — Stabilization source checkpoint and proposed architecture
+
+- On explicit user request, staged and committed the existing 48-file
+  correctness/stabilization change as
+  `f4c50ad71f61478316d5e68182807ef8612f4d2b`, then pushed it normally to
+  `origin/main`. No force push, release tag, signature or package publication
+  was performed. Earlier audit records stating that no commit/push occurred
+  remain accurate records of those earlier work sessions.
+- Drafted ADR-0028 for bounded semantic storage/execution and explicit replay/
+  live performance qualification; ADR-0029 for human-origin amendments with
+  fresh critic/approval and local-only scanner review; ADR-0030 for separately
+  reviewable current Pack, bounded large control files and extended typed
+  materialization; and ADR-0031 for the real cancellation barrier, configuration
+  intents, orphan policy and filesystem/SQLite capability qualification.
+- Added a proposal review index, requirement-to-design mappings, current-state
+  notice and open-question links. All four decisions are `proposed`: no current
+  schema, bound, algorithm default, privacy invariant, API, quality gate or
+  release status was changed. Numeric profiles, possible journal/format
+  versions and future compatibility choices require owner review.
+- Kept accepted ADR bodies and historical transcripts intact. Drafting is not
+  implementation, acceptance, experimental promotion, command-provider
+  restoration, remote-model consent or protected-release authorization.
+- Verified `git ls-remote origin refs/heads/main` resolves to the exact
+  stabilization commit. After drafting, `cargo test --locked -p okc-core --test
+  documentation_contract`, `npm run docs:build --prefix guide`, and
+  `git diff --check` passed. The four draft frontmatters and proposal index
+  parsed successfully as `proposed`. This documentation-only step does not
+  claim a new runtime suite or remote CI qualification.
+
+## 2026-09-06 — Windows SDK smoke-test portability
+
+- The supplied Windows Actions log showed a successful wheel install and
+  compilation followed by Python's literal path assertion failure. The shared
+  application intentionally canonicalizes the output before overlap checks
+  and publication; Rust's Windows canonical path uses extended-length syntax
+  ([standard library contract](https://doc.rust-lang.org/std/fs/fn.canonicalize.html)).
+  Kept that runtime behavior and changed Python to compare directory identity
+  with `Path.samefile`. Node's project and compile assertions now compare both
+  paths through `fs.realpathSync.native`. Both complete workflows reuse the
+  returned compile path for verification and explanation.
+- Also reproduced the next Windows fixture defect locally by forcing CRLF
+  text writes before the fix: the artifact digest became
+  `c338c419f967a82a2cda02455c30ce4a8291eb8525683810594103941fd4c69c`.
+  The Python fixture now writes explicit LF bytes, matching Rust/Node and
+  retaining the accepted `452ca067...413c7e5` inventory golden.
+- No runtime source, dependency, schema, accepted algorithm, output path
+  policy, approval authority or release status changed. This extends
+  REQ-SDK-002/REQ-REL-001 and QG-001/002/007 evidence under ADR-0026/0027;
+  ALG-SNP-001 and ALG-INT-001 remain normative and unchanged. Preserved the
+  pre-existing proposed-ADR documentation edits and all historical entries.
+- Built and pip-installed a fresh macOS arm64 wheel into
+  `/private/tmp/okc-windows-ci-fix-python`; the Python suite passed **12/12**
+  from `/private/tmp`, with imports confirmed from that installed target.
+  The rebuilt Node addon passed **13/13**. Both unchanged artifact goldens,
+  strict mypy and TypeScript checks passed. Windows native execution remains
+  pending; these are local development results.
+
+Exact successful build/install commands from the repository root:
+
+```sh
+SOURCE_DATE_EPOCH=1788697818 PATH=/opt/homebrew/opt/rustup/bin:/private/tmp/okc-sdk-smoke.TDLo5i/python-tools/bin:$PATH DYLD_LIBRARY_PATH=/opt/homebrew/opt/expat/lib /private/tmp/okc-sdk-smoke.TDLo5i/python-tools/bin/maturin build --manifest-path bindings/python/Cargo.toml --release --locked --offline --out /private/tmp/okc-windows-ci-fix-dist
+DYLD_LIBRARY_PATH=/opt/homebrew/opt/expat/lib /private/tmp/okc-remaining.G9h3fx/python-release-wheel/bin/python -m pip install --no-index --no-deps --target /private/tmp/okc-windows-ci-fix-python /private/tmp/okc-windows-ci-fix-dist/okc_compiler-0.3.0-cp311-abi3-macosx_11_0_arm64.whl
+PATH=/opt/homebrew/opt/rustup/bin:$PATH npm run build --prefix bindings/node
+npm test --prefix bindings/node
+npm run typecheck --prefix bindings/node
+```
+
+Exact successful Python test/type commands, with working directory
+`/private/tmp`:
+
+```sh
+DYLD_LIBRARY_PATH=/opt/homebrew/opt/expat/lib PYTHONPATH=/private/tmp/okc-windows-ci-fix-python:/private/tmp/okc-sdk-smoke.TDLo5i/python-tools /private/tmp/okc-remaining.G9h3fx/python-release-wheel/bin/python -m pytest --import-mode=importlib /Users/sihun/workspace/projects/ObsidianKnowlegeComplication/bindings/python/tests -q
+DYLD_LIBRARY_PATH=/opt/homebrew/opt/expat/lib PYTHONPATH=/private/tmp/okc-windows-ci-fix-python:/private/tmp/okc-sdk-final.fMdL93/python-tools /private/tmp/okc-remaining.G9h3fx/python-release-wheel/bin/python -m mypy --strict /Users/sihun/workspace/projects/ObsidianKnowlegeComplication/bindings/python/tests/typing_contract.py
+```
+
+The sandbox initially blocked localhost fixture binding and napi's process
+inspection (`EPERM`). Those commands passed after approved execution outside
+the sandbox. Pip disabled its unwritable user cache and still completed the
+offline target install successfully.
+
+Final repository checks also passed:
+
+```sh
+PATH=/opt/homebrew/opt/rustup/bin:$PATH cargo test --locked -p okc-core --test documentation_contract --test sdk_output_golden
+npm run docs:build --prefix guide
+git diff --check
+```
+
+The Rust command passed one documentation-link test and one unchanged
+cross-language golden test; VitePress built successfully. An earlier Cargo
+invocation without the Rust toolchain directory in `PATH` could not locate
+`rustc`; the explicit `PATH` above resolved that host setup error.

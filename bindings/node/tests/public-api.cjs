@@ -176,11 +176,12 @@ test('project create, open, and manifest round trip', async t => {
     curatorId: 'curator',
     language: 'ko-KR',
   }).result()
-  assert.equal(project.path, fs.realpathSync(root))
+  // Resolve both spellings: Rust may return a Windows extended-length path.
+  assert.equal(fs.realpathSync.native(project.path), fs.realpathSync.native(root))
   const manifest = await project.manifest().result()
   assert.equal(manifest.payload.name, 'Node')
   assert.equal(manifest.payload.language, 'ko-KR')
-  assert.equal((await client.openProject(root).result()).path, fs.realpathSync(root))
+  assert.equal(fs.realpathSync.native((await client.openProject(root).result()).path), fs.realpathSync.native(root))
 })
 
 test('remote provider flags must both be explicit', async t => {
@@ -348,18 +349,20 @@ test('complete approval, compile, verify, and explain workflow', async t => {
   const final = await project.integrate(consent).result()
   assert.equal(final.checkpoint, 'ready_to_compile')
   const output = path.join(temporary, 'node-output')
-  await project.compile(output).result()
+  const compiled = await project.compile(output).result()
+  assert.ok(path.isAbsolute(compiled.path))
+  assert.equal(fs.realpathSync.native(compiled.path), fs.realpathSync.native(output))
   assert.equal(artifactDigest(output), FIXTURE_ARTIFACT_SHA256)
-  const verification = await client.verifyArtifact(output).result()
+  const verification = await client.verifyArtifact(compiled.path).result()
   assert.equal(verification.interopSchemaVersion, 2)
   assert.equal(verification.valid, true)
-  assert.equal(verification.artifactPath, output)
+  assert.equal(verification.artifactPath, compiled.path)
   assert.equal(verification.manifest.schemaVersion, 3)
-  const explanation = await client.explainArtifact(output, {
+  const explanation = await client.explainArtifact(compiled.path, {
     outputPath: 'knowledge/sdk/fixture.md',
   }).result()
   assert.equal(explanation.interopSchemaVersion, 2)
-  assert.equal(explanation.artifactPath, output)
+  assert.equal(explanation.artifactPath, compiled.path)
   assert.equal(explanation.record.outputPath, 'knowledge/sdk/fixture.md')
   await assert.rejects(project.compile(output).result(), error => {
     assert.equal(error.code, 'OUTPUT_EXISTS')

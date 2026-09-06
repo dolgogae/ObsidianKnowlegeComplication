@@ -28,6 +28,26 @@ source_refs:
 
 # Open Questions
 
+## Draft decision set available — 2026-09-06
+
+[ADR-0028–0031](../adr/README.md) now propose concrete designs and approval
+checklists for the stabilization questions below. They remain `proposed`;
+none of these questions is marked resolved merely because a draft exists.
+In particular, reference budgets/semantic profiles, human-amendment encoding,
+larger control-file limits, next-format compatibility, and private journal/
+filesystem recovery mechanisms still require explicit review.
+
+The design separates a current Schema 3 Pack container from non-Markdown and
+human-origin format extensions. It also records that the current 512-MiB plan
+and 1-MiB manifest bounds can block the full-scale workload independently of
+RSS. Any larger bound or new schema must be accepted with its security and
+compatibility consequences; current limits remain in force.
+
+On explicit user request, the preceding implementation was committed/pushed as
+`f4c50ad71f61478316d5e68182807ef8612f4d2b`. That source push does not authorize
+stable publication, paid provider execution, native signing, or acceptance of
+these later drafts. The absent command-provider remains outside this design set.
+
 ## Current stabilization decisions still required — 2026-09-06 follow-up
 
 - QG-006 names an accepted time/RSS budget but current Schema 3 specifications

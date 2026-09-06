@@ -62,6 +62,12 @@ Automated tests MUST cover:
 - Python and Node.js type declarations, structured errors, scheduler lifecycle,
   consent, output safety, source immutability, and complete current workflow.
 
+SDK workflow fixtures MUST write the same explicit LF source bytes on every
+host. Project/compile path assertions MUST compare filesystem locations rather
+than require input spelling to equal Rust's canonical Windows extended-length
+path spelling. Both bindings MUST exercise verify/explain using the returned
+compile path and retain the unchanged cross-language inventory golden.
+
 The 2026-09-06 correctness audit adds mandatory regressions for:
 
 - multiline Markdown sections, portable Unicode/prefix/file-directory output

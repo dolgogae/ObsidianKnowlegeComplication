@@ -301,9 +301,8 @@ def test_complete_approval_compile_verify_and_explain(tmp_path: Path) -> None:
         source = tmp_path / "source"
         source.mkdir()
         source_note = source / "Fixture.md"
-        source_note.write_text(
-            "# SDK fixture\n\nEvidence retained verbatim.\n", encoding="utf-8"
-        )
+        # Match the Rust/Node golden bytes even when text writes default to CRLF.
+        source_note.write_bytes(b"# SDK fixture\n\nEvidence retained verbatim.\n")
         source_bytes = source_note.read_bytes()
         endpoint = f"http://127.0.0.1:{server.server_port}"
         profile = okc.ProviderProfile(
@@ -345,18 +344,21 @@ def test_complete_approval_compile_verify_and_explain(tmp_path: Path) -> None:
         assert final["checkpoint"] == "ready_to_compile"
         output = tmp_path / "python-output"
         compiled = project.compile(output).result()
-        assert compiled["path"] == str(output)
+        compiled_path = Path(compiled["path"])
+        assert compiled_path.is_absolute()
+        # Rust canonicalization may return a Windows extended-length path.
+        assert compiled_path.samefile(output)
         assert _artifact_digest(output) == _FIXTURE_ARTIFACT_SHA256
-        verification = client.verify_artifact(output).result()
+        verification = client.verify_artifact(compiled_path).result()
         assert verification["interop_schema_version"] == 2
         assert verification["valid"] is True
-        assert verification["artifact_path"] == str(output)
+        assert verification["artifact_path"] == str(compiled_path)
         assert verification["manifest"]["schema_version"] == 3
         explanation = client.explain_artifact(
-            output, output_path="knowledge/sdk/fixture.md"
+            compiled_path, output_path="knowledge/sdk/fixture.md"
         ).result()
         assert explanation["interop_schema_version"] == 2
-        assert explanation["artifact_path"] == str(output)
+        assert explanation["artifact_path"] == str(compiled_path)
         assert explanation["record"]["output_path"] == "knowledge/sdk/fixture.md"
         with pytest.raises(okc.OkcError) as exists:
             project.compile(output).result()

@@ -105,6 +105,30 @@ tests, deterministic mutation smoke, and explicitly unqualified gates.
 | REQ-APP-001/002, REQ-AI-003, REQ-SNP-001 | existing TUI workflow, new POSIX PTY CI harness | synthetic loopback, four provider calls, explicit approvals, independent verify/restart, source SHA/mtime and terminal restoration assertions |
 | REQ-SDK-002, REQ-REL-001, QG-008 | existing packaging plus epoch-controlled wheel CI | fresh wheel/sdist virtualenvs, 12 Python tests each, mypy; clean npm tarballs/CJS/ESM, 13 Node tests, TypeScript; repeated wheel bytes, SBOM/checksums |
 
+## Windows SDK CI regression mapping — 2026-09-06
+
+| Requirement / algorithm | Existing implementation contract | Direct regression evidence |
+|---|---|---|
+| REQ-SDK-002, REQ-REL-001, QG-001 | canonical absolute project/compile paths remain usable by both SDKs | Python `test_complete_approval_compile_verify_and_explain` checks `Path.samefile`; Node project round trip and complete workflow compare native realpaths; both verify/explain the returned compile path |
+| REQ-SNP-002, REQ-INT-006 / ALG-SNP-001, ALG-INT-001, QG-002 | exact source bytes and cross-language artifact inventory remain unchanged | Python writes explicit LF bytes; the existing Python/Node inventory golden passes locally; a pre-fix forced-CRLF probe reproduced the subsequent golden mismatch |
+
+Fresh macOS arm64 wheel/addon tests and typing pass; the Windows native rerun
+is pending. No production algorithm or requirement-to-code mapping changes.
+
+## Proposed architecture mappings — not implementation evidence
+
+[ADR-0028–0031](adr/README.md) are pending review. The table below links design
+scope, not implemented behavior or passing tests. Existing production mappings
+and gate states above remain unchanged until accepted specifications and
+verified code land together.
+
+| Proposed decision | Requirement/algorithm scope | Planned evidence |
+|---|---|---|
+| [ADR-0028](adr/0028-bounded-semantic-execution-and-performance.md) | REQ-SNP-001/002, REQ-SRC-002, REQ-DED-002, REQ-AI-003/004, REQ-INT-001/002/004/005, REQ-PERF-001; ALG-SNP-001, ALG-DED-001/002, ALG-SEM-001, ALG-INT-001 | bounded store/hash parity, fixed chunk/neighbor/union vectors, hierarchy coverage, full replay/live cost/RSS report |
+| [ADR-0029](adr/0029-manual-amendment-and-sensitive-finding-review.md) | REQ-AI-002/003, REQ-SEC-002/003, REQ-INT-002/003/004/005, REQ-PRV-001, REQ-SDK-002; ALG-INT-001, ALG-PRV-001 | stale editor and critic/approval invalidation, human-origin provenance, exact scanner review/revocation and no remote bypass |
+| [ADR-0030](adr/0030-current-pack-and-extended-materialization.md) | REQ-PAR-002/003, REQ-MAT-001, REQ-PRV-001, REQ-CMP-001/002/003, REQ-SEC-001, REQ-INT-002/005/006, REQ-SDK-001/002, REQ-PERF-001; ALG-SNP-001, ALG-NRM-001, ALG-CNF-001, ALG-PRV-001, ALG-INT-001 | current directory/Pack parity, bounded streaming validation, approved blob/rewrite inventory, explicit format compatibility |
+| [ADR-0031](adr/0031-cancellation-recovery-and-filesystem-capabilities.md) | REQ-SNP-001, REQ-SEC-001, REQ-CMP-001, REQ-INT-005, REQ-APP-001/002, REQ-SDK-002, REQ-REL-001; ALG-SNP-001, ALG-CNF-001 | atomic cancel barrier, intent/migration/kill recovery, native handle/SQLite sidecar races and PTY/ConPTY qualification |
+
 ## Current test locations
 
 - Corpus/snapshot/parser/integration: [`crates/okc-core/src/`](../crates/okc-core/src/) and [`corpus_builder_contract.rs`](../crates/okc-core/tests/corpus_builder_contract.rs)

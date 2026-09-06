@@ -122,6 +122,34 @@ This is **not** the 20 GB gate or an accepted performance result. Source
 streaming, semantic scale, the current budget/reference machine, and full
 release qualification remain open.
 
+## Architecture proposals: 2026-09-06
+
+The existing audit/stabilization work was committed as
+`f4c50ad71f61478316d5e68182807ef8612f4d2b` and pushed to `origin/main` on user
+request. The subsequent [ADR-0028–0031 drafts](adr/README.md) propose bounded
+semantic execution/performance, manual amendment and conservative scanner
+review, separately reviewable Pack/large-control-file/extended-format work,
+and cancellation/recovery/filesystem capabilities.
+
+All four are `proposed`, not accepted or implemented. Draft numeric defaults,
+larger input-control limits, candidate journal schema 5 and a possible next
+artifact schema are not current contracts. No current schema, hash, public
+API, quality-gate result or release status changes through drafting them.
+Current control-file limits and the single-current Schema 3 boundary remain.
+
+## Windows SDK CI follow-up: 2026-09-06
+
+The Windows SDK CI follow-up corrects test portability: Python compares the
+compiled directory with `Path.samefile`, Node compares project/compile paths
+through `fs.realpathSync.native`, and both reuse the returned compile path for
+verification/explanation. Python writes the shared source fixture as explicit
+LF bytes so Windows text-mode translation cannot change its hashes. Runtime
+canonicalization, public schemas and the artifact golden are unchanged.
+A fresh macOS arm64 wheel installed outside the repository passes all 12
+Python tests; the rebuilt Node addon passes all 13 tests. Strict mypy and
+TypeScript checks pass. Windows native rerun evidence remains pending; exact
+local commands are recorded in the [decision log](history/DECISION_LOG.md).
+
 ## Current public boundary
 
 Rust public names are generation-neutral: `SourceBlock`, `MetadataValue`,

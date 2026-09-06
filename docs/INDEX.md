@@ -83,7 +83,11 @@ gates are met and an ADR promotes them.
 
 ## Decisions and history
 
-- Accepted decisions: [`adr/`](adr/)
+- Accepted decisions and explicitly proposed drafts: [`adr/`](adr/); a draft
+  does not amend any current specification or accepted decision.
+- Pending review: [ADR-0028–0031 proposal set](adr/README.md) — bounded
+  semantic execution/performance, manual review, Pack/materialization, and
+  cancellation/recovery/filesystem capabilities; none accepted or implemented.
 - Current boundary: [`ADR-0027`](adr/0027-current-schema-single-source.md),
   with the retained Schema 3 decisions in
   [`ADR-0022`](adr/0022-v3-ai-required-format-and-legacy-boundary.md),
